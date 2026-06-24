@@ -1,0 +1,50 @@
+const express = require('express');
+const authRoutes = require('./auth.routes');
+const userRoutes = require('./user.routes');
+const webhookRoutes = require('./webhook.routes');
+const autoReplyRoutes = require('./autoReply.routes');
+const chatRoutes = require('./chat.routes');
+const aiRoutes = require('./ai.routes');
+const dashboardRoutes = require('./dashboard.routes');
+const contactRoutes = require('./contact.routes');
+const leadRoutes = require('./lead.routes');
+const agentRoutes = require('./agent.routes');
+const conversationRoutes = require('./conversation.routes');
+const mediaRoutes = require('./media.routes');
+const noteRoutes = require('./note.routes');
+const labelRoutes = require('./label.routes');
+const templateRoutes = require('./template.routes');
+const campaignRoutes = require('./campaign.routes');
+const workflowRoutes = require('./workflow.routes');
+const appointmentRoutes = require('./appointment.routes');
+const educationRoutes = require('./education.routes');
+const productionRoutes = require('./production.routes');
+
+const router = express.Router();
+
+router.use('/auth', authRoutes);
+router.use('/users', userRoutes);
+router.use('/webhooks', webhookRoutes);
+router.use('/auto-replies', autoReplyRoutes);
+router.use('/chat', chatRoutes);
+router.use('/ai', aiRoutes);
+router.use('/dashboard', dashboardRoutes);
+router.use('/contacts', contactRoutes);
+router.use('/leads', leadRoutes);
+router.use('/agents', agentRoutes);
+router.use('/conversations', conversationRoutes);
+router.use('/media', mediaRoutes);
+router.use('/notes', noteRoutes);
+router.use('/labels', labelRoutes);
+router.use('/templates', templateRoutes);
+router.use('/campaigns', campaignRoutes);
+router.use('/workflows', workflowRoutes);
+router.use('/appointments', appointmentRoutes);
+router.use('/', productionRoutes);
+router.use('/', educationRoutes);
+
+router.get('/health', (req, res) => {
+  return res.status(200).json({ success: true, message: 'API is healthy' });
+});
+
+module.exports = router;

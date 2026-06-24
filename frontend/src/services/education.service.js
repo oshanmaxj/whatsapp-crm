@@ -1,0 +1,34 @@
+import api from './api';
+
+export const listCourses = (params = {}) => api.get('/courses', { params });
+export const createCourse = (payload) => api.post('/courses', payload);
+export const updateCourse = (id, payload) => api.patch(`/courses/${id}`, payload);
+export const deleteCourse = (id) => api.delete(`/courses/${id}`);
+
+export const listBatches = (params = {}) => api.get('/batches', { params });
+export const createBatch = (payload) => api.post('/batches', payload);
+export const updateBatch = (id, payload) => api.patch(`/batches/${id}`, payload);
+export const deleteBatch = (id) => api.delete(`/batches/${id}`);
+
+export const listStudents = (params = {}) => api.get('/students', { params });
+export const createStudent = (payload) => api.post('/students', payload);
+export const updateStudent = (id, payload) => api.patch(`/students/${id}`, payload);
+export const deleteStudent = (id) => api.delete(`/students/${id}`);
+export const convertLeadToStudent = (leadId, payload) => api.post(`/leads/${leadId}/convert-to-student`, payload);
+
+export const listFees = (params = {}) => api.get('/fees', { params });
+export const createFee = (payload) => api.post('/fees', payload);
+export const updateFee = (id, payload) => api.patch(`/fees/${id}`, payload);
+export const deleteFee = (id) => api.delete(`/fees/${id}`);
+export const payInstallment = (id, payload) => api.post(`/fees/installments/${id}/pay`, payload);
+export const sendFeeReminder = (id) => api.post(`/fees/installments/${id}/reminder`);
+
+export const listAttendance = (params = {}) => api.get('/attendance', { params });
+export const createAttendance = (payload) => api.post('/attendance', payload);
+export const updateAttendance = (id, payload) => api.patch(`/attendance/${id}`, payload);
+export const deleteAttendance = (id) => api.delete(`/attendance/${id}`);
+
+export const listCertificates = (params = {}) => api.get('/certificates', { params });
+export const createCertificate = (payload) => api.post('/certificates', payload);
+export const updateCertificate = (id, payload) => api.patch(`/certificates/${id}`, payload);
+export const deleteCertificate = (id) => api.delete(`/certificates/${id}`);

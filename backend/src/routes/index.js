@@ -1,6 +1,8 @@
 const express = require('express');
 const authRoutes = require('./auth.routes');
 const userRoutes = require('./user.routes');
+const roleRoutes = require('./role.routes');
+const permissionRoutes = require('./permission.routes');
 const webhookRoutes = require('./webhook.routes');
 const autoReplyRoutes = require('./autoReply.routes');
 const chatRoutes = require('./chat.routes');
@@ -19,11 +21,14 @@ const workflowRoutes = require('./workflow.routes');
 const appointmentRoutes = require('./appointment.routes');
 const educationRoutes = require('./education.routes');
 const productionRoutes = require('./production.routes');
+const whatsappRoutes = require('./whatsapp.routes');
 
 const router = express.Router();
 
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
+router.use('/roles', roleRoutes);
+router.use('/permissions', permissionRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/auto-replies', autoReplyRoutes);
 router.use('/chat', chatRoutes);
@@ -40,6 +45,7 @@ router.use('/templates', templateRoutes);
 router.use('/campaigns', campaignRoutes);
 router.use('/workflows', workflowRoutes);
 router.use('/appointments', appointmentRoutes);
+router.use('/whatsapp', whatsappRoutes);
 router.use('/', productionRoutes);
 router.use('/', educationRoutes);
 

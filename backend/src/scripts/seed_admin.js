@@ -3,11 +3,20 @@ dotenv.config();
 
 const validateEnv = require('../config/validateEnv');
 const { sequelize, User, Role, UserRole } = require('../models');
+const userService = require('../services/user.service');
 
 async function run() {
   try {
     validateEnv();
     await sequelize.authenticate();
+    await userService.ensureAccessDefaults();
+
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@firstofeducation.com';
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (!adminPassword || adminPassword.length < 12) {
+      throw new Error('ADMIN_PASSWORD must be set to a strong temporary password with at least 12 characters.');
+    }
 
     const [adminRole] = await Role.findOrCreate({
       where: { name: 'admin' },
@@ -20,12 +29,12 @@ async function run() {
     });
 
     const [admin, created] = await User.findOrCreate({
-      where: { email: 'admin@test.com' },
+      where: { email: adminEmail },
       defaults: {
-        firstName: 'Local',
-        lastName: 'Admin',
-        email: 'admin@test.com',
-        passwordHash: '123456',
+        firstName: process.env.ADMIN_FIRST_NAME || 'First Of Education',
+        lastName: process.env.ADMIN_LAST_NAME || 'Admin',
+        email: adminEmail,
+        passwordHash: adminPassword,
         status: 'active',
         isSystemAdmin: true
       }
@@ -33,9 +42,9 @@ async function run() {
 
     if (!created) {
       await admin.update({
-        firstName: admin.firstName || 'Local',
-        lastName: admin.lastName || 'Admin',
-        passwordHash: '123456',
+        firstName: admin.firstName || process.env.ADMIN_FIRST_NAME || 'First Of Education',
+        lastName: admin.lastName || process.env.ADMIN_LAST_NAME || 'Admin',
+        passwordHash: adminPassword,
         status: 'active',
         isSystemAdmin: true
       });
@@ -50,7 +59,7 @@ async function run() {
       defaults: { userId: admin.id, roleId: agentRole.id }
     });
 
-    console.log('Local admin user ready: admin@test.com / 123456');
+    console.log(`Production admin user ready: ${adminEmail}`);
     process.exit(0);
   } catch (error) {
     console.error('Admin seed failed:', error.message || error);

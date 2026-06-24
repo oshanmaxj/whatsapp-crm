@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { LoginHistory, PasswordResetToken, User } = require('../models');
 const { accessTokenSecret, accessTokenExpiresIn, refreshTokenSecret, refreshTokenExpiresIn } = require('../config/jwt');
+const userService = require('./user.service');
 
 class AuthService {
   async register({ firstName, lastName, email, password, phone }) {
@@ -29,6 +30,13 @@ class AuthService {
       await LoginHistory.create({ email, status: 'failed', reason: 'user_not_found' }).catch(() => null);
       const error = new Error('Invalid email or password');
       error.status = 401;
+      throw error;
+    }
+
+    if (user.status !== 'active') {
+      await LoginHistory.create({ userId: user.id, email, status: 'failed', reason: 'user_inactive' }).catch(() => null);
+      const error = new Error('Your account is not active. Please contact an administrator.');
+      error.status = 403;
       throw error;
     }
 
@@ -78,19 +86,38 @@ class AuthService {
     return { reset: true };
   }
 
-  buildAuthResponse(user) {
-    const tokens = this.generateTokens({ id: user.id, email: user.email, isSystemAdmin: user.isSystemAdmin });
+  async changePassword(userId, { currentPassword, newPassword }) {
+    const user = await User.findByPk(userId);
+    if (!user) {
+      const error = new Error('User not found');
+      error.status = 404;
+      throw error;
+    }
+
+    const valid = await user.verifyPassword(currentPassword);
+    if (!valid) {
+      const error = new Error('Current password is incorrect');
+      error.status = 400;
+      throw error;
+    }
+
+    user.passwordHash = newPassword;
+    await user.save();
+    return { changed: true };
+  }
+
+  async buildAuthResponse(user) {
+    const accessPayload = await userService.getUserAccessPayload(user.id);
+    const tokens = this.generateTokens({
+      id: user.id,
+      email: user.email,
+      isSystemAdmin: user.isSystemAdmin,
+      roles: accessPayload?.roles || [],
+      permissions: accessPayload?.permissions || []
+    });
 
     return {
-      user: {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        phone: user.phone,
-        status: user.status,
-        isSystemAdmin: user.isSystemAdmin
-      },
+      user: accessPayload,
       tokens
     };
   }

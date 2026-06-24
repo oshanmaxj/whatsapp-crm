@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
   AppBar,
   Avatar,
+  Badge,
   Box,
   Chip,
   Divider,
@@ -12,11 +13,13 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Menu,
+  MenuItem,
   Toolbar,
   Typography,
   useMediaQuery
 } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import CampaignIcon from '@mui/icons-material/Campaign';
@@ -37,42 +40,119 @@ import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 import QueueIcon from '@mui/icons-material/Queue';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import WhatsAppIcon from '@mui/icons-material/WhatsApp';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import Brightness4Icon from '@mui/icons-material/Brightness4';
+import Brightness7Icon from '@mui/icons-material/Brightness7';
+import BusinessIcon from '@mui/icons-material/Business';
+import EmailIcon from '@mui/icons-material/Email';
+import LockIcon from '@mui/icons-material/Lock';
+import NotificationsIconBell from '@mui/icons-material/Notifications';
+import { getAccessPayload } from '../utils/access';
+import { getNotifications, getSettings } from '../services/production.service';
 
 const drawerWidth = 260;
+const appBarHeight = 72;
 
 const menuItems = [
-  { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon /> },
-  { label: 'Contacts', path: '/contacts', icon: <ContactsIcon /> },
-  { label: 'Campaigns', path: '/campaigns', icon: <CampaignIcon /> },
-  { label: 'Workflows', path: '/workflows', icon: <AccountTreeIcon /> },
-  { label: 'Appointments', path: '/appointments', icon: <CalendarMonthIcon /> },
-  { label: 'Courses', path: '/courses', icon: <MenuBookIcon /> },
-  { label: 'Batches', path: '/batches', icon: <SchoolIcon /> },
-  { label: 'Students', path: '/students', icon: <GroupsIcon /> },
-  { label: 'Fees', path: '/fees', icon: <PaymentsIcon /> },
-  { label: 'Attendance', path: '/attendance', icon: <FactCheckIcon /> },
-  { label: 'Certificates', path: '/certificates', icon: <WorkspacePremiumIcon /> },
-  { label: 'Queue', path: '/queue', icon: <QueueIcon /> },
-  { label: 'Notifications', path: '/notifications', icon: <NotificationsIcon /> },
-  { label: 'Reports', path: '/reports', icon: <AssessmentIcon /> },
-  { label: 'Leads', path: '/leads', icon: <TrendingUpIcon /> },
-  { label: 'Agents', path: '/agents', icon: <GroupsIcon /> },
-  { label: 'Inbox', path: '/chat', icon: <ChatBubbleOutlineIcon /> },
-  { label: 'Auto Replies', path: '/auto-replies', icon: <SmartToyIcon /> },
-  { label: 'Settings', path: '/settings', icon: <SettingsIcon /> }
+  { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, permission: 'dashboard.view' },
+  { label: 'Contacts', path: '/contacts', icon: <ContactsIcon />, permission: 'contacts.view' },
+  { label: 'Connect WhatsApp', path: '/connect-whatsapp', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
+  { label: 'Campaigns', path: '/campaigns', icon: <CampaignIcon />, permission: 'campaigns.view' },
+  { label: 'Workflows', path: '/workflows', icon: <AccountTreeIcon />, permission: 'workflows.view' },
+  { label: 'Appointments', path: '/appointments', icon: <CalendarMonthIcon />, permission: 'appointments.view' },
+  { label: 'Courses', path: '/courses', icon: <MenuBookIcon />, permission: 'courses.view' },
+  { label: 'Batches', path: '/batches', icon: <SchoolIcon />, permission: 'batches.view' },
+  { label: 'Students', path: '/students', icon: <GroupsIcon />, permission: 'students.view' },
+  { label: 'Fees', path: '/fees', icon: <PaymentsIcon />, permission: 'fees.view' },
+  { label: 'Attendance', path: '/attendance', icon: <FactCheckIcon />, permission: 'attendance.view' },
+  { label: 'Certificates', path: '/certificates', icon: <WorkspacePremiumIcon />, permission: 'certificates.view' },
+  { label: 'Queue', path: '/queue', icon: <QueueIcon />, permission: 'settings.view' },
+  { label: 'Notifications', path: '/notifications', icon: <NotificationsIcon />, permission: 'settings.view' },
+  { label: 'Reports', path: '/reports', icon: <AssessmentIcon />, permission: 'reports.view' },
+  { label: 'Leads', path: '/leads', icon: <TrendingUpIcon />, permission: 'leads.view' },
+  { label: 'Agents', path: '/agents', icon: <GroupsIcon />, permission: 'agents.view' },
+  { label: 'Inbox', path: '/chat', icon: <ChatBubbleOutlineIcon />, permission: 'inbox.view' },
+  { label: 'Auto Replies', path: '/auto-replies', icon: <SmartToyIcon />, permission: 'settings.view' },
+  { label: 'Settings', path: '/settings', icon: <SettingsIcon />, permission: 'settings.view' },
+  { label: 'Company Profile', path: '/company-profile', icon: <BusinessIcon />, permission: 'settings.view' },
+  { label: 'SMTP Settings', path: '/smtp-settings', icon: <EmailIcon />, permission: 'settings.view' },
+  { label: 'User Manager', path: '/users', icon: <ManageAccountsIcon />, permission: 'user-manager.view' },
+  { label: 'Permissions', path: '/permissions', icon: <AdminPanelSettingsIcon />, permission: 'user-manager.edit' },
+  { label: 'Profile', path: '/profile', icon: <AccountCircleIcon /> },
+  { label: 'Change Password', path: '/change-password', icon: <LockIcon /> }
 ];
 
+const sidebarItemSx = (theme) => ({
+  alignItems: 'center',
+  borderRadius: 2,
+  minHeight: 44,
+  mb: 0.5,
+  px: 1.5,
+  color: alpha(theme.palette.common.white, 0.78),
+  '& .MuiListItemIcon-root': {
+    color: 'inherit',
+    justifyContent: 'center',
+    minWidth: 40,
+    width: 40
+  },
+  '& .MuiListItemText-root': {
+    my: 0
+  },
+  '& .MuiListItemText-primary': {
+    fontWeight: 600,
+    lineHeight: 1.2
+  },
+  '&:hover': {
+    bgcolor: alpha(theme.palette.common.white, 0.08)
+  },
+  '&.Mui-selected': {
+    bgcolor: theme.palette.success.main,
+    color: theme.palette.success.contrastText,
+    '& .MuiListItemText-primary': {
+      fontWeight: 800
+    }
+  },
+  '&.Mui-selected:hover': {
+    bgcolor: theme.palette.success.dark
+  }
+});
+
 function Sidebar({ onNavigate }) {
+  const theme = useTheme();
   const location = useLocation();
+  const [branding, setBranding] = useState({ name: 'WhatsApp CRM', logoUrl: '' });
+  const access = getAccessPayload();
+  const visibleMenuItems = access.isSystemAdmin
+    ? menuItems
+    : menuItems.filter((item) => !item.permission || access.permissions?.includes(item.permission));
+
+  useEffect(() => {
+    getSettings()
+      .then((res) => {
+        const rows = res.data.data || [];
+        const company = rows.find((row) => row.namespace === 'company' && row.key === 'profile')?.value || {};
+        const themeSetting = rows.find((row) => row.namespace === 'branding' && row.key === 'theme')?.value || {};
+        setBranding({
+          name: company.name || 'WhatsApp CRM',
+          logoUrl: themeSetting.logoUrl || ''
+        });
+      })
+      .catch(() => null);
+  }, []);
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: '#0b1f1a', color: '#fff' }}>
-      <Box sx={{ p: 3 }}>
+    <Box sx={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: '#0b1f1a', color: '#fff' }}>
+      <Box sx={{ p: 3, flexShrink: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Avatar sx={{ bgcolor: '#21c063', color: '#08201a', fontWeight: 800 }}>W</Avatar>
+          <Avatar src={branding.logoUrl} sx={{ bgcolor: '#21c063', color: '#08201a', fontWeight: 800 }}>
+            {branding.name.charAt(0)}
+          </Avatar>
           <Box>
             <Typography variant="h6" fontWeight={800} lineHeight={1.1}>
-              WhatsApp CRM
+              {branding.name}
             </Typography>
             <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.68)' }}>
               Sales command center
@@ -80,9 +160,9 @@ function Sidebar({ onNavigate }) {
           </Box>
         </Box>
       </Box>
-      <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)' }} />
-      <List sx={{ px: 1.5, py: 2, flex: 1 }}>
-        {menuItems.map((item) => {
+      <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+      <List sx={{ px: 1.5, py: 2, flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+        {visibleMenuItems.map((item) => {
           const selected = location.pathname === item.path || (item.path === '/chat' && location.pathname === '/inbox');
           return (
             <ListItemButton
@@ -91,23 +171,15 @@ function Sidebar({ onNavigate }) {
               to={item.path}
               onClick={onNavigate}
               selected={selected}
-              sx={{
-                borderRadius: 2,
-                mb: 0.5,
-                color: selected ? '#071a15' : 'rgba(255,255,255,0.78)',
-                bgcolor: selected ? '#25d366' : 'transparent',
-                '&.Mui-selected': { bgcolor: '#25d366' },
-                '&.Mui-selected:hover': { bgcolor: '#20bd5a' },
-                '&:hover': { bgcolor: selected ? '#20bd5a' : 'rgba(255,255,255,0.08)' }
-              }}
+              sx={sidebarItemSx(theme)}
             >
-              <ListItemIcon sx={{ minWidth: 42, color: 'inherit' }}>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: selected ? 800 : 600 }} />
+              <ListItemIcon>{item.icon}</ListItemIcon>
+              <ListItemText primary={item.label} />
             </ListItemButton>
           );
         })}
       </List>
-      <Box sx={{ p: 2 }}>
+      <Box sx={{ p: 2, flexShrink: 0 }}>
         <Box sx={{ borderRadius: 2, p: 2, bgcolor: 'rgba(37,211,102,0.12)', border: '1px solid rgba(37,211,102,0.24)' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
             <AutoAwesomeIcon fontSize="small" sx={{ color: '#25d366' }} />
@@ -124,10 +196,13 @@ function Sidebar({ onNavigate }) {
   );
 }
 
-function CrmLayout() {
+function CrmLayout({ darkMode, onToggleDarkMode }) {
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationAnchor, setNotificationAnchor] = useState(null);
+  const [notifications, setNotifications] = useState([]);
   const location = useLocation();
 
   const pageTitle = useMemo(() => {
@@ -138,37 +213,69 @@ function CrmLayout() {
 
   const drawer = <Sidebar onNavigate={() => setMobileOpen(false)} />;
 
+  useEffect(() => {
+    getNotifications({ unreadOnly: true })
+      .then((res) => {
+        const rows = res.data.data || [];
+        setNotifications(rows.slice(0, 5));
+        setUnreadCount(rows.length);
+      })
+      .catch(() => null);
+  }, [location.pathname]);
+
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: 'background.default' }}>
       <AppBar
         position="fixed"
         elevation={0}
         sx={{
           ml: { md: `${drawerWidth}px` },
           width: { md: `calc(100% - ${drawerWidth}px)` },
-          bgcolor: 'rgba(246,248,251,0.92)',
-          color: '#12211c',
-          borderBottom: '1px solid #e6eaef',
+          bgcolor: alpha(theme.palette.background.paper, 0.92),
+          color: 'text.primary',
+          borderBottom: `1px solid ${theme.palette.divider}`,
           backdropFilter: 'blur(12px)'
         }}
       >
-        <Toolbar sx={{ minHeight: 72 }}>
+        <Toolbar sx={{ minHeight: appBarHeight, gap: 1 }}>
           {!isDesktop && (
             <IconButton edge="start" onClick={() => setMobileOpen(true)} sx={{ mr: 1 }}>
               <MenuIcon />
             </IconButton>
           )}
-          <Box sx={{ flex: 1 }}>
-            <Typography variant="h5" fontWeight={800}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant={isDesktop ? 'h5' : 'h6'} fontWeight={800} noWrap>
               {pageTitle}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" noWrap sx={{ display: { xs: 'none', sm: 'block' } }}>
               Manage conversations, contacts, and follow-ups from one workspace.
             </Typography>
           </Box>
-          <Chip label="Local PostgreSQL" color="success" variant="outlined" sx={{ display: { xs: 'none', sm: 'inline-flex' } }} />
+          <Chip label="Local PostgreSQL" color="success" variant="outlined" sx={{ display: { xs: 'none', lg: 'inline-flex' } }} />
+          <IconButton onClick={onToggleDarkMode} color="inherit" aria-label="Toggle dark mode">
+            {darkMode ? <Brightness7Icon /> : <Brightness4Icon />}
+          </IconButton>
+          <IconButton color="inherit" aria-label="Notifications" onClick={(event) => setNotificationAnchor(event.currentTarget)}>
+            <Badge badgeContent={unreadCount} color="error">
+              <NotificationsIconBell />
+            </Badge>
+          </IconButton>
+          <IconButton component={Link} to="/profile" color="inherit" aria-label="Profile">
+            <AccountCircleIcon />
+          </IconButton>
         </Toolbar>
       </AppBar>
+      <Menu anchorEl={notificationAnchor} open={Boolean(notificationAnchor)} onClose={() => setNotificationAnchor(null)}>
+        {notifications.length === 0 && <MenuItem>No unread notifications</MenuItem>}
+        {notifications.map((notification) => (
+          <MenuItem key={notification.id} component={Link} to="/notifications" onClick={() => setNotificationAnchor(null)}>
+            <Box sx={{ maxWidth: 320 }}>
+              <Typography variant="body2" fontWeight={800} noWrap>{notification.title}</Typography>
+              <Typography variant="caption" color="text.secondary" noWrap>{notification.message || notification.type}</Typography>
+            </Box>
+          </MenuItem>
+        ))}
+      </Menu>
 
       <Box component="nav" sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}>
         <Drawer
@@ -176,7 +283,15 @@ function CrmLayout() {
           open={mobileOpen}
           onClose={() => setMobileOpen(false)}
           ModalProps={{ keepMounted: true }}
-          sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': { width: drawerWidth } }}
+          sx={{
+            display: { xs: 'block', md: 'none' },
+            '& .MuiDrawer-paper': {
+              width: drawerWidth,
+              maxWidth: '100vw',
+              height: '100vh',
+              overflow: 'hidden'
+            }
+          }}
         >
           {drawer}
         </Drawer>
@@ -184,7 +299,13 @@ function CrmLayout() {
           variant="permanent"
           sx={{
             display: { xs: 'none', md: 'block' },
-            '& .MuiDrawer-paper': { width: drawerWidth, boxSizing: 'border-box', border: 0 }
+            '& .MuiDrawer-paper': {
+              width: drawerWidth,
+              boxSizing: 'border-box',
+              border: 0,
+              height: '100vh',
+              overflow: 'hidden'
+            }
           }}
           open
         >
@@ -192,8 +313,21 @@ function CrmLayout() {
         </Drawer>
       </Box>
 
-      <Box component="main" sx={{ flexGrow: 1, width: { md: `calc(100% - ${drawerWidth}px)` }, p: { xs: 2, md: 3 }, pt: 12 }}>
-        <Outlet />
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          minWidth: 0,
+          width: { xs: '100%', md: `calc(100% - ${drawerWidth}px)` },
+          height: '100vh',
+          overflowY: 'auto',
+          overflowX: 'hidden'
+        }}
+      >
+        <Toolbar sx={{ minHeight: appBarHeight }} />
+        <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: '100%', overflowX: 'hidden' }}>
+          <Outlet />
+        </Box>
       </Box>
     </Box>
   );

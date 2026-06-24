@@ -25,6 +25,15 @@ class UserController {
     }
   }
 
+  async create(req, res, next) {
+    try {
+      const user = await userService.createUser(req.body);
+      return res.status(201).json({ success: true, data: user });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   async update(req, res, next) {
     try {
       const { id } = req.params;
@@ -40,6 +49,15 @@ class UserController {
     try {
       const { id } = req.params;
       const result = await userService.deleteUser(id);
+      return res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async resetPassword(req, res, next) {
+    try {
+      const result = await userService.resetPassword(req.params.id, req.body.password);
       return res.status(200).json({ success: true, data: result });
     } catch (err) {
       next(err);
@@ -70,6 +88,34 @@ class UserController {
     try {
       const permissions = await userService.getPermissions();
       return res.status(200).json({ success: true, data: permissions });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async createRole(req, res, next) {
+    try {
+      const role = await userService.createRole(req.body);
+      return res.status(201).json({ success: true, data: role });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async updateRole(req, res, next) {
+    try {
+      const role = await userService.updateRole(req.params.id, req.body);
+      return res.status(200).json({ success: true, data: role });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async setRolePermissions(req, res, next) {
+    try {
+      const requestedPermissions = req.body.permissionIds || req.body.permissions || [];
+      const role = await userService.setRolePermissions(req.params.id, Array.isArray(requestedPermissions) ? requestedPermissions : [requestedPermissions]);
+      return res.status(200).json({ success: true, data: role });
     } catch (err) {
       next(err);
     }

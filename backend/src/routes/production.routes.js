@@ -2,6 +2,7 @@ const express = require('express');
 const productionController = require('../controllers/production.controller');
 const authMiddleware = require('../middleware/auth.middleware');
 const { apiCache } = require('../middleware/cache.middleware');
+const requirePermission = require('../middleware/permission.middleware');
 
 const router = express.Router();
 router.use(authMiddleware.authenticate);
@@ -16,9 +17,9 @@ router.post('/notifications', productionController.createNotification.bind(produ
 router.post('/notifications/:id/read', productionController.readNotification.bind(productionController));
 
 router.get('/audit-logs', productionController.listAudit.bind(productionController));
-router.get('/settings', apiCache({ ttlSeconds: 60 }), productionController.listSettings.bind(productionController));
-router.put('/settings/:namespace/:key', productionController.saveSetting.bind(productionController));
-router.get('/reports/summary', apiCache({ ttlSeconds: 30 }), productionController.reports.bind(productionController));
+router.get('/settings', requirePermission('settings.view'), apiCache({ ttlSeconds: 60 }), productionController.listSettings.bind(productionController));
+router.put('/settings/:namespace/:key', requirePermission('settings.edit'), productionController.saveSetting.bind(productionController));
+router.get('/reports/summary', requirePermission('reports.view'), apiCache({ ttlSeconds: 30 }), productionController.reports.bind(productionController));
 router.get('/backups', productionController.listBackups.bind(productionController));
 router.post('/backups/export', productionController.exportBackup.bind(productionController));
 

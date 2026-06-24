@@ -6,11 +6,11 @@ const followupService = require('./followup.service');
 const notificationService = require('./notification.service');
 
 class LeadManagementService {
-  async processIncomingWhatsapp({ from, whatsappId, text, threadId, payload }) {
+  async processIncomingWhatsapp({ from, whatsappId, profileName, text, threadId, payload }) {
     const contact = await contactService.findOrCreateFromWhatsapp({
       phone: from,
       whatsappId,
-      firstName: payload?.profile?.name || null,
+      firstName: profileName || null,
       lastName: null
     });
 

@@ -50,6 +50,16 @@ function validateEnv() {
         throw new Error(`${key} must be set to a strong production secret.`);
       }
     });
+
+    ['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_VERIFY_TOKEN'].forEach((key) => {
+      if (!process.env[key] || String(process.env[key]).trim() === '') {
+        throw new Error(`${key} is required for production WhatsApp webhook operation.`);
+      }
+    });
+
+    if (process.env.WHATSAPP_SEND_ENABLED === 'true' && !process.env.WHATSAPP_ACCESS_TOKEN) {
+      throw new Error('WHATSAPP_ACCESS_TOKEN is required when WHATSAPP_SEND_ENABLED=true.');
+    }
   }
 }
 

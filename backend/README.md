@@ -2,6 +2,12 @@
 
 This backend includes OpenAI-powered features: AI auto replies, lead qualification & scoring, sentiment analysis, agent suggestions, and conversation summaries.
 
+For the single-institute production setup for First Of Education International, see:
+
+```text
+backend/docs/first-of-education-production-readiness.md
+```
+
 ## Environment
 Create a `.env` file at the project root with these variables (example):
 

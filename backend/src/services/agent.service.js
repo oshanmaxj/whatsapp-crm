@@ -1,5 +1,5 @@
 const { fn, col } = require('sequelize');
-const { User, Lead, LeadAssignment } = require('../models');
+const { User, Role, Permission, Lead, LeadAssignment } = require('../models');
 const assignmentService = require('./assignment.service');
 
 function serializeAgent(agent, assignedLeadCount = 0) {
@@ -11,6 +11,7 @@ function serializeAgent(agent, assignedLeadCount = 0) {
     email: agent.email,
     phone: agent.phone,
     status: agent.status,
+    roles: agent.roles || [],
     assignedLeadCount: Number(assignedLeadCount || 0)
   };
 }
@@ -25,7 +26,12 @@ class AgentService {
       raw: true
     });
     const countsByAgent = new Map(counts.map((row) => [Number(row.ownerId), row.leadCount]));
-    return agents.map((agent) => serializeAgent(agent, countsByAgent.get(Number(agent.id))));
+    const hydratedAgents = await User.findAll({
+      where: { id: agents.map((agent) => agent.id) },
+      include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }],
+      order: [['id', 'ASC']]
+    });
+    return hydratedAgents.map((agent) => serializeAgent(agent, countsByAgent.get(Number(agent.id))));
   }
 
   async getPerformance() {

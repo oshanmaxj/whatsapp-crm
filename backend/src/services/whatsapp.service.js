@@ -1,6 +1,7 @@
 ﻿const axios = require('axios');
 const { Message, MessageQueue } = require('../models');
 const whatsappConfig = require('../config/whatsapp');
+const whatsappSettingsService = require('./whatsappSettings.service');
 const leadManagementService = require('./leadManagement.service');
 const aiService = require('./ai.service');
 const autoReplyService = require('./autoReply.service');
@@ -8,19 +9,35 @@ const socketService = require('./socket.service');
 const storageService = require('./storage.service');
 const logger = require('../config/logger');
 
-const apiBase = `${whatsappConfig.apiBaseUrl}/${whatsappConfig.apiVersion}/${whatsappConfig.phoneNumberId}`;
-
-const axiosInstance = axios.create({
-  baseURL: apiBase,
-  headers: {
-    Authorization: `Bearer ${whatsappConfig.accessToken}`,
-    'Content-Type': 'application/json'
-  },
-  timeout: 20000
-});
-
 class WhatsappService {
-  async sendTextMessage({ to, text, recipientType = 'individual' }) {
+  async getRuntimeConfig() {
+    const settings = await whatsappSettingsService.runtimeConfig().catch(() => ({}));
+    return {
+      accessToken: settings.accessToken || whatsappConfig.accessToken,
+      phoneNumberId: settings.phoneNumberId || whatsappConfig.phoneNumberId,
+      verifyToken: settings.verifyToken || whatsappConfig.verifyToken,
+      apiVersion: settings.apiVersion || whatsappConfig.apiVersion,
+      apiBaseUrl: settings.apiBaseUrl || whatsappConfig.apiBaseUrl
+    };
+  }
+
+  async requestClient() {
+    const config = await this.getRuntimeConfig();
+    return {
+      config,
+      client: axios.create({
+        baseURL: `${config.apiBaseUrl}/${config.apiVersion}/${config.phoneNumberId}`,
+        headers: {
+          Authorization: `Bearer ${config.accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 20000
+      })
+    };
+  }
+
+  async sendTextMessage({ to, text, recipientType = 'individual', log = true }) {
+    const config = await this.getRuntimeConfig();
     const payload = {
       messaging_product: 'whatsapp',
       to,
@@ -30,21 +47,24 @@ class WhatsappService {
     };
 
     const response = await this.sendRequest(payload);
-    await this.logMessage({
-      whatsappMessageId: response.id,
-      direction: 'outbound',
-      type: 'text',
-      text,
-      fromNumber: whatsappConfig.phoneNumberId,
-      toNumber: to,
-      status: 'sent',
-      rawPayload: payload
-    });
+    if (log) {
+      await this.logMessage({
+        whatsappMessageId: response.id,
+        direction: 'outbound',
+        type: 'text',
+        text,
+        fromNumber: config.phoneNumberId,
+        toNumber: to,
+        status: 'sent',
+        rawPayload: payload
+      });
+    }
 
     return response;
   }
 
   async sendTemplateMessage({ to, templateName, language = 'en_US', components = [] }) {
+    const config = await this.getRuntimeConfig();
     const payload = {
       messaging_product: 'whatsapp',
       to,
@@ -62,7 +82,7 @@ class WhatsappService {
       direction: 'outbound',
       type: 'template',
       templateName,
-      fromNumber: whatsappConfig.phoneNumberId,
+      fromNumber: config.phoneNumberId,
       toNumber: to,
       status: 'sent',
       rawPayload: payload
@@ -72,6 +92,7 @@ class WhatsappService {
   }
 
   async sendMediaMessage({ to, mediaType, mediaId, url, caption = '', filename, mimeType, recipientType = 'individual' }) {
+    const config = await this.getRuntimeConfig();
     if (!mediaId && !url) {
       const error = new Error('Either mediaId or url is required to send media');
       error.status = 400;
@@ -100,7 +121,7 @@ class WhatsappService {
       mediaId: mediaId || null,
       mediaUrl: url || null,
       text: caption,
-      fromNumber: whatsappConfig.phoneNumberId,
+      fromNumber: config.phoneNumberId,
       toNumber: to,
       status: 'sent',
       rawPayload: payload
@@ -110,13 +131,14 @@ class WhatsappService {
   }
 
   async sendRequest(payload) {
-    if (!whatsappConfig.accessToken || !whatsappConfig.phoneNumberId) {
+    const { config, client } = await this.requestClient();
+    if (!config.accessToken || !config.phoneNumberId) {
       const error = new Error('WhatsApp Cloud API credentials are not configured');
       error.status = 500;
       throw error;
     }
 
-    const response = await this.retryRequest(() => axiosInstance.post('/messages', payload));
+    const response = await this.retryRequest(() => client.post('/messages', payload));
     return response.data?.messages?.[0] || response.data;
   }
 
@@ -127,7 +149,8 @@ class WhatsappService {
       throw error;
     }
 
-    const response = await this.retryRequest(() => axiosInstance.get(`/media/${mediaId}`));
+    const { client } = await this.requestClient();
+    const response = await this.retryRequest(() => client.get(`/media/${mediaId}`));
     return response.data;
   }
 
@@ -139,8 +162,9 @@ class WhatsappService {
       throw error;
     }
 
+    const config = await this.getRuntimeConfig();
     const downloadResponse = await axios.get(mediaInfo.url, {
-      headers: { Authorization: `Bearer ${whatsappConfig.accessToken}` },
+      headers: { Authorization: `Bearer ${config.accessToken}` },
       responseType: 'arraybuffer',
       timeout: 20000
     });
@@ -171,7 +195,9 @@ class WhatsappService {
 
   async handleInboundMessage(value, message) {
     const from = message.from;
-    const to = value.metadata?.phone_number_id || whatsappConfig.phoneNumberId;
+    const config = await this.getRuntimeConfig();
+    const to = value.metadata?.phone_number_id || config.phoneNumberId;
+    const threadId = [to, from].filter(Boolean).join(':');
     const messageType = message.type;
     const text = message.text?.body || null;
     const mediaId = message[messageType]?.id || null;
@@ -185,8 +211,9 @@ class WhatsappService {
     const assignmentResult = await leadManagementService.processIncomingWhatsapp({
       from,
       whatsappId,
+      profileName: contactProfile?.profile?.name || contactProfile?.name || null,
       text,
-      threadId: value.metadata?.phone_number_id || null,
+      threadId,
       payload: value
     });
 
@@ -251,6 +278,7 @@ class WhatsappService {
   }
 
   async handleStatusUpdate(value, status) {
+    const config = await this.getRuntimeConfig();
     const existing = status.id ? await Message.findOne({ where: { whatsappMessageId: status.id } }) : null;
     if (existing) {
       await existing.update({ status: status.status || existing.status, rawPayload: status });
@@ -264,7 +292,7 @@ class WhatsappService {
       whatsappMessageId: status.id,
       direction: 'outbound',
       type: 'text',
-      fromNumber: whatsappConfig.phoneNumberId,
+      fromNumber: config.phoneNumberId,
       toNumber: status.recipient_id,
       status: status.status || 'sent',
       rawPayload: status
@@ -280,8 +308,9 @@ class WhatsappService {
       throw error;
     }
 
+    const config = await this.getRuntimeConfig();
     const downloadResponse = await axios.get(downloadUrl, {
-      headers: { Authorization: `Bearer ${whatsappConfig.accessToken}` },
+      headers: { Authorization: `Bearer ${config.accessToken}` },
       responseType: 'arraybuffer',
       timeout: 30000
     });
@@ -379,6 +408,7 @@ class WhatsappService {
   }
 
   async sendContactCard({ to, contact }) {
+    const config = await this.getRuntimeConfig();
     if (!contact || !contact.phone) {
       const error = new Error('Contact card requires a phone number');
       error.status = 400;
@@ -405,7 +435,7 @@ class WhatsappService {
       whatsappMessageId: response.id,
       direction: 'outbound',
       type: 'contacts',
-      fromNumber: whatsappConfig.phoneNumberId,
+      fromNumber: config.phoneNumberId,
       toNumber: to,
       status: 'sent',
       rawPayload: payload
@@ -415,6 +445,7 @@ class WhatsappService {
   }
 
   async sendLocationMessage({ to, latitude, longitude, name, address }) {
+    const config = await this.getRuntimeConfig();
     if (!latitude || !longitude) {
       const error = new Error('Latitude and longitude are required for location messages');
       error.status = 400;
@@ -438,7 +469,7 @@ class WhatsappService {
       whatsappMessageId: response.id,
       direction: 'outbound',
       type: 'location',
-      fromNumber: whatsappConfig.phoneNumberId,
+      fromNumber: config.phoneNumberId,
       toNumber: to,
       status: 'sent',
       rawPayload: payload

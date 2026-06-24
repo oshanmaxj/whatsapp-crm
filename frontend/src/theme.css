@@ -6,3 +6,24 @@ body {
   margin: 0;
   background: #f4f6f8;
 }
+
+* {
+  box-sizing: border-box;
+}
+
+img,
+svg,
+canvas {
+  max-width: 100%;
+}
+
+.MuiTableContainer-root {
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 600px) {
+  .MuiDialog-paper {
+    margin: 12px !important;
+    width: calc(100% - 24px) !important;
+  }
+}

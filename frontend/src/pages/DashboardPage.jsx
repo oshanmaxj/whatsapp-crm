@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -51,9 +51,10 @@ function formatName(contact) {
 
 function MetricCard({ label, value, icon, tone }) {
   return (
-    <Paper sx={{ p: 2.5, border: '1px solid #e8edf2', height: '100%' }} elevation={0}>
+    <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider', height: '100%', position: 'relative', overflow: 'hidden' }} elevation={0}>
+      <Box sx={{ position: 'absolute', inset: 'auto -20px -28px auto', width: 110, height: 110, borderRadius: '50%', bgcolor: tone, opacity: 0.55 }} />
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-        <Box>
+        <Box sx={{ position: 'relative' }}>
           <Typography variant="body2" color="text.secondary" fontWeight={700}>
             {label}
           </Typography>
@@ -64,6 +65,48 @@ function MetricCard({ label, value, icon, tone }) {
         <Box sx={{ width: 44, height: 44, borderRadius: 2, display: 'grid', placeItems: 'center', bgcolor: tone }}>
           {icon}
         </Box>
+      </Stack>
+    </Paper>
+  );
+}
+
+function BarChart({ items, labelKey = 'date', valueKey = 'total' }) {
+  const max = Math.max(1, ...items.map((item) => Number(item[valueKey] || item.count || 0)));
+  return (
+    <Stack direction="row" spacing={1} alignItems="flex-end" sx={{ height: 180, pt: 2 }}>
+      {items.map((item) => {
+        const value = Number(item[valueKey] || item.count || 0);
+        return (
+          <Box key={item[labelKey] || item.status || item.source} sx={{ flex: 1, minWidth: 24, textAlign: 'center' }}>
+            <Box sx={{ height: `${Math.max(8, (value / max) * 150)}px`, borderRadius: '8px 8px 2px 2px', bgcolor: 'success.main', opacity: 0.86 }} />
+            <Typography variant="caption" color="text.secondary" noWrap>{String(item[labelKey] || item.status || item.source).slice(5)}</Typography>
+          </Box>
+        );
+      })}
+    </Stack>
+  );
+}
+
+function RankedList({ title, items, nameKey }) {
+  const max = Math.max(1, ...items.map((item) => Number(item.count || item.assignedLeadCount || 0)));
+  return (
+    <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider', height: '100%' }} elevation={0}>
+      <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>{title}</Typography>
+      <Stack spacing={1.25}>
+        {items.map((item) => {
+          const label = nameKey === 'agent' ? item.agent?.name : item[nameKey];
+          const value = Number(item.count || item.assignedLeadCount || 0);
+          return (
+            <Box key={label || item.agent?.id}>
+              <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
+                <Typography color="text.secondary" noWrap>{label || '-'}</Typography>
+                <Typography fontWeight={800}>{value}</Typography>
+              </Stack>
+              <LinearProgress variant="determinate" value={(value / max) * 100} sx={{ height: 7, borderRadius: 999 }} />
+            </Box>
+          );
+        })}
+        {items.length === 0 && <Typography color="text.secondary">No data yet.</Typography>}
       </Stack>
     </Paper>
   );
@@ -91,11 +134,6 @@ function DashboardPage() {
     loadSummary();
   }, []);
 
-  const maxActivity = useMemo(
-    () => Math.max(1, ...summary.dailyMessageActivity.map((item) => item.total || 0)),
-    [summary.dailyMessageActivity]
-  );
-
   const metrics = [
     { label: 'Total Contacts', value: summary.totals.contacts, icon: <ContactsIcon sx={{ color: '#0f6b43' }} />, tone: '#e7f7ee' },
     { label: 'Total Leads', value: summary.totals.leads, icon: <TrendingUpIcon sx={{ color: '#1769aa' }} />, tone: '#e8f2fb' },
@@ -122,7 +160,7 @@ function DashboardPage() {
 
       <Grid container spacing={3}>
         <Grid item xs={12} lg={7}>
-          <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
+          <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }} elevation={0}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
               <Typography variant="h6" fontWeight={800}>
                 Recent Conversations
@@ -164,27 +202,17 @@ function DashboardPage() {
         </Grid>
 
         <Grid item xs={12} lg={5}>
-          <Paper sx={{ p: 2.5, border: '1px solid #e8edf2', height: '100%' }} elevation={0}>
+          <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider', height: '100%' }} elevation={0}>
             <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>
               Daily Message Activity
             </Typography>
             <Stack spacing={1.5}>
+              <BarChart items={summary.dailyMessageActivity} />
               {summary.dailyMessageActivity.map((item) => (
-                <Box key={item.date}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      {item.date}
-                    </Typography>
-                    <Typography variant="body2" fontWeight={800}>
-                      {item.total}
-                    </Typography>
-                  </Stack>
-                  <LinearProgress
-                    variant="determinate"
-                    value={(item.total / maxActivity) * 100}
-                    sx={{ height: 8, borderRadius: 999, bgcolor: '#edf1f5', '& .MuiLinearProgress-bar': { bgcolor: '#25d366' } }}
-                  />
-                </Box>
+                <Stack key={item.date} direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="body2" color="text.secondary">{item.date}</Typography>
+                  <Typography variant="body2" fontWeight={800}>{item.total}</Typography>
+                </Stack>
               ))}
               {loading && (
                 <Box sx={{ display: 'grid', placeItems: 'center', py: 4 }}>
@@ -198,54 +226,21 @@ function DashboardPage() {
 
       <Grid container spacing={3}>
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2.5, border: '1px solid #e8edf2', height: '100%' }} elevation={0}>
-            <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>Leads by Status</Typography>
-            <Stack spacing={1}>
-              {(summary.leadsByStatus || []).map((item) => (
-                <Stack key={item.status} direction="row" justifyContent="space-between">
-                  <Typography color="text.secondary">{item.status}</Typography>
-                  <Typography fontWeight={800}>{item.count}</Typography>
-                </Stack>
-              ))}
-              {!loading && (summary.leadsByStatus || []).length === 0 && <Typography color="text.secondary">No lead status data yet.</Typography>}
-            </Stack>
-          </Paper>
+          <RankedList title="Leads by Status" items={summary.leadsByStatus || []} nameKey="status" />
         </Grid>
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2.5, border: '1px solid #e8edf2', height: '100%' }} elevation={0}>
-            <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>Leads by Source</Typography>
-            <Stack spacing={1}>
-              {(summary.leadsBySource || []).map((item) => (
-                <Stack key={item.source} direction="row" justifyContent="space-between">
-                  <Typography color="text.secondary">{item.source}</Typography>
-                  <Typography fontWeight={800}>{item.count}</Typography>
-                </Stack>
-              ))}
-              {!loading && (summary.leadsBySource || []).length === 0 && <Typography color="text.secondary">No lead source data yet.</Typography>}
-            </Stack>
-          </Paper>
+          <RankedList title="Leads by Source" items={summary.leadsBySource || []} nameKey="source" />
         </Grid>
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2.5, border: '1px solid #e8edf2', height: '100%' }} elevation={0}>
-            <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>Top Agents</Typography>
-            <Stack spacing={1}>
-              {(summary.topAgents || []).map((item) => (
-                <Stack key={item.agent.id} direction="row" justifyContent="space-between">
-                  <Typography color="text.secondary">{item.agent.name}</Typography>
-                  <Typography fontWeight={800}>{item.assignedLeadCount}</Typography>
-                </Stack>
-              ))}
-              {!loading && (summary.topAgents || []).length === 0 && <Typography color="text.secondary">No assigned agents yet.</Typography>}
-            </Stack>
-          </Paper>
+          <RankedList title="Top Agents" items={summary.topAgents || []} nameKey="agent" />
         </Grid>
       </Grid>
 
-      <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
+      <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }} elevation={0}>
         <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>
           Recent Leads
         </Typography>
-        <TableContainer>
+        <TableContainer sx={{ maxWidth: '100%', overflowX: 'auto' }}>
           <Table size="small">
             <TableHead>
               <TableRow>

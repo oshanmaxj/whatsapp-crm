@@ -6,6 +6,7 @@ exports.updateUserSchema = Joi.object({
   lastName: Joi.string().max(100).optional(),
   email: Joi.string().email().optional(),
   phone: Joi.string().max(50).optional(),
+  department: Joi.string().valid('Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing').allow('', null).optional(),
   role: Joi.alternatives(Joi.string(), Joi.number()).optional(),
   roles: Joi.array().items(Joi.alternatives(Joi.string(), Joi.number())).optional(),
   status: Joi.string().valid('active', 'inactive', 'suspended', 'pending').optional(),
@@ -18,6 +19,7 @@ exports.createUserSchema = Joi.object({
   lastName: Joi.string().max(100).optional(),
   email: Joi.string().email().required(),
   phone: Joi.string().max(50).allow('', null).optional(),
+  department: Joi.string().valid('Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing').allow('', null).optional(),
   password: Joi.string().min(6).required(),
   role: Joi.alternatives(Joi.string(), Joi.number()).required(),
   status: Joi.string().valid('active', 'inactive', 'suspended', 'pending').default('active')

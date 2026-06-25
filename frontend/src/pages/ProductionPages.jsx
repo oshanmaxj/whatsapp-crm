@@ -23,6 +23,8 @@ import {
   downloadBackupUrl, enqueueMessage, exportBackup, getAuditLogs, getBackups, getNotifications, getQueue, getQueueStats,
   getReportsSummary, getSettings, markNotificationRead, processQueue, saveSetting
 } from '../services/production.service';
+import { getAgentPerformance } from '../services/agent.service';
+import { listBatches, listCourses } from '../services/education.service';
 import {
   getWhatsappSettings,
   saveWhatsappSettings,
@@ -470,6 +472,87 @@ export function ProductionSettingsPage() {
 export function ReportsPage() {
   const [summary, setSummary] = useState(null);
   const [audit, setAudit] = useState([]);
-  useEffect(() => { getReportsSummary().then((res) => setSummary(res.data.data)); getAuditLogs({ limit: 50 }).then((res) => setAudit(res.data.data || [])); }, []);
-  return <Stack spacing={2.5}><Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}><Box sx={{ flex: 1 }}><Typography variant="h5" fontWeight={850}>Reporting & Audit Logs</Typography><Typography color="text.secondary">Lead, student, revenue, campaign, agent performance, and user actions.</Typography></Box><Button startIcon={<DownloadIcon />} variant="outlined" onClick={() => exportPdf(summary || {}, audit)}>Export PDF</Button><Button startIcon={<DownloadIcon />} variant="contained" onClick={() => exportExcel(summary || {}, audit)}>Export Excel</Button></Stack></Paper>{summary && <Grid container spacing={2}>{Object.entries(summary).map(([key, value]) => <Grid item xs={12} md={4} key={key}><Paper sx={{ p: 2, border: '1px solid #e8edf2', height: '100%' }} elevation={0}><Typography fontWeight={850}>{key}</Typography><Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(value, null, 2)}</Typography></Paper></Grid>)}</Grid>}<Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}><TableContainer sx={{ maxWidth: '100%', overflowX: 'auto' }}><Table><TableHead><TableRow><TableCell>Action</TableCell><TableCell>Entity</TableCell><TableCell>User</TableCell><TableCell>Path</TableCell></TableRow></TableHead><TableBody>{audit.map((row) => <TableRow key={row.id}><TableCell>{row.action}</TableCell><TableCell>{row.entityType}</TableCell><TableCell>{row.userId || '-'}</TableCell><TableCell>{row.path}</TableCell></TableRow>)}</TableBody></Table></TableContainer></Paper></Stack>;
+  const [courses, setCourses] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [filters, setFilters] = useState({ from: '', to: '', courseId: '', batchId: '', leadStatus: '', leadSource: '', agentId: '', studentStatus: '' });
+
+  const loadReports = () => {
+    Promise.all([
+      getReportsSummary(filters),
+      getAuditLogs({ limit: 50 }),
+      listCourses().catch(() => ({ data: { data: [] } })),
+      listBatches().catch(() => ({ data: { data: [] } })),
+      getAgentPerformance().catch(() => ({ data: { data: [] } }))
+    ]).then(([summaryRes, auditRes, coursesRes, batchesRes, agentsRes]) => {
+      setSummary(summaryRes.data.data);
+      setAudit(auditRes.data.data || []);
+      setCourses(coursesRes.data.data || []);
+      setBatches(batchesRes.data.data || []);
+      setAgents(agentsRes.data.data || []);
+    });
+  };
+
+  useEffect(() => { loadReports(); }, []);
+
+  const leads = summary?.leads || [];
+  const students = summary?.students || [];
+  const revenue = summary?.revenue || {};
+  const campaign = summary?.campaign || [];
+  const maxLead = Math.max(1, ...leads.map((row) => Number(row.count || 0)));
+  const maxStudent = Math.max(1, ...students.map((row) => Number(row.count || 0)));
+  const maxCampaign = Math.max(1, ...campaign.map((row) => Number(row.count || 0)));
+  const totalLeads = leads.reduce((sum, row) => sum + Number(row.count || 0), 0);
+  const totalStudents = students.reduce((sum, row) => sum + Number(row.count || 0), 0);
+  const totalRevenue = Number(revenue.total || 0);
+  const paidRevenue = Number(revenue.paid || 0);
+
+  const ProgressRow = ({ label, value, max }) => (
+    <Box>
+      <Stack direction="row" justifyContent="space-between"><Typography>{label || '-'}</Typography><Typography fontWeight={850}>{value}</Typography></Stack>
+      <LinearProgress variant="determinate" value={(Number(value || 0) / max) * 100} sx={{ height: 8, borderRadius: 999, mt: 0.5 }} />
+    </Box>
+  );
+
+  return (
+    <Stack spacing={2.5}>
+      <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h5" fontWeight={850}>Reports</Typography>
+            <Typography color="text.secondary">Lead, student, revenue, campaign, and agent performance reports.</Typography>
+          </Box>
+          <Button startIcon={<DownloadIcon />} variant="outlined" onClick={() => exportPdf(summary || {}, audit)}>Export PDF</Button>
+          <Button startIcon={<DownloadIcon />} variant="contained" onClick={() => exportExcel(summary || {}, audit)}>Export Excel</Button>
+        </Stack>
+      </Paper>
+
+      <Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}>
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={3}><TextField type="date" label="From" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
+          <Grid item xs={12} md={3}><TextField type="date" label="To" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
+          <Grid item xs={12} md={3}><TextField select label="Course" value={filters.courseId} onChange={(e) => setFilters({ ...filters, courseId: e.target.value })} fullWidth><MenuItem value="">All Courses</MenuItem>{courses.map((course) => <MenuItem key={course.id} value={course.id}>{[course.code, course.name].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={3}><TextField select label="Batch" value={filters.batchId} onChange={(e) => setFilters({ ...filters, batchId: e.target.value })} fullWidth><MenuItem value="">All Batches</MenuItem>{batches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{batch.name}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={3}><TextField label="Lead Status" value={filters.leadStatus} onChange={(e) => setFilters({ ...filters, leadStatus: e.target.value })} fullWidth /></Grid>
+          <Grid item xs={12} md={3}><TextField label="Lead Source" value={filters.leadSource} onChange={(e) => setFilters({ ...filters, leadSource: e.target.value })} fullWidth /></Grid>
+          <Grid item xs={12} md={3}><TextField select label="Agent" value={filters.agentId} onChange={(e) => setFilters({ ...filters, agentId: e.target.value })} fullWidth><MenuItem value="">All Agents</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agent.name}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={3}><TextField label="Student Status" value={filters.studentStatus} onChange={(e) => setFilters({ ...filters, studentStatus: e.target.value })} fullWidth /></Grid>
+          <Grid item xs={12}><Button variant="contained" onClick={loadReports}>Apply Filters</Button></Grid>
+        </Grid>
+      </Paper>
+
+      <Grid container spacing={2}>
+        {[['Total Leads', totalLeads], ['Students', totalStudents], ['Revenue', totalRevenue.toFixed(2)], ['Paid', paidRevenue.toFixed(2)], ['Campaign Events', campaign.reduce((sum, row) => sum + Number(row.count || 0), 0)]].map(([label, value]) => (
+          <Grid item xs={12} sm={6} md key={label}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h5" fontWeight={850}>{value}</Typography><Typography color="text.secondary">{label}</Typography></Paper></Grid>
+        ))}
+      </Grid>
+
+      <Grid container spacing={2}>
+        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Lead Report</Typography><Stack spacing={1.5} sx={{ mt: 2 }}>{leads.map((row) => <ProgressRow key={row.name} label={row.name} value={row.count} max={maxLead} />)}</Stack></Paper></Grid>
+        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Student Report</Typography><Stack spacing={1.5} sx={{ mt: 2 }}>{students.map((row) => <ProgressRow key={row.status} label={row.status} value={row.count} max={maxStudent} />)}</Stack></Paper></Grid>
+        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Campaign Report</Typography><Stack spacing={1.5} sx={{ mt: 2 }}>{campaign.map((row) => <ProgressRow key={row.status} label={row.status} value={row.count} max={maxCampaign} />)}</Stack></Paper></Grid>
+        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Agent Performance Report</Typography><TableContainer><Table size="small"><TableHead><TableRow><TableCell>Agent</TableCell><TableCell>Department</TableCell><TableCell>Assigned Leads</TableCell><TableCell>Assignments</TableCell></TableRow></TableHead><TableBody>{agents.map((agent) => <TableRow key={agent.id}><TableCell>{agent.name}</TableCell><TableCell>{agent.department || '-'}</TableCell><TableCell>{agent.assignedLeadCount}</TableCell><TableCell>{agent.assignmentCount}</TableCell></TableRow>)}</TableBody></Table></TableContainer></Paper></Grid>
+      </Grid>
+    </Stack>
+  );
 }

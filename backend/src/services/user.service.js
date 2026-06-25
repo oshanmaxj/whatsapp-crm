@@ -1,4 +1,4 @@
-const { Permission, Role, RolePermission, sequelize, User, UserRole } = require('../models');
+const { Permission, Role, RolePermission, sequelize, User, UserPermissionOverride, UserRole } = require('../models');
 const logger = require('../config/logger');
 
 const ROLE_NAMES = ['Admin', 'Manager', 'Agent', 'Marketing', 'Accountant', 'Lecturer'];
@@ -196,6 +196,7 @@ class UserService {
       lastName: payload.lastName || rest.join(' ') || null,
       email: payload.email,
       phone: payload.phone || null,
+      department: payload.department || null,
       passwordHash: payload.password,
       status: payload.status || 'active',
       isSystemAdmin: String(payload.role).toLowerCase() === 'admin'
@@ -339,22 +340,80 @@ class UserService {
   async getUserAccessPayload(id) {
     await this.safeEnsureAccessDefaults();
     const user = await User.findByPk(id, {
-      include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }]
+      include: [
+        { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
+        { model: UserPermissionOverride, as: 'permissionOverrides', include: [{ model: Permission, as: 'permission' }] }
+      ]
     });
     if (!user) return null;
     const roles = user.roles || [];
-    const permissions = Array.from(new Set(roles.flatMap((role) => (role.permissions || []).map((permission) => permission.code))));
+    const rolePermissions = new Set(roles.flatMap((role) => (role.permissions || []).map((permission) => permission.code)));
+    const overrides = user.permissionOverrides || [];
+    overrides.forEach((override) => {
+      const code = override.permission?.code;
+      if (!code) return;
+      if (override.effect === 'deny') rolePermissions.delete(code);
+      if (override.effect === 'allow') rolePermissions.add(code);
+    });
     return {
       id: user.id,
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
+      department: user.department,
       status: user.status,
       isSystemAdmin: user.isSystemAdmin,
       roles: roles.map((role) => role.name),
-      permissions
+      permissions: Array.from(rolePermissions)
     };
+  }
+
+  async getUserPermissions(id) {
+    await this.safeEnsureAccessDefaults();
+    const user = await User.findByPk(id, {
+      include: [
+        { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
+        { model: UserPermissionOverride, as: 'permissionOverrides', include: [{ model: Permission, as: 'permission' }] }
+      ]
+    });
+    if (!user) throw Object.assign(new Error('User not found'), { status: 404 });
+    const allPermissions = await Permission.findAll({ order: [['name', 'ASC']] });
+    const inherited = new Set((user.roles || []).flatMap((role) => (role.permissions || []).map((permission) => permission.code)));
+    const overrideMap = new Map((user.permissionOverrides || []).map((override) => [override.permission?.code, override.effect]));
+    const finalPermissions = new Set(inherited);
+    overrideMap.forEach((effect, code) => {
+      if (effect === 'deny') finalPermissions.delete(code);
+      if (effect === 'allow') finalPermissions.add(code);
+    });
+    return {
+      user: serializeUser(user),
+      permissions: allPermissions.map((permission) => ({
+        id: permission.id,
+        code: permission.code,
+        name: permission.name,
+        inherited: inherited.has(permission.code),
+        override: overrideMap.get(permission.code) || 'inherit',
+        final: finalPermissions.has(permission.code)
+      }))
+    };
+  }
+
+  async setUserPermissions(id, overrides = []) {
+    const user = await User.findByPk(id);
+    if (!user) throw Object.assign(new Error('User not found'), { status: 404 });
+    await this.safeEnsureAccessDefaults();
+    await UserPermissionOverride.destroy({ where: { userId: id } });
+    const rows = [];
+    for (const item of overrides) {
+      if (!['allow', 'deny'].includes(item.effect)) continue;
+      const permission = item.permissionId
+        ? await Permission.findByPk(item.permissionId)
+        : await Permission.findOne({ where: { code: item.code } });
+      if (permission) rows.push({ userId: id, permissionId: permission.id, effect: item.effect });
+    }
+    if (rows.length) await UserPermissionOverride.bulkCreate(rows);
+    return this.getUserPermissions(id);
   }
 }
 

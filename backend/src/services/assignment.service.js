@@ -1,6 +1,9 @@
 const aiService = require('./ai.service');
 const { User, Role } = require('../models');
 const LeadAssignment = require('../models').LeadAssignment;
+const { Op } = require('sequelize');
+
+const AGENT_CAPABLE_DEPARTMENTS = ['Customer Care', 'Marketing', 'Technical', 'Lecturer', 'Management'];
 
 class AssignmentService {
   async getAvailableAgents() {
@@ -8,10 +11,13 @@ class AssignmentService {
     const query = { status: 'active' };
 
     if (!agentRole) {
-      return User.findAll({ where: query, order: [['id', 'ASC']] });
+      return User.findAll({ where: { ...query, department: { [Op.in]: AGENT_CAPABLE_DEPARTMENTS } }, order: [['id', 'ASC']] });
     }
 
-    return agentRole.getUsers({ where: query, order: [['id', 'ASC']] });
+    const roleUsers = await agentRole.getUsers({ where: query, order: [['id', 'ASC']] });
+    const departmentUsers = await User.findAll({ where: { ...query, department: { [Op.in]: AGENT_CAPABLE_DEPARTMENTS } }, order: [['id', 'ASC']] });
+    const byId = new Map([...roleUsers, ...departmentUsers].map((user) => [String(user.id), user]));
+    return Array.from(byId.values()).sort((a, b) => Number(a.id) - Number(b.id));
   }
 
   async getLastAssignment() {

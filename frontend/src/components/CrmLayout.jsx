@@ -5,7 +5,6 @@ import {
   Avatar,
   Badge,
   Box,
-  Chip,
   Divider,
   Drawer,
   IconButton,
@@ -21,7 +20,6 @@ import {
   useMediaQuery
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
@@ -128,7 +126,7 @@ const sidebarItemSx = (theme, collapsed = false) => ({
   }
 });
 
-function Sidebar({ collapsed, isDesktop, onNavigate, onToggleCollapse }) {
+function Sidebar({ collapsed, onNavigate }) {
   const theme = useTheme();
   const location = useLocation();
   const [branding, setBranding] = useState({ name: 'WhatsApp CRM', logoUrl: '' });
@@ -167,13 +165,6 @@ function Sidebar({ collapsed, isDesktop, onNavigate, onToggleCollapse }) {
             </Typography>
           </Box>}
         </Box>
-        {isDesktop && (
-          <Tooltip title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} placement="right">
-            <IconButton onClick={onToggleCollapse} sx={{ mt: 1.5, color: 'rgba(255,255,255,0.78)' }} size="small">
-              {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-            </IconButton>
-          </Tooltip>
-        )}
       </Box>
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
       <List sx={{ px: 1.5, py: 2, flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
@@ -195,19 +186,6 @@ function Sidebar({ collapsed, isDesktop, onNavigate, onToggleCollapse }) {
           );
         })}
       </List>
-      {!collapsed && <Box sx={{ p: 2, flexShrink: 0 }}>
-        <Box sx={{ borderRadius: 2, p: 2, bgcolor: 'rgba(37,211,102,0.12)', border: '1px solid rgba(37,211,102,0.24)' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
-            <AutoAwesomeIcon fontSize="small" sx={{ color: '#25d366' }} />
-            <Typography variant="subtitle2" fontWeight={800}>
-              Phase 1
-            </Typography>
-          </Box>
-          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.66)' }}>
-            Dashboard, contacts, inbox, and automations.
-          </Typography>
-        </Box>
-      </Box>}
     </Box>
   );
 }
@@ -245,7 +223,7 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
     navigate('/login', { replace: true });
   };
 
-  const drawer = <Sidebar collapsed={isDesktop && sidebarCollapsed} isDesktop={isDesktop} onToggleCollapse={toggleSidebar} onNavigate={() => setMobileOpen(false)} />;
+  const drawer = <Sidebar collapsed={isDesktop && sidebarCollapsed} onNavigate={() => setMobileOpen(false)} />;
 
   useEffect(() => {
     getNotifications({ unreadOnly: true })
@@ -277,6 +255,13 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
               <MenuIcon />
             </IconButton>
           )}
+          {isDesktop && (
+            <Tooltip title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+              <IconButton onClick={toggleSidebar} color="inherit" aria-label="Toggle sidebar">
+                {sidebarCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+              </IconButton>
+            </Tooltip>
+          )}
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant={isDesktop ? 'h5' : 'h6'} fontWeight={800} noWrap>
               {pageTitle}
@@ -285,7 +270,6 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
               Manage conversations, contacts, and follow-ups from one workspace.
             </Typography>
           </Box>
-          <Chip label="Local PostgreSQL" color="success" variant="outlined" sx={{ display: { xs: 'none', lg: 'inline-flex' } }} />
           <IconButton onClick={onToggleDarkMode} color="inherit" aria-label="Toggle dark mode">
             {darkMode ? <Brightness7Icon /> : <Brightness4Icon />}
           </IconButton>

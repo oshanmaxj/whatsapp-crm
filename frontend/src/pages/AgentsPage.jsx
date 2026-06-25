@@ -11,7 +11,8 @@ import PersonOffIcon from '@mui/icons-material/PersonOff';
 import { getAgentPerformance } from '../services/agent.service';
 import { createUser, deactivateUser, getRoles, resetUserPassword, updateUser } from '../services/userManagement.service';
 
-const blankForm = { name: '', email: '', phone: '', password: '', role: 'agent', status: 'active' };
+const departments = ['Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing'];
+const blankForm = { name: '', email: '', phone: '', password: '', role: 'agent', department: 'Customer Care', status: 'active' };
 const roleLabels = {
   admin: 'Admin',
   manager: 'Manager',
@@ -64,6 +65,7 @@ function AgentsPage() {
       phone: agent.phone || '',
       password: '',
       role: agent.roles?.[0]?.name || 'agent',
+      department: agent.department || '',
       status: agent.status || 'active'
     });
   };
@@ -123,12 +125,14 @@ function AgentsPage() {
       <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
         <TableContainer>
           <Table>
-            <TableHead><TableRow><TableCell>Agent</TableCell><TableCell>Email</TableCell><TableCell>Role</TableCell><TableCell>Status</TableCell><TableCell>Assigned Leads</TableCell><TableCell>Assignment History</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Agent</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Department</TableCell><TableCell>Role</TableCell><TableCell>Status</TableCell><TableCell>Assigned Leads</TableCell><TableCell>Assignment History</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {agents.map((agent) => (
                 <TableRow key={agent.id} hover>
                   <TableCell><Typography fontWeight={800}>{agent.name}</Typography></TableCell>
                   <TableCell>{agent.email}</TableCell>
+                  <TableCell>{agent.phone || '-'}</TableCell>
+                  <TableCell>{agent.department || '-'}</TableCell>
                   <TableCell>{agent.roles?.map((role) => roleLabel(role.name)).join(', ') || 'Agent'}</TableCell>
                   <TableCell><Chip size="small" label={agent.status} color={agent.status === 'active' ? 'success' : 'default'} /></TableCell>
                   <TableCell>{agent.assignedLeadCount}</TableCell>
@@ -141,7 +145,7 @@ function AgentsPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {!loading && agents.length === 0 && <TableRow><TableCell colSpan={7}><Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>No active agents found.</Typography></TableCell></TableRow>}
+              {!loading && agents.length === 0 && <TableRow><TableCell colSpan={9}><Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>No active agents found.</Typography></TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>
@@ -156,6 +160,7 @@ function AgentsPage() {
             <TextField label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} fullWidth />
             {!editing && <TextField label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} fullWidth />}
             <TextField select label="Role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} fullWidth>{roles.map((role) => <MenuItem key={role.id} value={role.name}>{roleLabel(role.name)}</MenuItem>)}</TextField>
+            <TextField select label="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} fullWidth>{departments.map((department) => <MenuItem key={department} value={department}>{department}</MenuItem>)}</TextField>
             <TextField select label="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} fullWidth>{['active', 'inactive', 'suspended', 'pending'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField>
           </Stack>
         </DialogContent>

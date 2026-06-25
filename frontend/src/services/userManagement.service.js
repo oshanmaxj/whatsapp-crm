@@ -11,3 +11,5 @@ export const createRole = (payload) => api.post('/roles', payload);
 export const updateRole = (id, payload) => api.patch(`/roles/${id}`, payload);
 export const getPermissions = () => api.get('/permissions');
 export const setRolePermissions = (roleId, permissionIds) => api.put(`/roles/${roleId}/permissions`, { permissionIds });
+export const getUserPermissions = (id) => api.get(`/users/${id}/permissions`);
+export const setUserPermissions = (id, overrides) => api.put(`/users/${id}/permissions`, { overrides });

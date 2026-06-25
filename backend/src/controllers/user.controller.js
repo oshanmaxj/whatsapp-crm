@@ -93,6 +93,24 @@ class UserController {
     }
   }
 
+  async getUserPermissions(req, res, next) {
+    try {
+      const data = await userService.getUserPermissions(req.params.id);
+      return res.status(200).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async setUserPermissions(req, res, next) {
+    try {
+      const data = await userService.setUserPermissions(req.params.id, req.body.overrides || []);
+      return res.status(200).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   async createRole(req, res, next) {
     try {
       const role = await userService.createRole(req.body);

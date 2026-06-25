@@ -20,7 +20,7 @@ class ProductionController {
   async listAudit(req, res, next) { try { return ok(res, await auditService.list(req.query)); } catch (err) { next(err); } }
   async listSettings(req, res, next) { try { return ok(res, await settingsService.list()); } catch (err) { next(err); } }
   async saveSetting(req, res, next) { try { return ok(res, await settingsService.upsert(req.params.namespace, req.params.key, req.body.value || req.body, req.user?.id || null)); } catch (err) { next(err); } }
-  async reports(req, res, next) { try { return ok(res, await reportService.summary()); } catch (err) { next(err); } }
+  async reports(req, res, next) { try { return ok(res, await reportService.summary(req.query)); } catch (err) { next(err); } }
   async listBackups(req, res, next) { try { return ok(res, await backupService.list()); } catch (err) { next(err); } }
   async exportBackup(req, res, next) { try { return ok(res, await backupService.export(req.user?.id || null), 201); } catch (err) { next(err); } }
   async downloadBackup(req, res, next) {

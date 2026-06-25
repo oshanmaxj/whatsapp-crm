@@ -6,6 +6,7 @@ const Role = require('./role.model');
 const Permission = require('./permission.model');
 const UserRole = require('./userRole.model');
 const RolePermission = require('./rolePermission.model');
+const UserPermissionOverride = require('./userPermissionOverride.model');
 const Message = require('./message.model');
 const Contact = require('./contact.model');
 const LeadStatus = require('./leadStatus.model');
@@ -55,6 +56,7 @@ const models = {
   Permission: Permission(sequelize, Sequelize.DataTypes),
   UserRole: UserRole(sequelize, Sequelize.DataTypes),
   RolePermission: RolePermission(sequelize, Sequelize.DataTypes),
+  UserPermissionOverride: UserPermissionOverride(sequelize, Sequelize.DataTypes),
   Message: Message(sequelize, Sequelize.DataTypes),
   Contact: Contact(sequelize, Sequelize.DataTypes),
   LeadStatus: LeadStatus(sequelize, Sequelize.DataTypes),
@@ -146,6 +148,11 @@ models.Conversation.belongsToMany(models.Label, {
   foreignKey: 'conversation_id',
   otherKey: 'label_id'
 });
+
+models.User.hasMany(models.UserPermissionOverride, { foreignKey: 'user_id', as: 'permissionOverrides' });
+models.UserPermissionOverride.belongsTo(models.User, { foreignKey: 'user_id', as: 'user' });
+models.Permission.hasMany(models.UserPermissionOverride, { foreignKey: 'permission_id', as: 'userOverrides' });
+models.UserPermissionOverride.belongsTo(models.Permission, { foreignKey: 'permission_id', as: 'permission' });
 models.Label.belongsToMany(models.Conversation, {
   through: models.ConversationLabel,
   as: 'conversations',

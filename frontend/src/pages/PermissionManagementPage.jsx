@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel,
-  Grid, Paper, Stack, TextField, Typography
+  Grid, MenuItem, Paper, Stack, TextField, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import { createRole, getPermissions, getRoles, setRolePermissions, updateRole } from '../services/userManagement.service';
+import { createRole, getPermissions, getRoles, getUserPermissions, getUsers, setRolePermissions, setUserPermissions, updateRole } from '../services/userManagement.service';
 
 const permissionGroups = [
   'Dashboard', 'Contacts', 'Leads', 'Agents', 'Inbox', 'Campaigns', 'Workflows', 'Appointments',
@@ -31,7 +31,10 @@ function actionLabel(permission) {
 
 function PermissionManagementPage() {
   const [roles, setRoles] = useState([]);
+  const [users, setUsers] = useState([]);
   const [permissions, setPermissions] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [userPermissionRows, setUserPermissionRows] = useState([]);
   const [editingRole, setEditingRole] = useState(null);
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [roleName, setRoleName] = useState('');
@@ -39,15 +42,16 @@ function PermissionManagementPage() {
   const [error, setError] = useState('');
 
   const load = async () => {
-    const [rolesRes, permissionsRes] = await Promise.all([getRoles(), getPermissions()]);
+    const [rolesRes, permissionsRes, usersRes] = await Promise.all([getRoles(), getPermissions(), getUsers()]);
     setRoles(rolesRes.data.data || []);
     setPermissions(permissionsRes.data.data || []);
+    setUsers(usersRes.data.data || []);
   };
 
   useEffect(() => { load().catch((err) => setError(err.response?.data?.message || 'Unable to load permissions.')); }, []);
 
   const grouped = permissions.reduce((acc, permission) => {
-    const group = permission.name.replace(/\s+(View|Create|Edit|Delete|Export|Send)$/i, '');
+    const group = permission.name.replace(/\s+(View|Create|Edit|Delete|Export|Send|Publish|Test)$/i, '');
     acc[group] = acc[group] || [];
     acc[group].push(permission);
     return acc;
@@ -71,6 +75,29 @@ function PermissionManagementPage() {
     setRoleDialogOpen(false);
     setRoleName('');
     await load();
+  };
+
+  const loadUserPermissions = async (userId) => {
+    setSelectedUserId(userId);
+    if (!userId) {
+      setUserPermissionRows([]);
+      return;
+    }
+    const res = await getUserPermissions(userId);
+    setUserPermissionRows(res.data.data.permissions || []);
+  };
+
+  const setOverride = (code, override) => {
+    setUserPermissionRows((rows) => rows.map((row) => row.code === code ? { ...row, override, final: override === 'allow' || (override === 'inherit' && row.inherited) } : row));
+  };
+
+  const saveUserOverrides = async () => {
+    const overrides = userPermissionRows
+      .filter((row) => row.override !== 'inherit')
+      .map((row) => ({ code: row.code, effect: row.override }));
+    await setUserPermissions(selectedUserId, overrides);
+    setNotice('User permission overrides saved.');
+    await loadUserPermissions(selectedUserId);
   };
 
   return (
@@ -124,6 +151,41 @@ function PermissionManagementPage() {
           );
         })}
       </Grid>
+
+      <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="h6" fontWeight={850}>User Permission Overrides</Typography>
+            <Typography color="text.secondary">Inherited role permissions can be overridden per user with allow or deny.</Typography>
+          </Box>
+          <TextField select label="Select User" value={selectedUserId} onChange={(e) => loadUserPermissions(e.target.value)} sx={{ maxWidth: 420 }}>
+            <MenuItem value="">Select a user</MenuItem>
+            {users.map((user) => <MenuItem key={user.id} value={user.id}>{[user.firstName, user.lastName].filter(Boolean).join(' ') || user.email} - {user.email}</MenuItem>)}
+          </TextField>
+          {selectedUserId && (
+            <>
+              <Grid container spacing={1.5}>
+                {userPermissionRows.map((permission) => (
+                  <Grid item xs={12} md={6} lg={4} key={permission.code}>
+                    <Paper variant="outlined" sx={{ p: 1.5 }}>
+                      <Typography fontWeight={800}>{permission.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Inherited: {permission.inherited ? 'Yes' : 'No'} | Final: {permission.final ? 'Allowed' : 'Denied'}
+                      </Typography>
+                      <TextField select size="small" label="Override" value={permission.override} onChange={(e) => setOverride(permission.code, e.target.value)} fullWidth sx={{ mt: 1 }}>
+                        <MenuItem value="inherit">Inherit</MenuItem>
+                        <MenuItem value="allow">Allow</MenuItem>
+                        <MenuItem value="deny">Deny</MenuItem>
+                      </TextField>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+              <Button variant="contained" onClick={saveUserOverrides} sx={{ alignSelf: 'flex-start' }}>Save User Overrides</Button>
+            </>
+          )}
+        </Stack>
+      </Paper>
 
       <Dialog open={roleDialogOpen} onClose={() => { setEditingRole(null); setRoleName(''); setRoleDialogOpen(false); }} maxWidth="xs" fullWidth>
         <DialogTitle>{editingRole ? 'Edit Role' : 'Create Role'}</DialogTitle>

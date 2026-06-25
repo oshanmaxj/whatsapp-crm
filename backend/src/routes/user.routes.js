@@ -15,6 +15,8 @@ router.get('/roles', userController.getRoles.bind(userController));
 router.get('/permissions', userController.getPermissions.bind(userController));
 router.post('/', validateBody(createUserSchema), userController.create.bind(userController));
 router.get('/:id', userController.getById.bind(userController));
+router.get('/:id/permissions', userController.getUserPermissions.bind(userController));
+router.put('/:id/permissions', userController.setUserPermissions.bind(userController));
 router.patch('/:id', validateBody(updateUserSchema), userController.update.bind(userController));
 router.delete('/:id', userController.remove.bind(userController));
 router.post('/:id/reset-password', validateBody(resetPasswordSchema), userController.resetPassword.bind(userController));

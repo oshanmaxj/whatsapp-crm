@@ -9,7 +9,8 @@ import LockResetIcon from '@mui/icons-material/LockReset';
 import PersonOffIcon from '@mui/icons-material/PersonOff';
 import { createUser, deactivateUser, getRoles, getUsers, resetUserPassword, updateUser } from '../services/userManagement.service';
 
-const blankForm = { name: '', email: '', phone: '', password: '', role: 'agent', status: 'active' };
+const departments = ['Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing'];
+const blankForm = { name: '', email: '', phone: '', password: '', role: 'agent', department: 'Customer Care', status: 'active' };
 const roleLabels = {
   admin: 'Admin',
   manager: 'Manager',
@@ -54,7 +55,7 @@ function UserManagerPage() {
   const openCreate = () => { setEditing(null); setForm(blankForm); };
   const openEdit = (user) => {
     setEditing(user);
-    setForm({ name: displayName(user), email: user.email, phone: user.phone || '', password: '', role: primaryRole(user), status: user.status });
+    setForm({ name: displayName(user), email: user.email, phone: user.phone || '', password: '', role: primaryRole(user), department: user.department || '', status: user.status });
   };
 
   const save = async () => {
@@ -103,13 +104,14 @@ function UserManagerPage() {
       <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
         <TableContainer>
           <Table>
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Role</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Department</TableCell><TableCell>Role</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {users.map((user) => (
                 <TableRow key={user.id} hover>
                   <TableCell><Typography fontWeight={800}>{displayName(user)}</Typography></TableCell>
                   <TableCell>{user.email}</TableCell>
                   <TableCell>{user.phone || '-'}</TableCell>
+                  <TableCell>{user.department || '-'}</TableCell>
                   <TableCell>{user.roles?.map((role) => roleLabel(role.name)).join(', ') || '-'}</TableCell>
                   <TableCell><Chip size="small" label={user.status} color={user.status === 'active' ? 'success' : 'default'} /></TableCell>
                   <TableCell align="right">
@@ -133,6 +135,7 @@ function UserManagerPage() {
             <Grid item xs={12}><TextField label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} fullWidth /></Grid>
             {!editing && <Grid item xs={12}><TextField label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} fullWidth /></Grid>}
             <Grid item xs={12} md={6}><TextField select label="Role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} fullWidth>{roleOptions.map((role) => <MenuItem key={role} value={role}>{roleLabel(role)}</MenuItem>)}</TextField></Grid>
+            <Grid item xs={12} md={6}><TextField select label="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} fullWidth>{departments.map((department) => <MenuItem key={department} value={department}>{department}</MenuItem>)}</TextField></Grid>
             <Grid item xs={12} md={6}><TextField select label="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} fullWidth>{['active', 'inactive', 'suspended', 'pending'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField></Grid>
           </Grid>
         </DialogContent>

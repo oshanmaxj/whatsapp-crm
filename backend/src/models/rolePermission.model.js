@@ -16,7 +16,11 @@ module.exports = (sequelize, DataTypes) => {
     createdAt: 'granted_at',
     updatedAt: false,
     underscored: true,
-    indexes: [{ fields: ['role_id'] }, { fields: ['permission_id'] }]
+    indexes: [
+      { unique: true, fields: ['role_id', 'permission_id'] },
+      { fields: ['role_id'] },
+      { fields: ['permission_id'] }
+    ]
   });
 
   return RolePermission;

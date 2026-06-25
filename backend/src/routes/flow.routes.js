@@ -1,0 +1,21 @@
+const express = require('express');
+const flowController = require('../controllers/flow.controller');
+const authMiddleware = require('../middleware/auth.middleware');
+const requirePermission = require('../middleware/permission.middleware');
+
+const router = express.Router();
+
+router.use(authMiddleware.authenticate);
+
+router.get('/', requirePermission('flow-builder.view'), flowController.list.bind(flowController));
+router.get('/:id', requirePermission('flow-builder.view'), flowController.get.bind(flowController));
+router.post('/', requirePermission('flow-builder.create'), flowController.create.bind(flowController));
+router.patch('/:id', requirePermission('flow-builder.edit'), flowController.update.bind(flowController));
+router.delete('/:id', requirePermission('flow-builder.delete'), flowController.remove.bind(flowController));
+router.post('/:id/save-builder', requirePermission('flow-builder.edit'), flowController.saveBuilder.bind(flowController));
+router.post('/:id/publish', requirePermission('flow-builder.publish'), flowController.publish.bind(flowController));
+router.post('/:id/test', requirePermission('flow-builder.test'), flowController.test.bind(flowController));
+router.get('/:id/analytics', requirePermission('flow-builder.view'), flowController.analytics.bind(flowController));
+router.get('/:id/runs', requirePermission('flow-builder.view'), flowController.runs.bind(flowController));
+
+module.exports = router;

@@ -137,12 +137,33 @@ class EducationService {
   }
 
   async createStudent(payload) {
-    if (!payload.contactId || !payload.name || !payload.phone) {
-      throw Object.assign(new Error('Contact, name, and phone are required'), { status: 400 });
+    if (!payload.name || !payload.phone) {
+      throw Object.assign(new Error('Student name and phone are required'), { status: 400 });
+    }
+    if (!payload.courseId) {
+      throw Object.assign(new Error('Course is required'), { status: 400 });
+    }
+    let contactId = payload.contactId || null;
+    if (!contactId) {
+      const [firstName, ...rest] = String(payload.name || '').trim().split(/\s+/).filter(Boolean);
+      const [contact] = await Contact.findOrCreate({
+        where: { phone: payload.phone },
+        defaults: {
+          firstName: firstName || payload.name,
+          lastName: rest.join(' ') || null,
+          phone: payload.phone,
+          email: payload.email || null,
+          status: 'active'
+        }
+      });
+      if (payload.email && contact.email !== payload.email) {
+        await contact.update({ email: payload.email });
+      }
+      contactId = contact.id;
     }
     return Student.create({
       studentNo: payload.studentNo || studentNo(),
-      contactId: payload.contactId,
+      contactId,
       leadId: payload.leadId || null,
       courseId: payload.courseId || null,
       batchId: payload.batchId || null,

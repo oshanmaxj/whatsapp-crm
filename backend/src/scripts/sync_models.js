@@ -3,6 +3,7 @@ dotenv.config();
 
 const validateEnv = require('../config/validateEnv');
 const { sequelize } = require('../models');
+const userService = require('../services/user.service');
 
 async function run() {
   try {
@@ -10,7 +11,12 @@ async function run() {
     await sequelize.authenticate();
     console.log('Database connection established successfully.');
 
+    await userService.repairAccessDuplicates().catch((error) => {
+      console.warn('Access duplicate repair skipped before sync:', error.message || error);
+    });
+
     await sequelize.sync({ alter: true });
+    await userService.ensureAccessDefaults();
     console.log('All models synced successfully.');
     process.exit(0);
   } catch (error) {

@@ -10,6 +10,8 @@ import ContactsPage from './pages/ContactsPage';
 import ConnectWhatsAppPage from './pages/ConnectWhatsAppPage';
 import CampaignsPage from './pages/CampaignsPage';
 import DashboardPage from './pages/DashboardPage';
+import FlowBuilderEditorPage from './pages/FlowBuilderEditorPage';
+import FlowBuilderListPage from './pages/FlowBuilderListPage';
 import { AttendancePage, BatchesPage, CertificatesPage, CoursesPage, FeesPage, StudentsPage } from './pages/EducationPages';
 import CrmLayout from './components/CrmLayout';
 import AgentsPage from './pages/AgentsPage';
@@ -60,6 +62,8 @@ function App() {
             <Route path="/campaigns" element={permit('campaigns.view', <CampaignsPage />)} />
             <Route path="/connect-whatsapp" element={permit('connect-whatsapp.view', <ConnectWhatsAppPage />)} />
             <Route path="/workflows" element={permit('workflows.view', <WorkflowsPage />)} />
+            <Route path="/flow-builder" element={permit('flow-builder.view', <FlowBuilderListPage />)} />
+            <Route path="/flow-builder/:id" element={permit('flow-builder.edit', <FlowBuilderEditorPage />)} />
             <Route path="/appointments" element={permit('appointments.view', <AppointmentsPage />)} />
             <Route path="/courses" element={permit('courses.view', <CoursesPage />)} />
             <Route path="/batches" element={permit('batches.view', <BatchesPage />)} />

@@ -266,6 +266,16 @@ class WhatsappService {
       await this.sendTextMessage({ to: from, text: autoReply });
     }
 
+    const flowService = require('./flow.service');
+    await flowService.handleInboundMessage({
+      text,
+      contact: assignmentResult.contact,
+      lead: assignmentResult.lead
+    }).catch((error) => {
+      logger.warn('flow_builder_execution_failed', error);
+      return null;
+    });
+
     socketService.emitToRoom(`conversation_${assignmentResult.conversation.id}`, 'whatsapp.message.received', {
       conversationId: assignmentResult.conversation.id,
       contactId: assignmentResult.contact.id,

@@ -24,8 +24,8 @@ const modules = {
     update: updateCourse,
     remove: deleteCourse,
     initial: { name: '', code: '', category: '', durationWeeks: '', feeAmount: '', status: 'active', description: '' },
-    fields: ['name', 'code', 'category', 'durationWeeks', 'feeAmount', 'status', 'description'],
-    columns: ['name', 'code', 'category', 'durationWeeks', 'feeAmount', 'status']
+    fields: ['code', 'name', 'category', 'feeAmount', 'durationWeeks', 'status', 'description'],
+    columns: ['code', 'name', 'category', 'feeAmount', 'durationWeeks', 'status']
   },
   batches: {
     title: 'Batch Management',
@@ -35,7 +35,7 @@ const modules = {
     remove: deleteBatch,
     initial: { courseId: '', name: '', code: '', startDate: '', endDate: '', schedule: '', capacity: '', status: 'upcoming' },
     fields: ['courseId', 'name', 'code', 'startDate', 'endDate', 'schedule', 'capacity', 'status'],
-    columns: ['name', 'code', 'course.name', 'startDate', 'schedule', 'status']
+    columns: ['name', 'code', 'course.code', 'course.name', 'startDate', 'schedule', 'status']
   },
   students: {
     title: 'Student Management',
@@ -43,8 +43,8 @@ const modules = {
     create: createStudent,
     update: updateStudent,
     remove: deleteStudent,
-    initial: { contactId: '', name: '', phone: '', email: '', courseId: '', batchId: '', status: 'enrolled', notes: '' },
-    fields: ['contactId', 'name', 'phone', 'email', 'courseId', 'batchId', 'status', 'notes'],
+    initial: { name: '', phone: '', email: '', courseId: '', batchId: '', status: 'enrolled', notes: '' },
+    fields: ['name', 'phone', 'email', 'courseId', 'batchId', 'status', 'notes'],
     columns: ['studentNo', 'name', 'phone', 'course.name', 'batch.name', 'status']
   },
   fees: {
@@ -91,7 +91,19 @@ function normalizePayload(form) {
   return payload;
 }
 
-function Field({ name, value, onChange }) {
+function courseLabel(course) {
+  return [course.code, course.name, course.category].filter(Boolean).join(' - ');
+}
+
+function batchLabel(batch) {
+  return [batch.name, batch.course?.name, batch.schedule].filter(Boolean).join(' - ');
+}
+
+function studentLabel(student) {
+  return [student.studentNo, student.name, student.course?.name, student.batch?.name].filter(Boolean).join(' - ');
+}
+
+function Field({ name, value, onChange, moduleKey, form, lookups }) {
   const label = name.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
   const selectOptions = {
     status: ['active', 'inactive', 'archived', 'upcoming', 'completed', 'cancelled', 'enrolled', 'dropped', 'suspended', 'pending', 'partial', 'paid', 'overdue', 'present', 'absent', 'late', 'excused', 'draft', 'issued', 'revoked'],
@@ -99,6 +111,43 @@ function Field({ name, value, onChange }) {
   };
   if (selectOptions[name]) {
     return <FormControl fullWidth><InputLabel>{label}</InputLabel><Select label={label} value={value || ''} onChange={(e) => onChange(name, e.target.value)}>{selectOptions[name].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>;
+  }
+  if (name === 'courseId') {
+    const activeCourses = lookups.courses.filter((course) => !['batches', 'students'].includes(moduleKey) || course.status === 'active');
+    return (
+      <FormControl fullWidth required={moduleKey === 'batches' || moduleKey === 'students'}>
+        <InputLabel>Course</InputLabel>
+        <Select label="Course" value={value || ''} onChange={(e) => onChange(name, e.target.value)}>
+          {activeCourses.map((course) => <MenuItem key={course.id} value={course.id}>{courseLabel(course)}</MenuItem>)}
+          {activeCourses.length === 0 && <MenuItem disabled>No active courses available</MenuItem>}
+        </Select>
+      </FormControl>
+    );
+  }
+  if (name === 'batchId') {
+    const courseId = String(form.courseId || '');
+    const batches = lookups.batches.filter((batch) => String(batch.courseId) === courseId);
+    return (
+      <FormControl fullWidth disabled={!courseId || batches.length === 0} required={moduleKey === 'students'}>
+        <InputLabel>Batch</InputLabel>
+        <Select label="Batch" value={value || ''} onChange={(e) => onChange(name, e.target.value)}>
+          {batches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{batchLabel(batch)}</MenuItem>)}
+          {!courseId && <MenuItem disabled>Select a course first</MenuItem>}
+          {courseId && batches.length === 0 && <MenuItem disabled>No batches available for this course</MenuItem>}
+        </Select>
+      </FormControl>
+    );
+  }
+  if (name === 'studentId') {
+    return (
+      <FormControl fullWidth required>
+        <InputLabel>Student</InputLabel>
+        <Select label="Student" value={value || ''} onChange={(e) => onChange(name, e.target.value)}>
+          {lookups.students.map((student) => <MenuItem key={student.id} value={student.id}>{studentLabel(student)}</MenuItem>)}
+          {lookups.students.length === 0 && <MenuItem disabled>No students available</MenuItem>}
+        </Select>
+      </FormControl>
+    );
   }
   const type = name.toLowerCase().includes('date') || name === 'issuedAt' ? 'date' : name.toLowerCase().includes('amount') || name.includes('Id') || name.includes('Weeks') || name.includes('Count') || name === 'capacity' ? 'number' : 'text';
   return <TextField label={label} type={type} value={value || ''} onChange={(e) => onChange(name, e.target.value)} multiline={name === 'notes' || name === 'description'} minRows={name === 'notes' || name === 'description' ? 3 : undefined} InputLabelProps={type === 'date' ? { shrink: true } : undefined} fullWidth />;
@@ -111,6 +160,7 @@ function EducationModulePage({ moduleKey }) {
   const [editing, setEditing] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [lookups, setLookups] = useState({ courses: [], batches: [], students: [] });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -123,8 +173,18 @@ function EducationModulePage({ moduleKey }) {
   const load = async () => {
     try {
       setLoading(true);
-      const response = await config.list();
+      const [response, coursesRes, batchesRes, studentsRes] = await Promise.all([
+        config.list(),
+        ['batches', 'students', 'fees', 'attendance', 'certificates'].includes(moduleKey) ? listCourses() : Promise.resolve({ data: { data: [] } }),
+        ['students', 'fees', 'attendance', 'certificates'].includes(moduleKey) ? listBatches() : Promise.resolve({ data: { data: [] } }),
+        ['fees', 'attendance', 'certificates'].includes(moduleKey) ? listStudents() : Promise.resolve({ data: { data: [] } })
+      ]);
       setRows(response.data.data || []);
+      setLookups({
+        courses: coursesRes.data.data || [],
+        batches: batchesRes.data.data || [],
+        students: studentsRes.data.data || []
+      });
     } catch (err) {
       setError(err.response?.data?.message || `Unable to load ${config.title}.`);
     } finally {
@@ -151,6 +211,18 @@ function EducationModulePage({ moduleKey }) {
   const save = async () => {
     try {
       const payload = normalizePayload(form);
+      if (moduleKey === 'batches' && !payload.courseId) {
+        setError('Course is required when creating a batch.');
+        return;
+      }
+      if (moduleKey === 'students' && !payload.courseId) {
+        setError('Course is required when creating a student.');
+        return;
+      }
+      if (moduleKey === 'students' && !payload.batchId) {
+        setError('Batch is required when creating a student.');
+        return;
+      }
       if (editing) await config.update(editing.id, payload);
       else await config.create(payload);
       setSuccess(editing ? 'Record updated.' : 'Record created.');
@@ -232,7 +304,25 @@ function EducationModulePage({ moduleKey }) {
         <DialogTitle>{editing ? 'Edit Record' : 'Add Record'}</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            {config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} onChange={(name, value) => setForm({ ...form, [name]: value })} /></Grid>)}
+            {config.fields.map((field) => (
+              <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}>
+                <Field
+                  name={field}
+                  value={form[field]}
+                  moduleKey={moduleKey}
+                  form={form}
+                  lookups={lookups}
+                  onChange={(name, value) => setForm((current) => ({
+                    ...current,
+                    [name]: value,
+                    ...(name === 'courseId' ? { batchId: '' } : {})
+                  }))}
+                />
+              </Grid>
+            ))}
+            {moduleKey === 'students' && form.courseId && lookups.batches.filter((batch) => String(batch.courseId) === String(form.courseId)).length === 0 && (
+              <Grid item xs={12}><Alert severity="info">No batches available for this course.</Alert></Grid>
+            )}
           </Grid>
         </DialogContent>
         <DialogActions><Button onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" onClick={save}>Save</Button></DialogActions>

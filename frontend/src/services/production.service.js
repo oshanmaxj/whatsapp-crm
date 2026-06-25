@@ -15,3 +15,4 @@ export const getReportsSummary = () => api.get('/reports/summary');
 export const getAuditLogs = (params = {}) => api.get('/audit-logs', { params });
 export const getBackups = () => api.get('/backups');
 export const exportBackup = () => api.post('/backups/export');
+export const downloadBackupUrl = (id) => `${api.defaults.baseURL}/backups/${id}/download`;

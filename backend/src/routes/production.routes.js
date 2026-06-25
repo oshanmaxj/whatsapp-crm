@@ -22,5 +22,6 @@ router.put('/settings/:namespace/:key', requirePermission('settings.edit'), prod
 router.get('/reports/summary', requirePermission('reports.view'), apiCache({ ttlSeconds: 30 }), productionController.reports.bind(productionController));
 router.get('/backups', productionController.listBackups.bind(productionController));
 router.post('/backups/export', productionController.exportBackup.bind(productionController));
+router.get('/backups/:id/download', productionController.downloadBackup.bind(productionController));
 
 module.exports = router;

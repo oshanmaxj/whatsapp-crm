@@ -1,4 +1,5 @@
-const { User, Role, Permission } = require('../models');
+const { Permission, Role, RolePermission, sequelize, User, UserRole } = require('../models');
+const logger = require('../config/logger');
 
 const ROLE_NAMES = ['Admin', 'Manager', 'Agent', 'Marketing', 'Accountant', 'Lecturer'];
 const PERMISSION_GROUPS = [
@@ -19,9 +20,13 @@ const PERMISSION_GROUPS = [
   'Reports',
   'Settings',
   'Connect WhatsApp',
+  'Flow Builder',
   'User Manager'
 ];
 const PERMISSION_ACTIONS = ['View', 'Create', 'Edit', 'Delete', 'Export', 'Send'];
+const EXTRA_PERMISSION_ACTIONS = {
+  'Flow Builder': ['Publish', 'Test']
+};
 
 function permissionCode(group, action) {
   return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase()}`;
@@ -35,7 +40,83 @@ function serializeUser(user) {
 }
 
 class UserService {
+  async repairAccessDuplicates() {
+    await this.repairDuplicateRows({
+      model: Role,
+      keyField: 'name',
+      reassign: async (keepId, duplicateId) => {
+        await UserRole.update({ roleId: keepId }, { where: { roleId: duplicateId } }).catch(() => null);
+        await RolePermission.update({ roleId: keepId }, { where: { roleId: duplicateId } }).catch(() => null);
+      }
+    });
+
+    await this.repairDuplicateRows({
+      model: Permission,
+      keyField: 'code',
+      reassign: async (keepId, duplicateId) => {
+        await RolePermission.update({ permissionId: keepId }, { where: { permissionId: duplicateId } }).catch(() => null);
+      }
+    });
+
+    await this.repairDuplicatePermissionNames();
+
+    await this.repairDuplicateRolePermissions();
+  }
+
+  async repairDuplicateRows({ model, keyField, reassign }) {
+    const rows = await model.findAll({ paranoid: false, order: [['id', 'ASC']] });
+    const seen = new Map();
+    for (const row of rows) {
+      const key = String(row[keyField] || '').trim().toLowerCase();
+      if (!key) continue;
+      if (!seen.has(key)) {
+        seen.set(key, row);
+        continue;
+      }
+
+      const keep = seen.get(key);
+      await reassign(keep.id, row.id);
+      await row.destroy({ force: true }).catch((error) => {
+        logger.warn('access_duplicate_cleanup_failed', { model: model.name, id: row.id, error });
+      });
+    }
+  }
+
+  async repairDuplicateRolePermissions() {
+    await sequelize.query(`
+      DELETE FROM role_permissions a
+      USING role_permissions b
+      WHERE a.ctid < b.ctid
+        AND a.role_id = b.role_id
+        AND a.permission_id = b.permission_id
+    `).catch((error) => {
+      logger.warn('role_permission_duplicate_cleanup_failed', error);
+    });
+  }
+
+  async repairDuplicatePermissionNames() {
+    const rows = await Permission.findAll({ paranoid: false, order: [['id', 'ASC']] });
+    const seen = new Set();
+    for (const row of rows) {
+      const key = String(row.name || '').trim().toLowerCase();
+      if (!key) continue;
+      if (!seen.has(key)) {
+        seen.add(key);
+        continue;
+      }
+      const nextName = `${row.name} (${row.code})`.slice(0, 150);
+      await row.update({ name: nextName }).catch((error) => {
+        logger.warn('permission_name_duplicate_repair_failed', { id: row.id, name: row.name, error });
+      });
+      seen.add(String(nextName).toLowerCase());
+    }
+  }
+
   async ensureAccessDefaults() {
+    await this.repairAccessDuplicates().catch((error) => {
+      logger.warn('access_duplicate_repair_failed', error);
+    });
+
     const roles = {};
     for (const name of ROLE_NAMES) {
       const [role] = await Role.findOrCreate({
@@ -47,7 +128,7 @@ class UserService {
 
     const permissions = [];
     for (const group of PERMISSION_GROUPS) {
-      for (const action of PERMISSION_ACTIONS) {
+      for (const action of [...PERMISSION_ACTIONS, ...(EXTRA_PERMISSION_ACTIONS[group] || [])]) {
         const code = permissionCode(group, action);
         const [permission] = await Permission.findOrCreate({
           where: { code },
@@ -57,9 +138,29 @@ class UserService {
       }
     }
 
-    await roles.Admin.setPermissions(permissions);
+    for (const permission of permissions) {
+      await RolePermission.findOrCreate({
+        where: { roleId: roles.Admin.id, permissionId: permission.id },
+        defaults: { roleId: roles.Admin.id, permissionId: permission.id }
+      }).catch((error) => {
+        logger.warn('admin_permission_seed_skipped', {
+          roleId: roles.Admin.id,
+          permissionId: permission.id,
+          error
+        });
+      });
+    }
 
     return { roles, permissions };
+  }
+
+  async safeEnsureAccessDefaults() {
+    try {
+      return await this.ensureAccessDefaults();
+    } catch (error) {
+      logger.warn('access_default_seed_failed', error);
+      return { roles: {}, permissions: [] };
+    }
   }
 
   async getUsers(query = {}) {
@@ -236,7 +337,7 @@ class UserService {
   }
 
   async getUserAccessPayload(id) {
-    await this.ensureAccessDefaults();
+    await this.safeEnsureAccessDefaults();
     const user = await User.findByPk(id, {
       include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }]
     });

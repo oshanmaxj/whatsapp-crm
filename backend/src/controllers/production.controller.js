@@ -23,6 +23,19 @@ class ProductionController {
   async reports(req, res, next) { try { return ok(res, await reportService.summary()); } catch (err) { next(err); } }
   async listBackups(req, res, next) { try { return ok(res, await backupService.list()); } catch (err) { next(err); } }
   async exportBackup(req, res, next) { try { return ok(res, await backupService.export(req.user?.id || null), 201); } catch (err) { next(err); } }
+  async downloadBackup(req, res, next) {
+    try {
+      const backup = await backupService.get(req.params.id);
+      if (!backup.filePath || backup.status !== 'completed') {
+        const error = new Error('Backup file is not available');
+        error.status = 404;
+        throw error;
+      }
+      return res.download(backup.filePath);
+    } catch (err) {
+      next(err);
+    }
+  }
 }
 
 module.exports = new ProductionController();

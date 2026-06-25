@@ -29,6 +29,16 @@ class BackupService {
   async list() {
     return BackupJob.findAll({ order: [['created_at', 'DESC']], limit: 50 });
   }
+
+  async get(id) {
+    const job = await BackupJob.findByPk(id);
+    if (!job) {
+      const error = new Error('Backup not found');
+      error.status = 404;
+      throw error;
+    }
+    return job;
+  }
 }
 
 module.exports = new BackupService();

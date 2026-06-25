@@ -1,22 +1,34 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
-  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, LinearProgress,
-  Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography
+  Alert, Avatar, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid,
+  IconButton, InputAdornment, LinearProgress, Paper, Stack, Switch, Tab, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import BackupIcon from '@mui/icons-material/Backup';
 import BusinessIcon from '@mui/icons-material/Business';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import EmailIcon from '@mui/icons-material/Email';
-import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import SaveIcon from '@mui/icons-material/Save';
 import SecurityIcon from '@mui/icons-material/Security';
+import SendIcon from '@mui/icons-material/Send';
+import SettingsIcon from '@mui/icons-material/Settings';
+import StorageIcon from '@mui/icons-material/Storage';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import {
-  enqueueMessage, exportBackup, getAuditLogs, getBackups, getNotifications, getQueue, getQueueStats,
+  downloadBackupUrl, enqueueMessage, exportBackup, getAuditLogs, getBackups, getNotifications, getQueue, getQueueStats,
   getReportsSummary, getSettings, markNotificationRead, processQueue, saveSetting
 } from '../services/production.service';
+import {
+  getWhatsappSettings,
+  saveWhatsappSettings,
+  testWhatsappConnection,
+  testWhatsappSend
+} from '../services/whatsappConnect.service';
 
 function JsonField({ value, onChange, minRows = 4 }) {
   return <TextField value={value} onChange={(e) => onChange(e.target.value)} multiline minRows={minRows} fullWidth />;
@@ -120,29 +132,339 @@ export function NotificationsPage() {
 }
 
 export function ProductionSettingsPage() {
-  const [rows, setRows] = useState([]);
-  const [editing, setEditing] = useState(null);
-  const [value, setValue] = useState('{}');
+  const [tab, setTab] = useState('company');
+  const [settings, setSettings] = useState({});
+  const [company, setCompany] = useState({ name: '', phone: '', email: '', address: '', website: '', logoUrl: '' });
+  const [branding, setBranding] = useState({ primaryColor: '#25d366', sidebarColor: '#0b1f1a', logoUrl: '', darkModeDefault: false });
+  const [whatsapp, setWhatsapp] = useState({ accessToken: '', phoneNumberId: '', businessAccountId: '', verifyToken: '', webhookUrl: '' });
+  const [smtp, setSmtp] = useState({ host: '', port: 587, username: '', password: '', secure: false, fromEmail: '', fromName: '' });
+  const [security, setSecurity] = useState({ timeoutMinutes: 120, passwordMinLength: 6, requireStrongPassword: false, loginHistoryEnabled: true });
   const [backups, setBackups] = useState([]);
+  const [showSecrets, setShowSecrets] = useState(false);
+  const [testPhone, setTestPhone] = useState('');
+  const [testMessage, setTestMessage] = useState('Settings test message');
+  const [testEmail, setTestEmail] = useState('');
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const backendUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
+  const frontendUrl = window.location.origin;
+  const appVersion = process.env.REACT_APP_VERSION || '0.1.0';
+
+  const settingMap = (rows) => rows.reduce((acc, row) => {
+    acc[`${row.namespace}.${row.key}`] = row.value || {};
+    return acc;
+  }, {});
+
   const load = async () => {
-    setRows((await getSettings()).data.data || []);
-    setBackups((await getBackups()).data.data || []);
+    setLoading(true);
+    setError('');
+    try {
+      const [settingsRes, backupsRes, whatsappRes] = await Promise.all([
+        getSettings(),
+        getBackups(),
+        getWhatsappSettings().catch(() => ({ data: { data: {} } }))
+      ]);
+      const map = settingMap(settingsRes.data.data || []);
+      const companyProfile = map['company.profile'] || {};
+      const brandingTheme = map['branding.theme'] || {};
+      const smtpSettings = map['smtp.settings'] || {};
+      const securitySession = map['security.session'] || {};
+      const whatsappSettings = whatsappRes.data.data || map['whatsapp.cloud_api'] || {};
+
+      setSettings(map);
+      setCompany({
+        name: companyProfile.name || '',
+        phone: companyProfile.phone || '',
+        email: companyProfile.email || '',
+        address: companyProfile.address || '',
+        website: companyProfile.website || '',
+        logoUrl: companyProfile.logoUrl || brandingTheme.logoUrl || ''
+      });
+      setBranding({
+        primaryColor: brandingTheme.primaryColor || '#25d366',
+        sidebarColor: brandingTheme.sidebarColor || '#0b1f1a',
+        logoUrl: brandingTheme.logoUrl || companyProfile.logoUrl || '',
+        darkModeDefault: Boolean(brandingTheme.darkModeDefault)
+      });
+      setWhatsapp({
+        accessToken: whatsappSettings.accessToken || '',
+        phoneNumberId: whatsappSettings.phoneNumberId || '',
+        businessAccountId: whatsappSettings.businessAccountId || '',
+        verifyToken: whatsappSettings.verifyToken || '',
+        webhookUrl: whatsappSettings.webhookUrl || `${backendUrl}/webhooks/whatsapp`,
+        status: whatsappSettings.status || 'Not Connected'
+      });
+      setSmtp({
+        host: smtpSettings.host || '',
+        port: smtpSettings.port || 587,
+        username: smtpSettings.username || '',
+        password: smtpSettings.password || '',
+        secure: Boolean(smtpSettings.secure),
+        fromEmail: smtpSettings.fromEmail || '',
+        fromName: smtpSettings.fromName || ''
+      });
+      setSecurity({
+        timeoutMinutes: securitySession.timeoutMinutes || 120,
+        passwordMinLength: securitySession.passwordMinLength || 6,
+        requireStrongPassword: Boolean(securitySession.requireStrongPassword),
+        loginHistoryEnabled: securitySession.loginHistoryEnabled !== false
+      });
+      setBackups(backupsRes.data.data || []);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to load settings.');
+    } finally {
+      setLoading(false);
+    }
   };
+
   useEffect(() => { load(); }, []);
-  const save = async () => {
-    await saveSetting(editing.namespace, editing.key, JSON.parse(value));
-    setEditing(null);
+
+  const mask = (value) => {
+    if (!value) return '';
+    if (showSecrets) return value;
+    if (String(value).includes('****')) return value;
+    return `${String(value).slice(0, 4)}****${String(value).slice(-4)}`;
+  };
+
+  const secretProps = (field, value, setter, object) => ({
+    type: showSecrets ? 'text' : 'password',
+    value: showSecrets ? value : mask(value),
+    onChange: (event) => setter({ ...object, [field]: event.target.value }),
+    InputProps: {
+      endAdornment: (
+        <InputAdornment position="end">
+          <IconButton onClick={() => setShowSecrets((current) => !current)} edge="end">
+            {showSecrets ? <VisibilityOffIcon /> : <VisibilityIcon />}
+          </IconButton>
+        </InputAdornment>
+      )
+    }
+  });
+
+  const uploadLogo = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCompany((current) => ({ ...current, logoUrl: reader.result }));
+      setBranding((current) => ({ ...current, logoUrl: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveCompany = async () => {
+    await saveSetting('company', 'profile', company);
+    await saveSetting('branding', 'theme', { ...branding, logoUrl: company.logoUrl || branding.logoUrl });
+    setNotice('Company profile saved.');
+  };
+
+  const saveBranding = async () => {
+    await saveSetting('branding', 'theme', branding);
+    setNotice('Branding saved.');
+  };
+
+  const saveWhatsapp = async () => {
+    await saveWhatsappSettings({
+      ...whatsapp,
+      accessToken: String(whatsapp.accessToken).includes('****') ? '' : whatsapp.accessToken
+    });
+    setNotice('WhatsApp API settings saved.');
+  };
+
+  const saveSmtp = async () => {
+    const current = settings['smtp.settings'] || {};
+    await saveSetting('smtp', 'settings', {
+      ...smtp,
+      password: String(smtp.password).includes('****') ? current.password || '' : smtp.password
+    });
+    setNotice('SMTP settings saved.');
+  };
+
+  const saveSecurity = async () => {
+    await saveSetting('security', 'session', security);
+    setNotice('Security settings saved.');
+  };
+
+  const runBackup = async () => {
+    await exportBackup();
+    setNotice('Backup exported.');
     await load();
   };
-  const adminLinks = [
-    { title: 'Company Profile', path: '/company-profile', icon: <BusinessIcon />, text: 'Logo, contact details, address, and branding.' },
-    { title: 'SMTP Settings', path: '/smtp-settings', icon: <EmailIcon />, text: 'Outgoing mail host, credentials, and sender identity.' },
-    { title: 'Connect WhatsApp', path: '/connect-whatsapp', icon: <WhatsAppIcon />, text: 'Cloud API credentials, webhook, and test sending.' },
-    { title: 'User Manager', path: '/users', icon: <ManageAccountsIcon />, text: 'Users, roles, status, and password resets.' },
-    { title: 'Permissions', path: '/permissions', icon: <SecurityIcon />, text: 'Role permissions and module access.' }
+
+  const runWhatsappTest = async () => {
+    await testWhatsappConnection();
+    setNotice('WhatsApp connection test succeeded.');
+    await load();
+  };
+
+  const runTestSend = async () => {
+    await testWhatsappSend({ to: testPhone, message: testMessage });
+    setNotice('WhatsApp test message request completed.');
+  };
+
+  const runTestEmail = async () => {
+    if (!testEmail) {
+      setError('Enter a test email address first.');
+      return;
+    }
+    setNotice('SMTP settings look ready. A real send endpoint is not configured yet.');
+  };
+
+  const copy = async (value, label) => {
+    await navigator.clipboard.writeText(value || '');
+    setNotice(`${label} copied.`);
+  };
+
+  const submit = async (handler) => {
+    setError('');
+    try {
+      await handler();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to save settings.');
+    }
+  };
+
+  const tabs = [
+    ['company', 'Company Profile', <BusinessIcon />],
+    ['branding', 'Branding', <SettingsIcon />],
+    ['whatsapp', 'WhatsApp API', <WhatsAppIcon />],
+    ['smtp', 'SMTP Email', <EmailIcon />],
+    ['security', 'Security & Session', <SecurityIcon />],
+    ['backup', 'Backup', <BackupIcon />],
+    ['system', 'System Info', <StorageIcon />]
   ];
 
-  return <Stack spacing={2.5}><Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}><Stack direction={{ xs: 'column', md: 'row' }} spacing={2}><Box sx={{ flex: 1 }}><Typography variant="h5" fontWeight={850}>Admin Settings</Typography><Typography color="text.secondary">Company profile, WhatsApp, SMTP, permissions, branding, and backups.</Typography></Box><Button startIcon={<BackupIcon />} onClick={async () => { await exportBackup(); await load(); }}>Export Backup</Button></Stack></Paper><Grid container spacing={2}>{adminLinks.map((item) => <Grid item xs={12} sm={6} lg={4} key={item.path}><Paper component={Link} to={item.path} sx={{ p: 2.5, border: '1px solid #e8edf2', display: 'block', textDecoration: 'none', color: 'text.primary', height: '100%' }} elevation={0}><Stack direction="row" spacing={1.5} alignItems="center"><Box sx={{ color: 'success.main' }}>{item.icon}</Box><Typography fontWeight={850}>{item.title}</Typography></Stack><Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{item.text}</Typography></Paper></Grid>)}</Grid><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850} sx={{ mb: 1 }}>Advanced Settings</Typography><Grid container spacing={2}>{rows.map((row) => <Grid item xs={12} md={6} key={row.id}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography fontWeight={850}>{row.namespace}.{row.key}</Typography><Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(row.value, null, 2)}</Typography><Button sx={{ mt: 1 }} onClick={() => { setEditing(row); setValue(JSON.stringify(row.value, null, 2)); }}>Edit JSON</Button></Paper></Grid>)}</Grid></Paper><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Backups</Typography>{backups.map((job) => <Typography key={job.id} variant="body2">{job.id} - {job.status} - {job.filePath || '-'}</Typography>)}</Paper><Dialog open={!!editing} onClose={() => setEditing(null)} maxWidth="md" fullWidth><DialogTitle>Edit Setting</DialogTitle><DialogContent><JsonField value={value} onChange={setValue} /></DialogContent><DialogActions><Button onClick={() => setEditing(null)}>Cancel</Button><Button variant="contained" onClick={save}>Save</Button></DialogActions></Dialog></Stack>;
+  const latestBackup = backups.find((backup) => backup.status === 'completed') || backups[0];
+
+  return (
+    <Stack spacing={2.5}>
+      {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
+      {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+      {loading && <LinearProgress />}
+      <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }} elevation={0}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h5" fontWeight={850}>Settings</Typography>
+            <Typography color="text.secondary">Manage company, branding, integrations, security, backups, and system status.</Typography>
+          </Box>
+          <Button variant="contained" startIcon={<BackupIcon />} onClick={() => submit(runBackup)}>Export Backup</Button>
+        </Stack>
+      </Paper>
+
+      <Paper sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }} elevation={0}>
+        <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
+          {tabs.map(([value, label, icon]) => <Tab key={value} value={value} icon={icon} iconPosition="start" label={label} />)}
+        </Tabs>
+
+        <Box sx={{ p: { xs: 2, md: 3 } }}>
+          {tab === 'company' && (
+            <Grid container spacing={2.5}>
+              <Grid item xs={12} md={3}>
+                <Paper variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
+                  <Avatar src={company.logoUrl || branding.logoUrl} sx={{ width: 110, height: 110, mx: 'auto', mb: 2 }}>{company.name?.charAt(0) || 'C'}</Avatar>
+                  <Button component="label" variant="outlined" fullWidth>
+                    Upload Logo
+                    <input hidden accept="image/*" type="file" onChange={uploadLogo} />
+                  </Button>
+                </Paper>
+              </Grid>
+              <Grid item xs={12} md={9}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}><TextField label="Company name" value={company.name} onChange={(e) => setCompany({ ...company, name: e.target.value })} fullWidth /></Grid>
+                  <Grid item xs={12} md={6}><TextField label="Website" value={company.website} onChange={(e) => setCompany({ ...company, website: e.target.value })} fullWidth /></Grid>
+                  <Grid item xs={12} md={6}><TextField label="Phone" value={company.phone} onChange={(e) => setCompany({ ...company, phone: e.target.value })} fullWidth /></Grid>
+                  <Grid item xs={12} md={6}><TextField label="Email" value={company.email} onChange={(e) => setCompany({ ...company, email: e.target.value })} fullWidth /></Grid>
+                  <Grid item xs={12}><TextField label="Address" value={company.address} onChange={(e) => setCompany({ ...company, address: e.target.value })} fullWidth multiline minRows={3} /></Grid>
+                </Grid>
+                <Button sx={{ mt: 2 }} variant="contained" startIcon={<SaveIcon />} onClick={() => submit(saveCompany)}>Save Company Profile</Button>
+              </Grid>
+            </Grid>
+          )}
+
+          {tab === 'branding' && (
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={4}><TextField label="Primary color" type="color" value={branding.primaryColor} onChange={(e) => setBranding({ ...branding, primaryColor: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12} md={4}><TextField label="Sidebar color" type="color" value={branding.sidebarColor} onChange={(e) => setBranding({ ...branding, sidebarColor: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12} md={4}><FormControlLabel control={<Switch checked={branding.darkModeDefault} onChange={(e) => setBranding({ ...branding, darkModeDefault: e.target.checked })} />} label="Dark mode default" /></Grid>
+              <Grid item xs={12}>
+                <Paper variant="outlined" sx={{ p: 2, display: 'flex', gap: 2, alignItems: 'center', bgcolor: branding.sidebarColor, color: '#fff' }}>
+                  <Avatar src={branding.logoUrl || company.logoUrl}>{company.name?.charAt(0) || 'C'}</Avatar>
+                  <Box><Typography fontWeight={850}>{company.name || 'Company Name'}</Typography><Typography variant="body2">Logo preview</Typography></Box>
+                </Paper>
+              </Grid>
+              <Grid item xs={12}><Button variant="contained" startIcon={<SaveIcon />} onClick={() => submit(saveBranding)}>Save Branding</Button></Grid>
+            </Grid>
+          )}
+
+          {tab === 'whatsapp' && (
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}><TextField label="Access token" fullWidth {...secretProps('accessToken', whatsapp.accessToken, setWhatsapp, whatsapp)} /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Phone number ID" value={whatsapp.phoneNumberId} onChange={(e) => setWhatsapp({ ...whatsapp, phoneNumberId: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Business account ID" value={whatsapp.businessAccountId} onChange={(e) => setWhatsapp({ ...whatsapp, businessAccountId: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Verify token" fullWidth {...secretProps('verifyToken', whatsapp.verifyToken, setWhatsapp, whatsapp)} /></Grid>
+              <Grid item xs={12}><TextField label="Webhook callback URL" value={whatsapp.webhookUrl} onChange={(e) => setWhatsapp({ ...whatsapp, webhookUrl: e.target.value })} fullWidth InputProps={{ endAdornment: <InputAdornment position="end"><Tooltip title="Copy"><IconButton onClick={() => copy(whatsapp.webhookUrl, 'Webhook URL')}><ContentCopyIcon /></IconButton></Tooltip></InputAdornment> }} /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Test phone" value={testPhone} onChange={(e) => setTestPhone(e.target.value)} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Test message" value={testMessage} onChange={(e) => setTestMessage(e.target.value)} fullWidth /></Grid>
+              <Grid item xs={12}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}><Button variant="contained" startIcon={<SaveIcon />} onClick={() => submit(saveWhatsapp)}>Save WhatsApp API</Button><Button variant="outlined" onClick={() => submit(runWhatsappTest)}>Test Connection</Button><Button variant="outlined" startIcon={<SendIcon />} onClick={() => submit(runTestSend)} disabled={!testPhone}>Test Send Message</Button></Stack></Grid>
+            </Grid>
+          )}
+
+          {tab === 'smtp' && (
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={8}><TextField label="Host" value={smtp.host} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12} md={4}><TextField label="Port" type="number" value={smtp.port} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) })} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Username" value={smtp.username} onChange={(e) => setSmtp({ ...smtp, username: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Password" fullWidth {...secretProps('password', smtp.password, setSmtp, smtp)} /></Grid>
+              <Grid item xs={12} md={6}><TextField label="From email" value={smtp.fromEmail} onChange={(e) => setSmtp({ ...smtp, fromEmail: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Test email" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} fullWidth /></Grid>
+              <Grid item xs={12}><FormControlLabel control={<Switch checked={smtp.secure} onChange={(e) => setSmtp({ ...smtp, secure: e.target.checked })} />} label="Secure SMTP connection" /></Grid>
+              <Grid item xs={12}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}><Button variant="contained" startIcon={<SaveIcon />} onClick={() => submit(saveSmtp)}>Save SMTP</Button><Button variant="outlined" startIcon={<SendIcon />} onClick={() => submit(runTestEmail)}>Test Email</Button></Stack></Grid>
+            </Grid>
+          )}
+
+          {tab === 'security' && (
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}><TextField label="Session timeout minutes" type="number" value={security.timeoutMinutes} onChange={(e) => setSecurity({ ...security, timeoutMinutes: Number(e.target.value) })} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><TextField label="Password minimum length" type="number" value={security.passwordMinLength} onChange={(e) => setSecurity({ ...security, passwordMinLength: Number(e.target.value) })} fullWidth /></Grid>
+              <Grid item xs={12} md={6}><FormControlLabel control={<Switch checked={security.requireStrongPassword} onChange={(e) => setSecurity({ ...security, requireStrongPassword: e.target.checked })} />} label="Require strong password" /></Grid>
+              <Grid item xs={12} md={6}><FormControlLabel control={<Switch checked={security.loginHistoryEnabled} onChange={(e) => setSecurity({ ...security, loginHistoryEnabled: e.target.checked })} />} label="Login history enabled" /></Grid>
+              <Grid item xs={12}><Button variant="contained" startIcon={<SaveIcon />} onClick={() => submit(saveSecurity)}>Save Security Settings</Button></Grid>
+            </Grid>
+          )}
+
+          {tab === 'backup' && (
+            <Stack spacing={2}>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography variant="h6" fontWeight={850}>Backup</Typography>
+                <Typography color="text.secondary">Last backup: {latestBackup?.createdAt ? new Date(latestBackup.createdAt).toLocaleString() : 'No backups yet'}</Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2 }}>
+                  <Button variant="contained" startIcon={<BackupIcon />} onClick={() => submit(runBackup)}>Export Backup</Button>
+                  <Button variant="outlined" startIcon={<DownloadIcon />} disabled={!latestBackup?.filePath} href={latestBackup?.id ? downloadBackupUrl(latestBackup.id) : undefined}>Download Backup File</Button>
+                </Stack>
+              </Paper>
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small"><TableHead><TableRow><TableCell>ID</TableCell><TableCell>Status</TableCell><TableCell>Created</TableCell><TableCell>File</TableCell></TableRow></TableHead><TableBody>{backups.map((backup) => <TableRow key={backup.id}><TableCell>{backup.id}</TableCell><TableCell><Chip size="small" label={backup.status} /></TableCell><TableCell>{backup.createdAt ? new Date(backup.createdAt).toLocaleString() : '-'}</TableCell><TableCell>{backup.filePath || '-'}</TableCell></TableRow>)}</TableBody></Table>
+              </TableContainer>
+            </Stack>
+          )}
+
+          {tab === 'system' && (
+            <Grid container spacing={2}>
+              {[
+                ['Backend URL', backendUrl],
+                ['Frontend URL', frontendUrl],
+                ['Database status', Object.keys(settings).length ? 'Connected' : 'Unknown'],
+                ['WhatsApp status', whatsapp.status || (whatsapp.phoneNumberId ? 'Configured' : 'Not Connected')],
+                ['App version', appVersion]
+              ].map(([label, value]) => <Grid item xs={12} md={6} key={label}><Paper variant="outlined" sx={{ p: 2 }}><Typography color="text.secondary">{label}</Typography><Typography fontWeight={850} sx={{ overflowWrap: 'anywhere' }}>{value}</Typography></Paper></Grid>)}
+            </Grid>
+          )}
+        </Box>
+      </Paper>
+    </Stack>
+  );
 }
 
 export function ReportsPage() {

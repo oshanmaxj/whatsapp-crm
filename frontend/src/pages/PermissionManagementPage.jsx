@@ -9,9 +9,9 @@ import { createRole, getPermissions, getRoles, setRolePermissions, updateRole } 
 const permissionGroups = [
   'Dashboard', 'Contacts', 'Leads', 'Agents', 'Inbox', 'Campaigns', 'Workflows', 'Appointments',
   'Courses', 'Batches', 'Students', 'Fees', 'Attendance', 'Certificates', 'Reports', 'Settings',
-  'Connect WhatsApp', 'User Manager'
+  'Connect WhatsApp', 'Flow Builder', 'User Manager'
 ];
-const permissionActions = ['View', 'Create', 'Edit', 'Delete', 'Export', 'Send'];
+const permissionActions = ['View', 'Create', 'Edit', 'Delete', 'Export', 'Send', 'Publish', 'Test'];
 const roleLabels = {
   admin: 'Admin',
   manager: 'Manager',

@@ -26,6 +26,12 @@ const CampaignEvent = require('./campaignEvent.model');
 const Workflow = require('./workflow.model');
 const WorkflowStep = require('./workflowStep.model');
 const WorkflowRun = require('./workflowRun.model');
+const Flow = require('./flow.model');
+const FlowNode = require('./flowNode.model');
+const FlowConnection = require('./flowConnection.model');
+const FlowRun = require('./flowRun.model');
+const FlowRunLog = require('./flowRunLog.model');
+const GoogleSheetConnection = require('./googleSheetConnection.model');
 const Appointment = require('./appointment.model');
 const AppointmentRequest = require('./appointmentRequest.model');
 const Course = require('./course.model');
@@ -69,6 +75,12 @@ const models = {
   Workflow: Workflow(sequelize, Sequelize.DataTypes),
   WorkflowStep: WorkflowStep(sequelize, Sequelize.DataTypes),
   WorkflowRun: WorkflowRun(sequelize, Sequelize.DataTypes),
+  Flow: Flow(sequelize, Sequelize.DataTypes),
+  FlowNode: FlowNode(sequelize, Sequelize.DataTypes),
+  FlowConnection: FlowConnection(sequelize, Sequelize.DataTypes),
+  FlowRun: FlowRun(sequelize, Sequelize.DataTypes),
+  FlowRunLog: FlowRunLog(sequelize, Sequelize.DataTypes),
+  GoogleSheetConnection: GoogleSheetConnection(sequelize, Sequelize.DataTypes),
   Appointment: Appointment(sequelize, Sequelize.DataTypes),
   AppointmentRequest: AppointmentRequest(sequelize, Sequelize.DataTypes),
   Course: Course(sequelize, Sequelize.DataTypes),

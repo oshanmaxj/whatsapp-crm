@@ -11,10 +11,21 @@ export const updateBatch = (id, payload) => api.patch(`/batches/${id}`, payload)
 export const deleteBatch = (id) => api.delete(`/batches/${id}`);
 
 export const listStudents = (params = {}) => api.get('/students', { params });
+export const getStudentProfile = (id) => api.get(`/students/${id}/profile`);
 export const createStudent = (payload) => api.post('/students', payload);
 export const updateStudent = (id, payload) => api.patch(`/students/${id}`, payload);
 export const deleteStudent = (id) => api.delete(`/students/${id}`);
 export const convertLeadToStudent = (leadId, payload) => api.post(`/leads/${leadId}/convert-to-student`, payload);
+export const listStudentNotes = (id) => api.get(`/students/${id}/notes`);
+export const createStudentNote = (id, payload) => api.post(`/students/${id}/notes`, payload);
+export const deleteStudentNote = (id) => api.delete(`/students/notes/${id}`);
+export const listStudentDocuments = (id) => api.get(`/students/${id}/documents`);
+export const createStudentDocument = (id, payload) => api.post(`/students/${id}/documents`, payload);
+export const deleteStudentDocument = (id) => api.delete(`/students/documents/${id}`);
+export const listStudentGuardians = (id) => api.get(`/students/${id}/guardians`);
+export const createStudentGuardian = (id, payload) => api.post(`/students/${id}/guardians`, payload);
+export const updateStudentGuardian = (guardianId, payload) => api.patch(`/students/guardians/${guardianId}`, payload);
+export const deleteStudentGuardian = (guardianId) => api.delete(`/students/guardians/${guardianId}`);
 
 export const listFees = (params = {}) => api.get('/fees', { params });
 export const createFee = (payload) => api.post('/fees', payload);

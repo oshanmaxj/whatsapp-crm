@@ -18,6 +18,17 @@ router.patch('/batches/:id', educationController.updateBatch.bind(educationContr
 router.delete('/batches/:id', educationController.deleteBatch.bind(educationController));
 
 router.get('/students', educationController.listStudents.bind(educationController));
+router.get('/students/:id/profile', educationController.getStudentProfile.bind(educationController));
+router.get('/students/:id/notes', educationController.listStudentNotes.bind(educationController));
+router.post('/students/:id/notes', educationController.createStudentNote.bind(educationController));
+router.delete('/students/notes/:id', educationController.deleteStudentNote.bind(educationController));
+router.get('/students/:id/documents', educationController.listStudentDocuments.bind(educationController));
+router.post('/students/:id/documents', educationController.createStudentDocument.bind(educationController));
+router.delete('/students/documents/:id', educationController.deleteStudentDocument.bind(educationController));
+router.get('/students/:id/guardians', educationController.listStudentGuardians.bind(educationController));
+router.post('/students/:id/guardians', educationController.createStudentGuardian.bind(educationController));
+router.patch('/students/guardians/:guardianId', educationController.updateStudentGuardian.bind(educationController));
+router.delete('/students/guardians/:guardianId', educationController.deleteStudentGuardian.bind(educationController));
 router.get('/students/:id', educationController.getStudent.bind(educationController));
 router.post('/students', educationController.createStudent.bind(educationController));
 router.patch('/students/:id', educationController.updateStudent.bind(educationController));

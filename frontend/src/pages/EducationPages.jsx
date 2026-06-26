@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControl, Grid,
   IconButton, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack, Table, TableBody, TableCell,
@@ -313,7 +314,7 @@ function EducationModulePage({ moduleKey }) {
     <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
       {loading && <LinearProgress />}
       <TableContainer><Table><TableHead><TableRow>{config.columns.map((column) => <TableCell key={column}>{column}</TableCell>)}<TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-        {rows.map((row) => <TableRow hover key={row.id}>{config.columns.map((column) => <TableCell key={column}>{column === 'status' ? <Chip size="small" label={getValue(row, column)} /> : getValue(row, column)}</TableCell>)}<TableCell align="right"><Stack direction="row" spacing={0.5} justifyContent="flex-end">{moduleKey === 'fees' && <IconButton onClick={() => setInstallmentFee(row)}><VisibilityIcon /></IconButton>}<IconButton onClick={() => openEdit(row)}><EditIcon /></IconButton><IconButton color="error" onClick={() => remove(row)}><DeleteOutlineIcon /></IconButton></Stack></TableCell></TableRow>)}
+        {rows.map((row) => <TableRow hover key={row.id}>{config.columns.map((column) => <TableCell key={column}>{column === 'status' ? <Chip size="small" label={getValue(row, column)} /> : getValue(row, column)}</TableCell>)}<TableCell align="right"><Stack direction="row" spacing={0.5} justifyContent="flex-end">{moduleKey === 'students' && <IconButton component={RouterLink} to={`/students/${row.id}`}><VisibilityIcon /></IconButton>}{moduleKey === 'fees' && <IconButton onClick={() => setInstallmentFee(row)}><VisibilityIcon /></IconButton>}<IconButton onClick={() => openEdit(row)}><EditIcon /></IconButton><IconButton color="error" onClick={() => remove(row)}><DeleteOutlineIcon /></IconButton></Stack></TableCell></TableRow>)}
         {!loading && rows.length === 0 && <TableRow><TableCell colSpan={config.columns.length + 1}><Box sx={{ py: 5, textAlign: 'center' }}><Typography fontWeight={800}>No records found</Typography><Typography color="text.secondary">Create the first record for this module.</Typography></Box></TableCell></TableRow>}
       </TableBody></Table></TableContainer>
     </Paper>

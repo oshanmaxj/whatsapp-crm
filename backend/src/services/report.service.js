@@ -5,6 +5,7 @@ const {
   Campaign,
   CampaignRecipient,
   Certificate,
+  ClassReminder,
   Contact,
   Conversation,
   Course,
@@ -18,6 +19,11 @@ const {
   User
 } = require('../models');
 const logger = require('../config/logger');
+const feeReminderService = require('./feeReminder.service');
+const classReminderService = require('./classReminder.service');
+const whatsappComplianceService = require('./whatsappCompliance.service');
+const automationService = require('./automation.service');
+const attendanceAlertService = require('./attendanceAlert.service');
 
 const REPORT_TITLES = {
   overview: 'Overview Report',
@@ -36,7 +42,12 @@ const REPORT_TITLES = {
   attendance: 'Attendance Summary Report',
   'student-completion': 'Student Completion Report',
   'lead-source-conversion': 'Lead Source Conversion Report',
-  'follow-up-pending': 'Follow-up Pending Report'
+  'follow-up-pending': 'Follow-up Pending Report',
+  'fee-reminders': 'Fee Reminder Report',
+  'class-reminders': 'Class Reminder Report',
+  automations: 'Automation Report',
+  'attendance-alerts': 'Attendance Alert Report',
+  compliance: 'WhatsApp Compliance Report'
 };
 
 const STUDENT_STATUSES = ['enrolled', 'active', 'pending', 'completed', 'dropped', 'suspended'];
@@ -188,7 +199,12 @@ class ReportService {
       attendance: () => this.attendanceReport(filters),
       'student-completion': () => this.studentCompletionReport(filters),
       'lead-source-conversion': () => this.leadSourceConversionReport(filters),
-      'follow-up-pending': () => this.followupPendingReport(filters)
+      'follow-up-pending': () => this.followupPendingReport(filters),
+      'fee-reminders': () => this.feeReminderReport(filters),
+      'class-reminders': () => this.classReminderReport(filters),
+      automations: () => this.automationReport(filters),
+      'attendance-alerts': () => this.attendanceAlertReport(filters),
+      compliance: () => this.complianceReport(filters)
     }[type];
     if (!handler) return emptyReport(type, filters);
     try {
@@ -721,6 +737,163 @@ class ReportService {
       { key: 'status', label: 'Status' },
       { key: 'notes', label: 'Notes' }
     ], rows);
+  }
+
+  async feeReminderReport(filters) {
+    const report = await feeReminderService.report(filters);
+    const rows = report.rows.map((row) => ({
+      scheduledDate: dateValue(row.scheduledDate),
+      sentDate: dateValue(row.sentDate),
+      student: row.student?.name || '',
+      phone: row.student?.phone || '',
+      course: row.fee?.course?.name || '',
+      batch: row.fee?.batch?.name || '',
+      type: row.reminderType,
+      status: row.status,
+      channel: row.channel,
+      amount: Math.max(amount(row.installment?.amount) - amount(row.installment?.paidAmount), 0).toFixed(2)
+    }));
+    return makeReport('fee-reminders', filters, [
+      { label: 'Total Sent', value: report.totalSent },
+      { label: 'Total Failed', value: report.totalFailed },
+      { label: 'Upcoming', value: report.upcoming },
+      { label: 'Due Today', value: report.dueToday },
+      { label: 'Overdue', value: report.overdue },
+      { label: 'Collection Forecast', value: report.collectionForecast.toFixed(2) }
+    ], [
+      { key: 'scheduledDate', label: 'Scheduled date' },
+      { key: 'sentDate', label: 'Sent date' },
+      { key: 'student', label: 'Student' },
+      { key: 'phone', label: 'Phone' },
+      { key: 'course', label: 'Course' },
+      { key: 'batch', label: 'Batch' },
+      { key: 'type', label: 'Type' },
+      { key: 'status', label: 'Status' },
+      { key: 'channel', label: 'Channel' },
+      { key: 'amount', label: 'Amount' }
+    ], rows, this.countChart(rows, 'status'));
+  }
+
+  async complianceReport(filters) {
+    const report = await whatsappComplianceService.report(filters);
+    const rows = report.logs.map((row) => ({
+      date: dateValue(row.createdAt),
+      contactId: row.contactId || '',
+      messageType: row.messageType,
+      windowStatus: row.windowStatus,
+      templateId: row.templateId || '',
+      allowed: row.allowed ? 'Allowed' : 'Blocked',
+      reason: row.reason || ''
+    }));
+    return makeReport('compliance', filters, [
+      { label: 'Messages Sent', value: report.messagesSent },
+      { label: 'Template Messages', value: report.templateMessages },
+      { label: 'Free Form Messages', value: report.freeFormMessages },
+      { label: 'Violations Prevented', value: report.violationsPrevented }
+    ], [
+      { key: 'date', label: 'Date' },
+      { key: 'contactId', label: 'Contact ID' },
+      { key: 'messageType', label: 'Message type' },
+      { key: 'windowStatus', label: 'Window status' },
+      { key: 'templateId', label: 'Template ID' },
+      { key: 'allowed', label: 'Allowed' },
+      { key: 'reason', label: 'Reason' }
+    ], rows, this.countChart(rows, 'allowed'));
+  }
+
+  async classReminderReport(filters) {
+    const report = await classReminderService.getClassReminderReport(filters);
+    const rows = report.rows.map((row) => ({
+      scheduleDate: dateValue(row.scheduleDate),
+      sentTime: dateValue(row.sentTime),
+      student: row.student?.name || '',
+      course: row.batch?.course?.name || '',
+      batch: row.batch?.name || '',
+      type: row.reminderType,
+      status: row.status,
+      channel: row.channel,
+      attendance: ''
+    }));
+    return makeReport('class-reminders', filters, [
+      { label: 'Scheduled', value: report.scheduled },
+      { label: 'Sent', value: report.sent },
+      { label: 'Failed', value: report.failed },
+      { label: 'Delivery Rate', value: `${report.deliveryRate}%` },
+      { label: 'Classes Today', value: report.classesToday },
+      { label: 'Attendance After Reminder', value: `${report.attendanceCorrelation.attendanceRateAfterReminder}%` }
+    ], [
+      { key: 'scheduleDate', label: 'Class date' },
+      { key: 'sentTime', label: 'Sent time' },
+      { key: 'student', label: 'Student' },
+      { key: 'course', label: 'Course' },
+      { key: 'batch', label: 'Batch' },
+      { key: 'type', label: 'Type' },
+      { key: 'status', label: 'Status' },
+      { key: 'channel', label: 'Channel' },
+      { key: 'attendance', label: 'Attendance correlation' }
+    ], rows, this.countChart(rows, 'status'));
+  }
+
+  async automationReport(filters) {
+    const report = await automationService.getAutomationReport(filters);
+    const rows = report.logs.map((row) => ({
+      date: dateValue(row.startedAt),
+      automation: row.automation?.name || '',
+      code: row.automation?.code || '',
+      status: row.status,
+      startedAt: row.startedAt ? new Date(row.startedAt).toLocaleString() : '',
+      completedAt: row.completedAt ? new Date(row.completedAt).toLocaleString() : '',
+      message: row.message || ''
+    }));
+    return makeReport('automations', filters, [
+      { label: 'Runs', value: report.runs },
+      { label: 'Success', value: report.success },
+      { label: 'Failed', value: report.failed },
+      { label: 'Success Rate', value: `${report.successRate}%` },
+      { label: 'Most Active Automation', value: report.mostActiveAutomation }
+    ], [
+      { key: 'date', label: 'Date' },
+      { key: 'automation', label: 'Automation' },
+      { key: 'code', label: 'Code' },
+      { key: 'status', label: 'Status' },
+      { key: 'startedAt', label: 'Started' },
+      { key: 'completedAt', label: 'Completed' },
+      { key: 'message', label: 'Message' }
+    ], rows, report.failureTrends.map((item) => ({ label: item.date, value: item.count })));
+  }
+
+  async attendanceAlertReport(filters) {
+    const report = await attendanceAlertService.getAttendanceAlertReport(filters);
+    const rows = report.rows.map((row) => ({
+      date: dateValue(row.scheduledDate),
+      sentDate: dateValue(row.sentDate),
+      student: row.student?.name || '',
+      course: row.student?.course?.name || '',
+      batch: row.student?.batch?.name || '',
+      guardian: row.guardian?.name || '',
+      alertType: row.alertType,
+      recipientType: row.recipientType,
+      status: row.status
+    }));
+    return makeReport('attendance-alerts', filters, [
+      { label: 'Generated Alerts', value: report.generatedAlerts },
+      { label: 'Sent Alerts', value: report.sentAlerts },
+      { label: 'Failed Alerts', value: report.failedAlerts },
+      { label: 'Students Below 75%', value: report.studentsBelow75 },
+      { label: 'Students Below 50%', value: report.studentsBelow50 },
+      { label: 'Guardian Alerts Sent', value: report.guardianAlertsSent },
+      { label: 'Student Alerts Sent', value: report.studentAlertsSent }
+    ], [
+      { key: 'date', label: 'Scheduled date' },
+      { key: 'sentDate', label: 'Sent date' },
+      { key: 'student', label: 'Student' },
+      { key: 'course', label: 'Course' },
+      { key: 'batch', label: 'Batch' },
+      { key: 'guardian', label: 'Guardian' },
+      { key: 'alertType', label: 'Alert type' },
+      { key: 'recipientType', label: 'Recipients' },
+      { key: 'status', label: 'Status' }
+    ], rows, this.countChart(rows, 'status'));
   }
 
   async overviewReport(filters) {

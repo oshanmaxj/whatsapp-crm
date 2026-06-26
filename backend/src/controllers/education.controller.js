@@ -16,6 +16,7 @@ class EducationController {
   async deleteBatch(req, res, next) { try { return ok(res, await educationService.deleteBatch(req.params.id)); } catch (err) { next(err); } }
 
   async listStudents(req, res, next) { try { return ok(res, await educationService.listStudents(req.query)); } catch (err) { next(err); } }
+  async getStudentProfile(req, res, next) { try { return ok(res, await educationService.getStudentProfile(req.params.id)); } catch (err) { next(err); } }
   async getStudent(req, res, next) { try { return ok(res, await educationService.getStudent(req.params.id)); } catch (err) { next(err); } }
   async createStudent(req, res, next) { try { return ok(res, await educationService.createStudent(req.body), 201); } catch (err) { next(err); } }
   async updateStudent(req, res, next) { try { return ok(res, await educationService.updateStudent(req.params.id, req.body)); } catch (err) { next(err); } }
@@ -39,6 +40,19 @@ class EducationController {
   async createCertificate(req, res, next) { try { return ok(res, await educationService.createCertificate(req.body, req.user?.id || null), 201); } catch (err) { next(err); } }
   async updateCertificate(req, res, next) { try { return ok(res, await educationService.updateCertificate(req.params.id, req.body)); } catch (err) { next(err); } }
   async deleteCertificate(req, res, next) { try { return ok(res, await educationService.deleteCertificate(req.params.id)); } catch (err) { next(err); } }
+
+  async listStudentNotes(req, res, next) { try { return ok(res, await educationService.listStudentNotes(req.params.id)); } catch (err) { next(err); } }
+  async createStudentNote(req, res, next) { try { return ok(res, await educationService.createStudentNote(req.params.id, req.body, req.user?.id || null), 201); } catch (err) { next(err); } }
+  async deleteStudentNote(req, res, next) { try { return ok(res, await educationService.deleteStudentNote(req.params.id)); } catch (err) { next(err); } }
+
+  async listStudentDocuments(req, res, next) { try { return ok(res, await educationService.listStudentDocuments(req.params.id)); } catch (err) { next(err); } }
+  async createStudentDocument(req, res, next) { try { return ok(res, await educationService.createStudentDocument(req.params.id, req.body, req.user?.id || null), 201); } catch (err) { next(err); } }
+  async deleteStudentDocument(req, res, next) { try { return ok(res, await educationService.deleteStudentDocument(req.params.id)); } catch (err) { next(err); } }
+
+  async listStudentGuardians(req, res, next) { try { return ok(res, await educationService.listStudentGuardians(req.params.id)); } catch (err) { next(err); } }
+  async createStudentGuardian(req, res, next) { try { return ok(res, await educationService.createStudentGuardian(req.params.id, req.body), 201); } catch (err) { next(err); } }
+  async updateStudentGuardian(req, res, next) { try { return ok(res, await educationService.updateStudentGuardian(req.params.guardianId, req.body)); } catch (err) { next(err); } }
+  async deleteStudentGuardian(req, res, next) { try { return ok(res, await educationService.deleteStudentGuardian(req.params.guardianId)); } catch (err) { next(err); } }
 }
 
 module.exports = new EducationController();

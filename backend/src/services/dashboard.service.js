@@ -1,15 +1,25 @@
 const { Op, fn, col, literal } = require('sequelize');
 const {
   sequelize,
+  AttendanceAlert,
+  AttendanceRecord,
+  Batch,
+  ClassReminder,
   Contact,
   Conversation,
+  FeeInstallment,
   Followup,
   Lead,
   LeadAssignment,
   LeadSource,
   LeadStatus,
   Message,
-  User
+  StudentFee,
+  User,
+  AppSetting,
+  Automation,
+  AutomationLog,
+  WhatsAppTemplate
 } = require('../models');
 
 const RECENT_LIMIT = 5;
@@ -52,6 +62,11 @@ class DashboardService {
       pendingFollowups,
       newLeads,
       convertedLeads,
+      feeReminderWidgets,
+      classReminderWidgets,
+      automationWidgets,
+      attendanceAlertWidgets,
+      whatsappComplianceWidgets,
       leadsByStatus,
       leadsBySource,
       topAgents,
@@ -71,6 +86,11 @@ class DashboardService {
       Lead.count({
         include: [{ model: LeadStatus, as: 'status', where: { name: 'Converted' }, required: true }]
       }),
+      this.getFeeReminderWidgets(todayStart),
+      this.getClassReminderWidgets(todayStart),
+      this.getAutomationWidgets(todayStart),
+      this.getAttendanceAlertWidgets(todayStart),
+      this.getWhatsAppComplianceWidgets(),
       this.getLeadsByStatus(),
       this.getLeadsBySource(),
       this.getTopAgents(),
@@ -88,7 +108,28 @@ class DashboardService {
         newContactsToday,
         pendingFollowups,
         newLeads,
-        convertedLeads
+        convertedLeads,
+        installmentsDueToday: feeReminderWidgets.dueToday,
+        upcomingInstallments: feeReminderWidgets.upcoming,
+        overdueInstallments: feeReminderWidgets.overdue,
+        collectionForecast: feeReminderWidgets.collectionForecast,
+        classesToday: classReminderWidgets.classesToday,
+        classRemindersPending: classReminderWidgets.pending,
+        classRemindersSentToday: classReminderWidgets.sentToday,
+        classReminderFailures: classReminderWidgets.failures,
+        classReminderAutoSendEnabled: classReminderWidgets.autoSendEnabled,
+        activeAutomations: automationWidgets.active,
+        automationRunsToday: automationWidgets.todayRuns,
+        automationSuccessRate: automationWidgets.successRate,
+        automationFailedJobs: automationWidgets.failedJobs,
+        absentToday: attendanceAlertWidgets.absentToday,
+        attendanceAlertsPending: attendanceAlertWidgets.pending,
+        lowAttendanceStudents: attendanceAlertWidgets.lowAttendanceStudents,
+        attendanceAlertFailures: attendanceAlertWidgets.failures,
+        approvedTemplates: whatsappComplianceWidgets.approved,
+        pendingTemplates: whatsappComplianceWidgets.pending,
+        rejectedTemplates: whatsappComplianceWidgets.rejected,
+        qualityIssues: whatsappComplianceWidgets.qualityIssues
       },
       leadsByStatus,
       leadsBySource,
@@ -162,6 +203,95 @@ class DashboardService {
       order: [[fn('date', col('created_at')), 'ASC']],
       raw: true
     });
+  }
+
+  async getFeeReminderWidgets(todayStart = startOfDay()) {
+    const today = formatDateKey(todayStart);
+    const upcomingEnd = formatDateKey(addDays(todayStart, 7));
+    const activeWhere = { status: { [Op.notIn]: ['paid', 'cancelled'] } };
+    const [dueToday, upcoming, overdue, forecastRows] = await Promise.all([
+      FeeInstallment.count({ where: { ...activeWhere, dueDate: today } }),
+      FeeInstallment.count({ where: { ...activeWhere, dueDate: { [Op.gt]: today, [Op.lte]: upcomingEnd } } }),
+      FeeInstallment.count({ where: { ...activeWhere, dueDate: { [Op.lt]: today } } }),
+      FeeInstallment.findAll({
+        where: { ...activeWhere, dueDate: { [Op.gte]: today, [Op.lte]: upcomingEnd } },
+        include: [{ model: StudentFee, as: 'fee' }]
+      })
+    ]);
+    return {
+      dueToday,
+      upcoming,
+      overdue,
+      collectionForecast: forecastRows.reduce((sum, row) => sum + Math.max(toNumber(row.amount) - toNumber(row.paidAmount), 0), 0).toFixed(2)
+    };
+  }
+
+  async getWhatsAppComplianceWidgets() {
+    const [approved, pending, rejected, qualityIssues] = await Promise.all([
+      WhatsAppTemplate.count({ where: { status: 'APPROVED' } }),
+      WhatsAppTemplate.count({ where: { status: 'PENDING' } }),
+      WhatsAppTemplate.count({ where: { status: 'REJECTED' } }),
+      WhatsAppTemplate.count({ where: { qualityRating: { [Op.in]: ['LOW', 'UNKNOWN'] } } })
+    ]);
+    return { approved, pending, rejected, qualityIssues };
+  }
+
+  async getAutomationWidgets(todayStart = startOfDay()) {
+    const [active, todayRuns, successfulRuns, failedJobs, totalRuns] = await Promise.all([
+      Automation.count({ where: { enabled: true } }),
+      AutomationLog.count({ where: { startedAt: { [Op.gte]: todayStart } } }),
+      AutomationLog.count({ where: { status: 'success' } }),
+      AutomationLog.count({ where: { status: 'failed' } }),
+      AutomationLog.count({ where: { status: { [Op.in]: ['success', 'failed'] } } })
+    ]);
+    return {
+      active,
+      todayRuns,
+      failedJobs,
+      successRate: totalRuns ? Math.round((successfulRuns / totalRuns) * 10000) / 100 : 0
+    };
+  }
+
+  async getAttendanceAlertWidgets(todayStart = startOfDay()) {
+    const today = formatDateKey(todayStart);
+    const [absentToday, pending, failures, records] = await Promise.all([
+      AttendanceRecord.count({ where: { attendanceDate: today, status: 'absent' } }),
+      AttendanceAlert.count({ where: { status: 'pending' } }),
+      AttendanceAlert.count({ where: { status: 'failed', updatedAt: { [Op.gte]: todayStart } } }),
+      AttendanceRecord.findAll({ attributes: ['studentId', 'status'] })
+    ]);
+    const studentRecords = new Map();
+    records.forEach((record) => {
+      const rows = studentRecords.get(String(record.studentId)) || [];
+      rows.push(record);
+      studentRecords.set(String(record.studentId), rows);
+    });
+    const lowAttendanceStudents = Array.from(studentRecords.values()).filter((rows) => {
+      const attended = rows.filter((row) => ['present', 'late'].includes(row.status)).length;
+      return rows.length > 0 && (attended / rows.length) * 100 < 75;
+    }).length;
+    return { absentToday, pending, failures, lowAttendanceStudents };
+  }
+
+  async getClassReminderWidgets(todayStart = startOfDay()) {
+    const today = formatDateKey(todayStart);
+    const tomorrow = formatDateKey(addDays(todayStart, 1));
+    const [settingsRow, classesToday, pending, sentToday, failures] = await Promise.all([
+      AppSetting.findOne({ where: { namespace: 'class_reminders', key: 'automation' } }),
+      Batch.count({
+        where: {
+          status: { [Op.in]: ['upcoming', 'active'] },
+          [Op.or]: [
+            { startDate: today },
+            { startDate: { [Op.lte]: today }, endDate: { [Op.gte]: today } }
+          ]
+        }
+      }),
+      ClassReminder.count({ where: { status: 'pending', scheduleDate: { [Op.between]: [today, tomorrow] } } }),
+      ClassReminder.count({ where: { status: 'sent', sentTime: { [Op.gte]: todayStart } } }),
+      ClassReminder.count({ where: { status: 'failed', updatedAt: { [Op.gte]: todayStart } } })
+    ]);
+    return { classesToday, pending, sentToday, failures, autoSendEnabled: settingsRow?.value?.class_reminder_auto_send_enabled === true };
   }
 
   async getLeadsByStatus() {

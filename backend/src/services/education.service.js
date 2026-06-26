@@ -4,12 +4,17 @@ const {
   Batch,
   Certificate,
   Contact,
+  Conversation,
   Course,
   FeeInstallment,
   Lead,
   LeadStatus,
+  Message,
   Student,
+  StudentDocument,
   StudentFee,
+  StudentGuardian,
+  StudentNote,
   User
 } = require('../models');
 const whatsappService = require('./whatsapp.service');
@@ -72,6 +77,20 @@ function feeStatus(totalAmount, paidAmount, paymentType) {
   if (amount(paidAmount) >= amount(totalAmount)) return 'paid';
   if (amount(paidAmount) > 0) return 'partial';
   return 'pending';
+}
+
+function serialize(model) {
+  return model && typeof model.toJSON === 'function' ? model.toJSON() : model;
+}
+
+function feeDisplayStatus(fee, nextInstallment) {
+  if (!fee) return 'Pending';
+  if (fee.paymentType === 'free_card' || fee.status === 'free') return 'Free Card';
+  if (fee.paymentType === 'scholarship' || fee.discountType === 'scholarship') return 'Scholarship';
+  if (fee.status === 'paid') return 'Paid';
+  if (fee.status === 'overdue' || nextInstallment?.status === 'overdue') return 'Overdue';
+  if (fee.status === 'partial' || amount(fee.paidAmount) > 0) return 'Partial';
+  return 'Pending';
 }
 
 function calculateDiscount({ originalAmount, discountType, discountValue, paymentType, discountReason, approvedBy }) {
@@ -219,6 +238,127 @@ class EducationService {
     const row = await Student.findByPk(id, { include: this.studentInclude() });
     if (!row) throw Object.assign(new Error('Student not found'), { status: 404 });
     return row;
+  }
+
+  async getStudentProfile(id) {
+    const student = await Student.findByPk(id, {
+      include: [
+        { model: Contact, as: 'contact', required: false },
+        { model: Lead, as: 'lead', required: false },
+        { model: Course, as: 'course', required: false },
+        { model: Batch, as: 'batch', required: false, include: [{ model: User, as: 'trainer', attributes: ['id', 'firstName', 'lastName', 'email'] }] },
+        { model: StudentFee, as: 'fees', required: false, include: [{ model: FeeInstallment, as: 'installments', required: false }] },
+        { model: AttendanceRecord, as: 'attendance', required: false },
+        { model: Certificate, as: 'certificates', required: false },
+        { model: StudentNote, as: 'profileNotes', required: false, include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'] }] },
+        { model: StudentDocument, as: 'documents', required: false, include: [{ model: User, as: 'uploader', attributes: ['id', 'firstName', 'lastName', 'email'] }] },
+        { model: StudentGuardian, as: 'guardians', required: false }
+      ]
+    });
+    if (!student) throw Object.assign(new Error('Student not found'), { status: 404 });
+
+    const data = serialize(student);
+    const fees = [...(student.fees || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const fee = fees[0] || null;
+    if (fee) await this.markOverdue(fee);
+    const installments = [...(fee?.installments || [])].sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)) || a.installmentNo - b.installmentNo);
+    const nextInstallment = installments.find((item) => !['paid', 'cancelled'].includes(item.status));
+    const attendanceRows = data.attendance || [];
+    const attended = attendanceRows.filter((item) => ['present', 'late'].includes(item.status)).length;
+    const absent = attendanceRows.filter((item) => item.status === 'absent').length;
+    const totalClasses = attendanceRows.length;
+    const conversations = await Conversation.findAll({
+      where: {
+        [Op.or]: [
+          { contactId: student.contactId },
+          ...(student.leadId ? [{ leadId: student.leadId }] : [])
+        ]
+      },
+      order: [['last_message_at', 'DESC'], ['updated_at', 'DESC']]
+    });
+    const lastConversation = conversations[0] || null;
+    const conversationIds = conversations.map((item) => item.id);
+    const lastMessage = await Message.findOne({
+      where: {
+        [Op.or]: [
+          { contactId: student.contactId },
+          ...(conversationIds.length ? [{ conversationId: { [Op.in]: conversationIds } }] : [])
+        ]
+      },
+      order: [['created_at', 'DESC']]
+    });
+
+    return {
+      student: {
+        id: data.id,
+        fullName: data.name,
+        studentId: data.studentNo,
+        nic: data.nic || data.contact?.nic || null,
+        phone: data.phone,
+        whatsappNumber: data.contact?.whatsappId || data.phone,
+        email: data.email || data.contact?.email || null,
+        address: data.address || data.contact?.address || null,
+        registrationDate: data.enrolledAt,
+        status: data.status,
+        photo: data.photoUrl || data.contact?.photoUrl || null,
+        raw: data
+      },
+      course: data.course ? {
+        id: data.course.id,
+        name: data.course.name,
+        fee: data.course.feeAmount,
+        code: data.course.code,
+        category: data.course.category
+      } : {},
+      batch: data.batch ? {
+        id: data.batch.id,
+        name: data.batch.name,
+        startDate: data.batch.startDate,
+        endDate: data.batch.endDate,
+        lecturer: [data.batch.trainer?.firstName, data.batch.trainer?.lastName].filter(Boolean).join(' ') || data.batch.trainer?.email || null,
+        schedule: data.batch.schedule,
+        status: data.batch.status
+      } : {},
+      fees: fee ? {
+        id: fee.id,
+        originalFee: fee.originalAmount,
+        discount: fee.discountAmount,
+        finalFee: fee.totalAmount,
+        paidAmount: fee.paidAmount,
+        balance: fee.balance,
+        nextInstallmentDate: nextInstallment?.dueDate || null,
+        paymentStatus: feeDisplayStatus(fee, nextInstallment),
+        raw: serialize(fee)
+      } : {},
+      installments: installments.map((item) => ({
+        id: item.id,
+        date: item.paidDate || item.dueDate,
+        amount: item.amount,
+        method: item.paymentMethod,
+        reference: item.transactionReference,
+        status: item.status,
+        dueDate: item.dueDate,
+        paidAmount: item.paidAmount
+      })),
+      attendance: {
+        totalClasses,
+        attended,
+        absent,
+        attendancePercentage: totalClasses ? roundMoney((attended / totalClasses) * 100) : 0,
+        records: attendanceRows
+      },
+      certificates: data.certificates || [],
+      notes: data.profileNotes || [],
+      whatsapp: {
+        lastConversationDate: lastConversation?.lastMessageAt || lastConversation?.updatedAt || null,
+        totalConversations: conversations.length,
+        lastMessagePreview: lastMessage?.text || lastConversation?.summary || null,
+        contactId: student.contactId,
+        conversationId: lastConversation?.id || null
+      },
+      documents: data.documents || [],
+      guardians: data.guardians || []
+    };
   }
 
   async createStudent(payload) {
@@ -562,6 +702,119 @@ class EducationService {
     if (!row) throw Object.assign(new Error('Certificate not found'), { status: 404 });
     await row.destroy();
     return { deleted: true, id };
+  }
+
+  async listStudentNotes(studentId) {
+    await this.getStudent(studentId);
+    return StudentNote.findAll({
+      where: { studentId },
+      include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'] }],
+      order: [['created_at', 'DESC']]
+    });
+  }
+
+  async createStudentNote(studentId, payload, userId) {
+    await this.getStudent(studentId);
+    const note = String(payload.note || '').trim();
+    if (!note) throw Object.assign(new Error('Note is required'), { status: 400 });
+    return StudentNote.create({ studentId, note, createdBy: userId || null });
+  }
+
+  async deleteStudentNote(id) {
+    const row = await StudentNote.findByPk(id);
+    if (!row) throw Object.assign(new Error('Student note not found'), { status: 404 });
+    await row.destroy();
+    return { deleted: true, id };
+  }
+
+  async listStudentDocuments(studentId) {
+    await this.getStudent(studentId);
+    return StudentDocument.findAll({
+      where: { studentId },
+      include: [{ model: User, as: 'uploader', attributes: ['id', 'firstName', 'lastName', 'email'] }],
+      order: [['created_at', 'DESC']]
+    });
+  }
+
+  async createStudentDocument(studentId, payload, userId) {
+    await this.getStudent(studentId);
+    const fileName = String(payload.fileName || '').trim();
+    const fileUrl = String(payload.fileUrl || '').trim();
+    if (!fileName || !fileUrl) throw Object.assign(new Error('File name and file URL are required'), { status: 400 });
+    return StudentDocument.create({
+      studentId,
+      fileName,
+      fileUrl,
+      type: String(payload.type || '').trim() || null,
+      uploadedBy: userId || null
+    });
+  }
+
+  async deleteStudentDocument(id) {
+    const row = await StudentDocument.findByPk(id);
+    if (!row) throw Object.assign(new Error('Student document not found'), { status: 404 });
+    await row.destroy();
+    return { deleted: true, id };
+  }
+
+  async listStudentGuardians(studentId) {
+    await this.getStudent(studentId);
+    return StudentGuardian.findAll({
+      where: { studentId },
+      order: [['is_primary', 'DESC'], ['created_at', 'ASC']]
+    });
+  }
+
+  async createStudentGuardian(studentId, payload) {
+    await this.getStudent(studentId);
+    const name = String(payload.name || '').trim();
+    const relationship = String(payload.relationship || '').trim();
+    if (!name || !relationship) throw Object.assign(new Error('Guardian name and relationship are required'), { status: 400 });
+    if (payload.isPrimary === true) {
+      await StudentGuardian.update({ isPrimary: false }, { where: { studentId } });
+    }
+    return StudentGuardian.create({
+      studentId,
+      name,
+      relationship,
+      phone: cleanText(payload.phone),
+      whatsapp: cleanText(payload.whatsapp),
+      email: cleanText(payload.email),
+      isPrimary: payload.isPrimary === true,
+      isEmergencyContact: payload.isEmergencyContact === true,
+      address: cleanText(payload.address),
+      notes: cleanText(payload.notes)
+    });
+  }
+
+  async updateStudentGuardian(guardianId, payload) {
+    const guardian = await StudentGuardian.findByPk(guardianId);
+    if (!guardian) throw Object.assign(new Error('Student guardian not found'), { status: 404 });
+    const changes = {};
+    ['name', 'relationship', 'phone', 'whatsapp', 'email', 'address', 'notes'].forEach((field) => {
+      if (payload[field] !== undefined) changes[field] = ['name', 'relationship'].includes(field)
+        ? String(payload[field] || '').trim()
+        : cleanText(payload[field]);
+    });
+    if (changes.name === '' || changes.relationship === '') {
+      throw Object.assign(new Error('Guardian name and relationship are required'), { status: 400 });
+    }
+    if (payload.isPrimary !== undefined) {
+      changes.isPrimary = payload.isPrimary === true;
+      if (changes.isPrimary) {
+        await StudentGuardian.update({ isPrimary: false }, { where: { studentId: guardian.studentId } });
+      }
+    }
+    if (payload.isEmergencyContact !== undefined) changes.isEmergencyContact = payload.isEmergencyContact === true;
+    await guardian.update(changes);
+    return guardian;
+  }
+
+  async deleteStudentGuardian(guardianId) {
+    const guardian = await StudentGuardian.findByPk(guardianId);
+    if (!guardian) throw Object.assign(new Error('Student guardian not found'), { status: 404 });
+    await guardian.destroy();
+    return { deleted: true, id: guardianId };
   }
 }
 

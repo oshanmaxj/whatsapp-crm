@@ -25,6 +25,8 @@ import PersonAddAltIcon from '@mui/icons-material/PersonAddAlt';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import LeaderboardIcon from '@mui/icons-material/Leaderboard';
+import PaymentsIcon from '@mui/icons-material/Payments';
+import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined';
 import { getDashboardSummary } from '../services/dashboard.service';
 
 const defaultSummary = {
@@ -142,7 +144,28 @@ function DashboardPage() {
     { label: 'New Contacts Today', value: summary.totals.newContactsToday, icon: <PersonAddAltIcon sx={{ color: '#b25a00' }} />, tone: '#fff3e2' },
     { label: 'Pending Follow-ups', value: summary.totals.pendingFollowups, icon: <EventAvailableIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
     { label: 'New Leads', value: summary.totals.newLeads || 0, icon: <LeaderboardIcon sx={{ color: '#175cd3' }} />, tone: '#eaf1ff' },
-    { label: 'Converted Leads', value: summary.totals.convertedLeads || 0, icon: <CheckCircleOutlineIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' }
+    { label: 'Converted Leads', value: summary.totals.convertedLeads || 0, icon: <CheckCircleOutlineIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: 'Installments Due Today', value: summary.totals.installmentsDueToday || 0, icon: <PaymentsIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
+    { label: 'Upcoming Installments', value: summary.totals.upcomingInstallments || 0, icon: <PaymentsIcon sx={{ color: '#1769aa' }} />, tone: '#e8f2fb' },
+    { label: 'Overdue Installments', value: summary.totals.overdueInstallments || 0, icon: <PaymentsIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    { label: 'Collection Forecast', value: `Rs.${summary.totals.collectionForecast || '0.00'}`, icon: <PaymentsIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: 'Classes Today', value: summary.totals.classesToday || 0, icon: <EventAvailableIcon sx={{ color: '#175cd3' }} />, tone: '#eaf1ff' },
+    { label: 'Reminders Pending', value: summary.totals.classRemindersPending || 0, icon: <EventAvailableIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
+    { label: 'Sent Today', value: summary.totals.classRemindersSentToday || 0, icon: <EventAvailableIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: 'Reminder Failures', value: summary.totals.classReminderFailures || 0, icon: <EventAvailableIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    { label: 'Class Auto Send', value: summary.totals.classReminderAutoSendEnabled ? 'ON' : 'OFF', icon: <EventAvailableIcon sx={{ color: summary.totals.classReminderAutoSendEnabled ? '#0f8a4b' : '#6b7280' }} />, tone: summary.totals.classReminderAutoSendEnabled ? '#e7f7ee' : '#eef1f4' },
+    { label: 'Active Automations', value: summary.totals.activeAutomations || 0, icon: <SettingsSuggestOutlinedIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: "Today's Runs", value: summary.totals.automationRunsToday || 0, icon: <SettingsSuggestOutlinedIcon sx={{ color: '#1769aa' }} />, tone: '#e8f2fb' },
+    { label: 'Automation Success', value: `${summary.totals.automationSuccessRate || 0}%`, icon: <SettingsSuggestOutlinedIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: 'Failed Jobs', value: summary.totals.automationFailedJobs || 0, icon: <SettingsSuggestOutlinedIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    { label: 'Absent Today', value: summary.totals.absentToday || 0, icon: <EventAvailableIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    { label: 'Attendance Alerts Pending', value: summary.totals.attendanceAlertsPending || 0, icon: <EventAvailableIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
+    { label: 'Low Attendance Students', value: summary.totals.lowAttendanceStudents || 0, icon: <EventAvailableIcon sx={{ color: '#6d5b00' }} />, tone: '#fff8cc' },
+    { label: 'Attendance Alert Failures', value: summary.totals.attendanceAlertFailures || 0, icon: <EventAvailableIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    { label: 'Approved Templates', value: summary.totals.approvedTemplates || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: 'Pending Approval', value: summary.totals.pendingTemplates || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
+    { label: 'Rejected Templates', value: summary.totals.rejectedTemplates || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    { label: 'Quality Issues', value: summary.totals.qualityIssues || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#6d5b00' }} />, tone: '#fff8cc' }
   ];
 
   return (

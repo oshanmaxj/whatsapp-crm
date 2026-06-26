@@ -10,6 +10,7 @@ const logger = require('./config/logger');
 const initSocket = require('./sockets/socket');
 const { sequelize } = require('./models');
 const messageQueueService = require('./services/messageQueue.service');
+const automationService = require('./services/automation.service');
 
 const PORT = process.env.PORT || 4000;
 
@@ -29,6 +30,7 @@ const startServer = async () => {
       await sequelize.sync({ alter: true });
       logger.warn('sequelize_sync_alter_enabled');
     }
+    await automationService.ensureDefaults();
     logger.info('database_connection_established');
 
     const server = http.createServer(app);

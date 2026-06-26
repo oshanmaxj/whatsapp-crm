@@ -12,6 +12,7 @@ const {
   User
 } = require('../models');
 const whatsappService = require('./whatsapp.service');
+const whatsappComplianceService = require('./whatsappCompliance.service');
 
 function fullName(contact) {
   return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || contact?.phone || 'Unknown';
@@ -231,8 +232,19 @@ class CampaignService {
       const body = renderTemplate(campaign.messageBody, campaign.variables, recipient);
 
       try {
+        const requiredType = await whatsappComplianceService.getRequiredMessageType(recipient.contactId);
+        const validation = await whatsappComplianceService.validateTemplateUsage({
+          contactId: recipient.contactId,
+          templateName: campaign.templateName,
+          messageType: requiredType
+        });
+        if (!validation.allowed) throw Object.assign(new Error(validation.reason), { status: 400 });
         if (realSendEnabled) {
-          await whatsappService.sendTextMessage({ to: recipient.phone, text: body });
+          if (requiredType === 'template') {
+            await whatsappService.sendTemplateMessage({ to: recipient.phone, templateName: validation.template.name, language: validation.template.language });
+          } else {
+            await whatsappService.sendTextMessage({ to: recipient.phone, text: body });
+          }
           await recipient.update({ status: 'sent', sentAt: new Date() });
           await CampaignEvent.create({ campaignId: campaign.id, recipientId: recipient.id, eventType: 'sent' });
         } else {
@@ -241,7 +253,7 @@ class CampaignService {
             campaignId: campaign.id,
             recipientId: recipient.id,
             eventType: 'simulated_sent',
-            payload: { body, realSendEnabled: false }
+            payload: { body, realSendEnabled: false, compliance: validation }
           });
         }
       } catch (error) {

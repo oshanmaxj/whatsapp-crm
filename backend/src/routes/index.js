@@ -24,6 +24,12 @@ const appointmentRoutes = require('./appointment.routes');
 const educationRoutes = require('./education.routes');
 const productionRoutes = require('./production.routes');
 const whatsappRoutes = require('./whatsapp.routes');
+const feeReminderRoutes = require('./feeReminder.routes');
+const classReminderRoutes = require('./classReminder.routes');
+const whatsappTemplateRoutes = require('./whatsappTemplate.routes');
+const complianceRoutes = require('./compliance.routes');
+const automationRoutes = require('./automation.routes');
+const attendanceAlertRoutes = require('./attendanceAlert.routes');
 
 const router = express.Router();
 
@@ -50,6 +56,12 @@ router.use('/flows', flowRoutes);
 router.use('/google-sheets', googleSheetsRoutes);
 router.use('/appointments', appointmentRoutes);
 router.use('/whatsapp', whatsappRoutes);
+router.use('/fee-reminders', feeReminderRoutes);
+router.use('/class-reminders', classReminderRoutes);
+router.use('/whatsapp-templates', whatsappTemplateRoutes);
+router.use('/compliance', complianceRoutes);
+router.use('/automations', automationRoutes);
+router.use('/attendance-alerts', attendanceAlertRoutes);
 router.use('/', productionRoutes);
 router.use('/', educationRoutes);
 

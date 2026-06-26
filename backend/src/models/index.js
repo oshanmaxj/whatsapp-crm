@@ -21,6 +21,8 @@ const ConversationNote = require('./conversationNote.model');
 const Label = require('./label.model');
 const ConversationLabel = require('./conversationLabel.model');
 const MessageTemplate = require('./messageTemplate.model');
+const WhatsAppTemplate = require('./whatsappTemplate.model');
+const WhatsAppComplianceLog = require('./whatsappComplianceLog.model');
 const Campaign = require('./campaign.model');
 const CampaignRecipient = require('./campaignRecipient.model');
 const CampaignEvent = require('./campaignEvent.model');
@@ -38,10 +40,18 @@ const AppointmentRequest = require('./appointmentRequest.model');
 const Course = require('./course.model');
 const Batch = require('./batch.model');
 const Student = require('./student.model');
+const StudentGuardian = require('./studentGuardian.model');
+const AttendanceAlert = require('./attendanceAlert.model');
+const ClassReminder = require('./classReminder.model');
+const Automation = require('./automation.model');
+const AutomationLog = require('./automationLog.model');
 const StudentFee = require('./studentFee.model');
 const FeeInstallment = require('./feeInstallment.model');
+const FeeReminder = require('./feeReminder.model');
 const AttendanceRecord = require('./attendanceRecord.model');
 const Certificate = require('./certificate.model');
+const StudentNote = require('./studentNote.model');
+const StudentDocument = require('./studentDocument.model');
 const MessageQueue = require('./messageQueue.model');
 const Notification = require('./notification.model');
 const AuditLog = require('./auditLog.model');
@@ -71,6 +81,8 @@ const models = {
   Label: Label(sequelize, Sequelize.DataTypes),
   ConversationLabel: ConversationLabel(sequelize, Sequelize.DataTypes),
   MessageTemplate: MessageTemplate(sequelize, Sequelize.DataTypes),
+  WhatsAppTemplate: WhatsAppTemplate(sequelize, Sequelize.DataTypes),
+  WhatsAppComplianceLog: WhatsAppComplianceLog(sequelize, Sequelize.DataTypes),
   Campaign: Campaign(sequelize, Sequelize.DataTypes),
   CampaignRecipient: CampaignRecipient(sequelize, Sequelize.DataTypes),
   CampaignEvent: CampaignEvent(sequelize, Sequelize.DataTypes),
@@ -88,10 +100,18 @@ const models = {
   Course: Course(sequelize, Sequelize.DataTypes),
   Batch: Batch(sequelize, Sequelize.DataTypes),
   Student: Student(sequelize, Sequelize.DataTypes),
+  StudentGuardian: StudentGuardian(sequelize, Sequelize.DataTypes),
+  AttendanceAlert: AttendanceAlert(sequelize, Sequelize.DataTypes),
+  ClassReminder: ClassReminder(sequelize, Sequelize.DataTypes),
+  Automation: Automation(sequelize, Sequelize.DataTypes),
+  AutomationLog: AutomationLog(sequelize, Sequelize.DataTypes),
   StudentFee: StudentFee(sequelize, Sequelize.DataTypes),
   FeeInstallment: FeeInstallment(sequelize, Sequelize.DataTypes),
+  FeeReminder: FeeReminder(sequelize, Sequelize.DataTypes),
   AttendanceRecord: AttendanceRecord(sequelize, Sequelize.DataTypes),
   Certificate: Certificate(sequelize, Sequelize.DataTypes),
+  StudentNote: StudentNote(sequelize, Sequelize.DataTypes),
+  StudentDocument: StudentDocument(sequelize, Sequelize.DataTypes),
   MessageQueue: MessageQueue(sequelize, Sequelize.DataTypes),
   Notification: Notification(sequelize, Sequelize.DataTypes),
   AuditLog: AuditLog(sequelize, Sequelize.DataTypes),
@@ -162,6 +182,8 @@ models.Label.belongsToMany(models.Conversation, {
 models.Conversation.hasMany(models.ConversationNote, { foreignKey: 'conversation_id', as: 'notes' });
 models.Conversation.hasMany(models.Media, { foreignKey: 'conversation_id', as: 'media' });
 models.Message.hasOne(models.Media, { foreignKey: 'message_id', as: 'media' });
+models.Contact.hasMany(models.WhatsAppComplianceLog, { foreignKey: 'contact_id', as: 'complianceLogs' });
+models.WhatsAppTemplate.hasMany(models.WhatsAppComplianceLog, { foreignKey: 'template_id', as: 'complianceLogs' });
 
 models.Campaign.hasMany(models.CampaignRecipient, { foreignKey: 'campaign_id', as: 'recipients' });
 models.Campaign.hasMany(models.CampaignEvent, { foreignKey: 'campaign_id', as: 'events' });
@@ -172,10 +194,20 @@ models.Appointment.hasMany(models.AppointmentRequest, { foreignKey: 'appointment
 models.Course.hasMany(models.Batch, { foreignKey: 'course_id', as: 'batches' });
 models.Course.hasMany(models.Student, { foreignKey: 'course_id', as: 'students' });
 models.Batch.hasMany(models.Student, { foreignKey: 'batch_id', as: 'students' });
+models.Student.hasMany(models.StudentGuardian, { foreignKey: 'student_id', as: 'guardians' });
+models.Student.hasMany(models.AttendanceAlert, { foreignKey: 'student_id', as: 'attendanceAlerts' });
+models.AttendanceRecord.hasMany(models.AttendanceAlert, { foreignKey: 'attendance_record_id', as: 'alerts' });
+models.Batch.hasMany(models.ClassReminder, { foreignKey: 'batch_id', as: 'classReminders' });
+models.Student.hasMany(models.ClassReminder, { foreignKey: 'student_id', as: 'classReminders' });
 models.Student.hasMany(models.StudentFee, { foreignKey: 'student_id', as: 'fees' });
 models.StudentFee.hasMany(models.FeeInstallment, { foreignKey: { name: 'studentFeeId', field: 'fee_id' }, as: 'installments' });
+models.Student.hasMany(models.FeeReminder, { foreignKey: 'student_id', as: 'feeReminders' });
+models.StudentFee.hasMany(models.FeeReminder, { foreignKey: 'student_fee_id', as: 'reminders' });
+models.FeeInstallment.hasMany(models.FeeReminder, { foreignKey: 'installment_id', as: 'reminders' });
 models.Student.hasMany(models.AttendanceRecord, { foreignKey: 'student_id', as: 'attendance' });
 models.Student.hasMany(models.Certificate, { foreignKey: 'student_id', as: 'certificates' });
+models.Student.hasMany(models.StudentNote, { foreignKey: 'student_id', as: 'profileNotes' });
+models.Student.hasMany(models.StudentDocument, { foreignKey: 'student_id', as: 'documents' });
 models.User.hasMany(models.Notification, { foreignKey: 'user_id', as: 'notifications' });
 models.User.hasMany(models.AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
 models.User.hasMany(models.MessageQueue, { foreignKey: 'created_by', as: 'queuedMessages' });

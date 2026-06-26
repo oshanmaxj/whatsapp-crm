@@ -4,6 +4,7 @@ dotenv.config();
 const validateEnv = require('../config/validateEnv');
 const { sequelize } = require('../models');
 const userService = require('../services/user.service');
+const automationService = require('../services/automation.service');
 
 async function run() {
   try {
@@ -17,6 +18,7 @@ async function run() {
 
     await sequelize.sync({ alter: true });
     await userService.seedAccessDefaults();
+    await automationService.ensureDefaults();
     console.log('All models synced successfully.');
     process.exit(0);
   } catch (error) {

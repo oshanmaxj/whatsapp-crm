@@ -12,6 +12,8 @@ export const getSettings = () => api.get('/settings');
 export const saveSetting = (namespace, key, value) => api.put(`/settings/${namespace}/${key}`, { value });
 
 export const getReportsSummary = (params = {}) => api.get('/reports/summary', { params });
+export const getReportOptions = () => api.get('/reports/options');
+export const getReportByType = (type, params = {}) => api.get(`/reports/${type}`, { params });
 export const getAuditLogs = (params = {}) => api.get('/audit-logs', { params });
 export const getBackups = () => api.get('/backups');
 export const exportBackup = () => api.post('/backups/export');

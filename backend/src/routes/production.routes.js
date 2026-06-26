@@ -20,6 +20,8 @@ router.get('/audit-logs', productionController.listAudit.bind(productionControll
 router.get('/settings', requirePermission('settings.view'), apiCache({ ttlSeconds: 60 }), productionController.listSettings.bind(productionController));
 router.put('/settings/:namespace/:key', requirePermission('settings.edit'), productionController.saveSetting.bind(productionController));
 router.get('/reports/summary', requirePermission('reports.view'), apiCache({ ttlSeconds: 30 }), productionController.reports.bind(productionController));
+router.get('/reports/options', requirePermission('reports.view'), apiCache({ ttlSeconds: 30 }), productionController.reportOptions.bind(productionController));
+router.get('/reports/:type', requirePermission('reports.view'), apiCache({ ttlSeconds: 30 }), productionController.reportByType.bind(productionController));
 router.get('/backups', productionController.listBackups.bind(productionController));
 router.post('/backups/export', productionController.exportBackup.bind(productionController));
 router.get('/backups/:id/download', productionController.downloadBackup.bind(productionController));

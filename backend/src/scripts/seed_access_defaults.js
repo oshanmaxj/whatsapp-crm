@@ -9,18 +9,11 @@ async function run() {
   try {
     validateEnv();
     await sequelize.authenticate();
-    console.log('Database connection established successfully.');
-
-    await userService.repairAccessDuplicates().catch((error) => {
-      console.warn('Access duplicate repair skipped before sync:', error.message || error);
-    });
-
-    await sequelize.sync({ alter: true });
     await userService.seedAccessDefaults();
-    console.log('All models synced successfully.');
+    console.log('Access roles and permissions seeded successfully.');
     process.exit(0);
   } catch (error) {
-    console.error('Model sync failed:', error.message || error);
+    console.error('Access seed failed:', error.message || error);
     process.exit(1);
   } finally {
     await sequelize.close().catch(() => {});

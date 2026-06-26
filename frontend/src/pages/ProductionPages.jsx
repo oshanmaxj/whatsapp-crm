@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Alert, Avatar, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid,
-  IconButton, InputAdornment, LinearProgress, Paper, Stack, Switch, Tab, Table, TableBody, TableCell,
+  IconButton, InputAdornment, LinearProgress, MenuItem, Paper, Stack, Switch, Tab, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -20,11 +20,9 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import {
-  downloadBackupUrl, enqueueMessage, exportBackup, getAuditLogs, getBackups, getNotifications, getQueue, getQueueStats,
-  getReportsSummary, getSettings, markNotificationRead, processQueue, saveSetting
+  downloadBackupUrl, enqueueMessage, exportBackup, getBackups, getNotifications, getQueue, getQueueStats,
+  getReportByType, getReportOptions, getSettings, markNotificationRead, processQueue, saveSetting
 } from '../services/production.service';
-import { getAgentPerformance } from '../services/agent.service';
-import { listBatches, listCourses } from '../services/education.service';
 import {
   getWhatsappSettings,
   saveWhatsappSettings,
@@ -46,39 +44,52 @@ function downloadFile(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
-function flattenReport(summary = {}, audit = []) {
-  const rows = [['Section', 'Metric', 'Value']];
-  Object.entries(summary || {}).forEach(([section, value]) => {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      Object.entries(value).forEach(([metric, metricValue]) => rows.push([section, metric, JSON.stringify(metricValue)]));
-    } else {
-      rows.push(['summary', section, JSON.stringify(value)]);
-    }
-  });
-  audit.forEach((row) => rows.push(['audit', row.action || '-', `${row.entityType || '-'} ${row.path || ''}`.trim()]));
-  return rows;
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[<>&"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[char]));
 }
 
-function exportExcel(summary, audit) {
-  const rows = flattenReport(summary, audit);
-  const htmlRows = rows.map((row) => `<tr>${row.map((cell) => `<td>${String(cell).replace(/[<>&]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[char]))}</td>`).join('')}</tr>`).join('');
-  downloadFile('crm-report.xls', `<table>${htmlRows}</table>`, 'application/vnd.ms-excel');
+function reportTableRows(report) {
+  const columns = report?.columns || [];
+  const rows = report?.rows || [];
+  return [
+    columns.map((column) => column.label),
+    ...rows.map((row) => columns.map((column) => row[column.key] ?? ''))
+  ];
 }
 
-function exportPdf(summary, audit) {
+function exportReportCsv(report) {
+  const csv = reportTableRows(report)
+    .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  downloadFile(`${report.title || 'report'}.csv`, csv, 'text/csv');
+}
+
+function exportReportExcel(report) {
+  const rows = reportTableRows(report);
+  const htmlRows = rows.map((row, index) => `<tr>${row.map((cell) => index === 0 ? `<th>${escapeHtml(cell)}</th>` : `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('');
+  downloadFile(`${report.title || 'report'}.xls`, `<table>${htmlRows}</table>`, 'application/vnd.ms-excel');
+}
+
+function exportReportPdf(report, filters = {}) {
   const reportWindow = window.open('', '_blank');
   if (!reportWindow) return;
+  const columns = report?.columns || [];
+  const rows = report?.rows || [];
+  const summary = report?.summary || [];
+  const filterRows = Object.entries(filters).filter(([, value]) => value).map(([key, value]) => `<span>${escapeHtml(key)}: <strong>${escapeHtml(value)}</strong></span>`).join('');
   reportWindow.document.write(`
     <html>
-      <head><title>CRM Report</title><style>body{font-family:Arial,sans-serif;padding:24px}pre{white-space:pre-wrap}table{width:100%;border-collapse:collapse}td,th{border:1px solid #ddd;padding:8px}</style></head>
+      <head><title>${escapeHtml(report?.title || 'CRM Report')}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111827}.brand{font-size:13px;color:#667085;text-transform:uppercase;letter-spacing:.08em}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}.card{border:1px solid #e5e7eb;border-radius:8px;padding:12px}.card b{display:block;font-size:20px;margin-top:4px}.filters{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 18px}.filters span{background:#f3f4f6;border-radius:999px;padding:6px 10px}table{width:100%;border-collapse:collapse;font-size:12px}td,th{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f9fafb}.footer{margin-top:24px;color:#667085;font-size:11px}@media print{button{display:none}.summary{grid-template-columns:repeat(4,1fr)}}</style></head>
       <body>
-        <h1>CRM Report</h1>
-        <h2>Summary</h2>
-        <pre>${JSON.stringify(summary, null, 2)}</pre>
-        <h2>Audit Logs</h2>
-        <table><thead><tr><th>Action</th><th>Entity</th><th>User</th><th>Path</th></tr></thead><tbody>
-          ${audit.map((row) => `<tr><td>${row.action || '-'}</td><td>${row.entityType || '-'}</td><td>${row.userId || '-'}</td><td>${row.path || '-'}</td></tr>`).join('')}
+        <div class="brand">First Of Education International</div>
+        <h1>${escapeHtml(report?.title || 'CRM Report')}</h1>
+        <p>Generated ${new Date().toLocaleString()}</p>
+        <div class="filters">${filterRows || '<span>No filters selected</span>'}</div>
+        <div class="summary">${summary.map((item) => `<div class="card">${escapeHtml(item.label)}<b>${escapeHtml(item.value)}</b></div>`).join('')}</div>
+        <table><thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead><tbody>
+          ${rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column.key] ?? '')}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length || 1}">No data available</td></tr>`}
         </tbody></table>
+        <div class="footer">Generated by CRM Report Center</div>
       </body>
     </html>
   `);
@@ -470,89 +481,177 @@ export function ProductionSettingsPage() {
 }
 
 export function ReportsPage() {
-  const [summary, setSummary] = useState(null);
-  const [audit, setAudit] = useState([]);
-  const [courses, setCourses] = useState([]);
-  const [batches, setBatches] = useState([]);
-  const [agents, setAgents] = useState([]);
-  const [filters, setFilters] = useState({ from: '', to: '', courseId: '', batchId: '', leadStatus: '', leadSource: '', agentId: '', studentStatus: '' });
+  const fallbackOptions = {
+    courses: [],
+    batches: [],
+    agents: [],
+    leadStatuses: ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'],
+    leadSources: ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'],
+    studentStatuses: ['enrolled', 'active', 'pending', 'completed', 'dropped', 'suspended'],
+    paymentStatuses: ['paid', 'pending', 'partial', 'overdue', 'cancelled'],
+    paymentMethods: ['Cash', 'Bank Deposit', 'Bank Transfer', 'Card', 'Online Payment', 'Cheque', 'Other'],
+    campaignStatuses: ['Draft', 'Scheduled', 'Processing', 'Completed', 'Failed', 'Cancelled', 'simulated_sent'],
+    attendanceStatuses: ['Present', 'Absent', 'Late', 'Excused']
+  };
+  const reportTypes = [
+    ['overview', 'Overview Report'],
+    ['leads', 'Lead Report'],
+    ['students', 'Student Report'],
+    ['finance', 'Finance Report'],
+    ['daily-collection', 'Daily Collection Report'],
+    ['monthly-revenue', 'Monthly Revenue Report'],
+    ['outstanding', 'Fee Outstanding Report'],
+    ['overdue-installments', 'Overdue Installment Report'],
+    ['campaigns', 'Campaign Report'],
+    ['campaign-roi', 'Campaign ROI Report'],
+    ['agents', 'Agent Performance Report'],
+    ['course-income', 'Course Income Report'],
+    ['batch-income', 'Batch Income Report'],
+    ['attendance', 'Attendance Summary Report'],
+    ['student-completion', 'Student Completion Report'],
+    ['lead-source-conversion', 'Lead Source Conversion Report'],
+    ['follow-up-pending', 'Follow-up Pending Report']
+  ];
+  const blankFilters = {
+    fromDate: '',
+    toDate: '',
+    courseId: '',
+    batchId: '',
+    agentId: '',
+    leadStatus: '',
+    leadSource: '',
+    studentStatus: '',
+    paymentStatus: '',
+    paymentMethod: '',
+    campaignStatus: '',
+    attendanceStatus: ''
+  };
+  const [reportType, setReportType] = useState('overview');
+  const [filters, setFilters] = useState(blankFilters);
+  const [options, setOptions] = useState(fallbackOptions);
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const loadReports = () => {
-    Promise.all([
-      getReportsSummary(filters),
-      getAuditLogs({ limit: 50 }),
-      listCourses().catch(() => ({ data: { data: [] } })),
-      listBatches().catch(() => ({ data: { data: [] } })),
-      getAgentPerformance().catch(() => ({ data: { data: [] } }))
-    ]).then(([summaryRes, auditRes, coursesRes, batchesRes, agentsRes]) => {
-      setSummary(summaryRes.data.data);
-      setAudit(auditRes.data.data || []);
-      setCourses(coursesRes.data.data || []);
-      setBatches(batchesRes.data.data || []);
-      setAgents(agentsRes.data.data || []);
-    });
+  const loadReport = async (nextType = reportType, nextFilters = filters) => {
+    try {
+      setLoading(true);
+      setError('');
+      const typeKey = reportTypes.some(([value]) => value === nextType) ? nextType : 'overview';
+      const response = await getReportByType(typeKey, nextFilters);
+      setReport(response.data.data);
+    } catch (err) {
+      console.error('Report API failed', err.response?.data || err);
+      setError(err.response?.data?.message || 'Unable to load report.');
+      setReport({
+        title: reportTypes.find(([value]) => value === nextType)?.[1] || 'Report',
+        filters: nextFilters,
+        summary: [],
+        columns: [],
+        rows: [],
+        charts: []
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { loadReports(); }, []);
+  useEffect(() => {
+    getReportOptions()
+      .then((response) => setOptions({ ...fallbackOptions, ...(response.data.data || {}) }))
+      .catch((err) => {
+        console.error('Report options API failed', err.response?.data || err);
+        setOptions(fallbackOptions);
+        setError('Report filters loaded with defaults.');
+      });
+    loadReport('overview', blankFilters);
+  }, []);
 
-  const leads = summary?.leads || [];
-  const students = summary?.students || [];
-  const revenue = summary?.revenue || {};
-  const campaign = summary?.campaign || [];
-  const maxLead = Math.max(1, ...leads.map((row) => Number(row.count || 0)));
-  const maxStudent = Math.max(1, ...students.map((row) => Number(row.count || 0)));
-  const maxCampaign = Math.max(1, ...campaign.map((row) => Number(row.count || 0)));
-  const totalLeads = leads.reduce((sum, row) => sum + Number(row.count || 0), 0);
-  const totalStudents = students.reduce((sum, row) => sum + Number(row.count || 0), 0);
-  const totalRevenue = Number(revenue.total || 0);
-  const paidRevenue = Number(revenue.paid || 0);
-
-  const ProgressRow = ({ label, value, max }) => (
-    <Box>
-      <Stack direction="row" justifyContent="space-between"><Typography>{label || '-'}</Typography><Typography fontWeight={850}>{value}</Typography></Stack>
-      <LinearProgress variant="determinate" value={(Number(value || 0) / max) * 100} sx={{ height: 8, borderRadius: 999, mt: 0.5 }} />
-    </Box>
-  );
+  const updateFilter = (name, value) => setFilters((current) => ({ ...current, [name]: value }));
+  const clearFilters = () => {
+    setFilters(blankFilters);
+    loadReport(reportType, blankFilters);
+  };
+  const activeFilters = Object.entries(filters).filter(([, value]) => value);
+  const filteredBatches = filters.courseId
+    ? (options.batches || []).filter((batch) => String(batch.courseId) === String(filters.courseId))
+    : (options.batches || []);
+  const maxChart = Math.max(1, ...(report?.charts || []).map((row) => Number(row.value || 0)));
 
   return (
     <Stack spacing={2.5}>
+      {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.5} alignItems={{ lg: 'center' }}>
           <Box sx={{ flex: 1 }}>
-            <Typography variant="h5" fontWeight={850}>Reports</Typography>
-            <Typography color="text.secondary">Lead, student, revenue, campaign, and agent performance reports.</Typography>
+            <Typography variant="h5" fontWeight={850}>Report Center</Typography>
+            <Typography color="text.secondary">Filtered operational, education, finance, campaign, and agent reports.</Typography>
           </Box>
-          <Button startIcon={<DownloadIcon />} variant="outlined" onClick={() => exportPdf(summary || {}, audit)}>Export PDF</Button>
-          <Button startIcon={<DownloadIcon />} variant="contained" onClick={() => exportExcel(summary || {}, audit)}>Export Excel</Button>
+          <Button startIcon={<DownloadIcon />} variant="outlined" disabled={!report} onClick={() => exportReportPdf(report, filters)}>Export PDF</Button>
+          <Button startIcon={<DownloadIcon />} variant="outlined" disabled={!report} onClick={() => exportReportCsv(report)}>Export CSV</Button>
+          <Button startIcon={<DownloadIcon />} variant="contained" disabled={!report} onClick={() => exportReportExcel(report)}>Export Excel</Button>
         </Stack>
       </Paper>
 
       <Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}>
         <Grid container spacing={2}>
-          <Grid item xs={12} md={3}><TextField type="date" label="From" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
-          <Grid item xs={12} md={3}><TextField type="date" label="To" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
-          <Grid item xs={12} md={3}><TextField select label="Course" value={filters.courseId} onChange={(e) => setFilters({ ...filters, courseId: e.target.value })} fullWidth><MenuItem value="">All Courses</MenuItem>{courses.map((course) => <MenuItem key={course.id} value={course.id}>{[course.code, course.name].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
-          <Grid item xs={12} md={3}><TextField select label="Batch" value={filters.batchId} onChange={(e) => setFilters({ ...filters, batchId: e.target.value })} fullWidth><MenuItem value="">All Batches</MenuItem>{batches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{batch.name}</MenuItem>)}</TextField></Grid>
-          <Grid item xs={12} md={3}><TextField label="Lead Status" value={filters.leadStatus} onChange={(e) => setFilters({ ...filters, leadStatus: e.target.value })} fullWidth /></Grid>
-          <Grid item xs={12} md={3}><TextField label="Lead Source" value={filters.leadSource} onChange={(e) => setFilters({ ...filters, leadSource: e.target.value })} fullWidth /></Grid>
-          <Grid item xs={12} md={3}><TextField select label="Agent" value={filters.agentId} onChange={(e) => setFilters({ ...filters, agentId: e.target.value })} fullWidth><MenuItem value="">All Agents</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agent.name}</MenuItem>)}</TextField></Grid>
-          <Grid item xs={12} md={3}><TextField label="Student Status" value={filters.studentStatus} onChange={(e) => setFilters({ ...filters, studentStatus: e.target.value })} fullWidth /></Grid>
-          <Grid item xs={12}><Button variant="contained" onClick={loadReports}>Apply Filters</Button></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Report Type" value={reportType} onChange={(e) => { setReportType(e.target.value); loadReport(e.target.value, filters); }} fullWidth>{reportTypes.map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField type="date" label="From Date" value={filters.fromDate} onChange={(e) => updateFilter('fromDate', e.target.value)} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
+          <Grid item xs={12} md={4}><TextField type="date" label="To Date" value={filters.toDate} onChange={(e) => updateFilter('toDate', e.target.value)} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Course" value={filters.courseId || ''} onChange={(e) => setFilters((current) => ({ ...current, courseId: e.target.value, batchId: '' }))} fullWidth><MenuItem value="">All Courses</MenuItem>{(options.courses || []).map((course) => <MenuItem key={course.id} value={course.id}>{[course.code, course.name, course.category].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Batch" value={filters.batchId || ''} onChange={(e) => updateFilter('batchId', e.target.value)} fullWidth><MenuItem value="">All Batches</MenuItem>{filteredBatches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{[batch.name, batch.courseName || batch.course?.name, batch.schedule].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Agent" value={filters.agentId || ''} onChange={(e) => updateFilter('agentId', e.target.value)} fullWidth><MenuItem value="">All Agents</MenuItem>{(options.agents || []).map((agent) => <MenuItem key={agent.id} value={agent.id}>{[agent.name, agent.department].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Lead Status" value={filters.leadStatus} onChange={(e) => updateFilter('leadStatus', e.target.value)} fullWidth><MenuItem value="">All Statuses</MenuItem>{(options.leadStatuses || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Lead Source" value={filters.leadSource} onChange={(e) => updateFilter('leadSource', e.target.value)} fullWidth><MenuItem value="">All Sources</MenuItem>{(options.leadSources || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Student Status" value={filters.studentStatus} onChange={(e) => updateFilter('studentStatus', e.target.value)} fullWidth><MenuItem value="">All Statuses</MenuItem>{(options.studentStatuses || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Payment Status" value={filters.paymentStatus} onChange={(e) => updateFilter('paymentStatus', e.target.value)} fullWidth><MenuItem value="">All Statuses</MenuItem>{(options.paymentStatuses || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Payment Method" value={filters.paymentMethod} onChange={(e) => updateFilter('paymentMethod', e.target.value)} fullWidth><MenuItem value="">All Methods</MenuItem>{(options.paymentMethods || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Campaign Status" value={filters.campaignStatus} onChange={(e) => updateFilter('campaignStatus', e.target.value)} fullWidth><MenuItem value="">All Statuses</MenuItem>{(options.campaignStatuses || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Attendance Status" value={filters.attendanceStatus} onChange={(e) => updateFilter('attendanceStatus', e.target.value)} fullWidth><MenuItem value="">All Statuses</MenuItem>{(options.attendanceStatuses || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12}><Stack direction="row" spacing={1.5} flexWrap="wrap"><Button variant="contained" onClick={() => loadReport()}>Apply Filters</Button><Button variant="outlined" onClick={clearFilters}>Clear Filters</Button></Stack></Grid>
         </Grid>
       </Paper>
 
+      {loading && <LinearProgress />}
+
+      {report && (
+        <Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}>
+          <Stack spacing={1}>
+            <Typography variant="h6" fontWeight={850}>{report.title}</Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              {activeFilters.length === 0 && <Chip size="small" label="No filters selected" />}
+              {activeFilters.map(([key, value]) => <Chip size="small" key={key} label={`${key}: ${value}`} />)}
+            </Stack>
+          </Stack>
+        </Paper>
+      )}
+
       <Grid container spacing={2}>
-        {[['Total Leads', totalLeads], ['Students', totalStudents], ['Revenue', totalRevenue.toFixed(2)], ['Paid', paidRevenue.toFixed(2)], ['Campaign Events', campaign.reduce((sum, row) => sum + Number(row.count || 0), 0)]].map(([label, value]) => (
-          <Grid item xs={12} sm={6} md key={label}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h5" fontWeight={850}>{value}</Typography><Typography color="text.secondary">{label}</Typography></Paper></Grid>
+        {(report?.summary || []).map((item) => (
+          <Grid item xs={12} sm={6} md={3} key={item.label}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h5" fontWeight={850}>{item.value}</Typography><Typography color="text.secondary">{item.label}</Typography></Paper></Grid>
         ))}
       </Grid>
 
-      <Grid container spacing={2}>
-        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Lead Report</Typography><Stack spacing={1.5} sx={{ mt: 2 }}>{leads.map((row) => <ProgressRow key={row.name} label={row.name} value={row.count} max={maxLead} />)}</Stack></Paper></Grid>
-        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Student Report</Typography><Stack spacing={1.5} sx={{ mt: 2 }}>{students.map((row) => <ProgressRow key={row.status} label={row.status} value={row.count} max={maxStudent} />)}</Stack></Paper></Grid>
-        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Campaign Report</Typography><Stack spacing={1.5} sx={{ mt: 2 }}>{campaign.map((row) => <ProgressRow key={row.status} label={row.status} value={row.count} max={maxCampaign} />)}</Stack></Paper></Grid>
-        <Grid item xs={12} md={6}><Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}><Typography variant="h6" fontWeight={850}>Agent Performance Report</Typography><TableContainer><Table size="small"><TableHead><TableRow><TableCell>Agent</TableCell><TableCell>Department</TableCell><TableCell>Assigned Leads</TableCell><TableCell>Assignments</TableCell></TableRow></TableHead><TableBody>{agents.map((agent) => <TableRow key={agent.id}><TableCell>{agent.name}</TableCell><TableCell>{agent.department || '-'}</TableCell><TableCell>{agent.assignedLeadCount}</TableCell><TableCell>{agent.assignmentCount}</TableCell></TableRow>)}</TableBody></Table></TableContainer></Paper></Grid>
-      </Grid>
+      {(report?.charts || []).length > 0 && (
+        <Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}>
+          <Typography variant="h6" fontWeight={850}>Quick Breakdown</Typography>
+          <Stack spacing={1.5} sx={{ mt: 2 }}>{report.charts.map((row) => <Box key={row.label}><Stack direction="row" justifyContent="space-between"><Typography>{row.label}</Typography><Typography fontWeight={850}>{row.value}</Typography></Stack><LinearProgress variant="determinate" value={(Number(row.value || 0) / maxChart) * 100} sx={{ height: 8, borderRadius: 999, mt: 0.5 }} /></Box>)}</Stack>
+        </Paper>
+      )}
+
+      <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
+        <TableContainer>
+          <Table size="small">
+            <TableHead><TableRow>{(report?.columns || []).map((column) => <TableCell key={column.key}>{column.label}</TableCell>)}</TableRow></TableHead>
+            <TableBody>
+              {(report?.rows || []).map((row, index) => (
+                <TableRow key={index}>{(report?.columns || []).map((column) => <TableCell key={column.key}>{row[column.key] || '-'}</TableCell>)}</TableRow>
+              ))}
+              {!loading && (report?.rows || []).length === 0 && <TableRow><TableCell colSpan={(report?.columns || []).length || 1}><Box sx={{ py: 5, textAlign: 'center' }}><Typography fontWeight={850}>No data found</Typography><Typography color="text.secondary">Try changing filters or selecting another report type.</Typography></Box></TableCell></TableRow>}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
     </Stack>
   );
 }

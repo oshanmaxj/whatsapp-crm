@@ -26,6 +26,10 @@ function studentNo() {
   return `STU-${Date.now()}`;
 }
 
+function optionalId(value) {
+  return value === '' || value === undefined || value === null ? null : value;
+}
+
 function certificateNo() {
   return `CERT-${Date.now()}`;
 }
@@ -137,43 +141,49 @@ class EducationService {
   }
 
   async createStudent(payload) {
-    if (!payload.name || !payload.phone) {
+    const name = String(payload.name || '').trim();
+    const phone = String(payload.phone || '').trim();
+    const email = String(payload.email || '').trim() || null;
+
+    if (!name || !phone) {
       throw Object.assign(new Error('Student name and phone are required'), { status: 400 });
     }
-    if (!payload.courseId) {
-      throw Object.assign(new Error('Course is required'), { status: 400 });
-    }
-    let contactId = payload.contactId || null;
+
+    let contactId = optionalId(payload.contactId);
     if (!contactId) {
-      const [firstName, ...rest] = String(payload.name || '').trim().split(/\s+/).filter(Boolean);
-      const [contact] = await Contact.findOrCreate({
-        where: { phone: payload.phone },
-        defaults: {
-          firstName: firstName || payload.name,
+      const [firstName, ...rest] = name.split(/\s+/).filter(Boolean);
+      let contact = await Contact.findOne({ where: { phone }, paranoid: false });
+      if (contact?.deletedAt) {
+        await contact.restore();
+      }
+      if (!contact) {
+        contact = await Contact.create({
+          firstName: firstName || name,
           lastName: rest.join(' ') || null,
-          phone: payload.phone,
-          email: payload.email || null,
+          phone,
+          email,
           status: 'active'
-        }
-      });
-      if (payload.email && contact.email !== payload.email) {
-        await contact.update({ email: payload.email });
+        });
+      } else if (email && contact.email !== email) {
+        await contact.update({ email });
       }
       contactId = contact.id;
     }
-    return Student.create({
+
+    const student = await Student.create({
       studentNo: payload.studentNo || studentNo(),
       contactId,
-      leadId: payload.leadId || null,
-      courseId: payload.courseId || null,
-      batchId: payload.batchId || null,
-      name: payload.name,
-      phone: payload.phone,
-      email: payload.email || null,
+      leadId: optionalId(payload.leadId),
+      courseId: optionalId(payload.courseId),
+      batchId: optionalId(payload.batchId),
+      name,
+      phone,
+      email,
       status: payload.status || 'enrolled',
       enrolledAt: payload.enrolledAt || new Date(),
       notes: payload.notes || null
     });
+    return this.getStudent(student.id);
   }
 
   async updateStudent(id, payload) {

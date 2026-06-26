@@ -60,11 +60,15 @@ function PermissionManagementPage() {
   const orderedGroups = permissionGroups.filter((group) => grouped[group]);
 
   const togglePermission = async (role, permissionId) => {
-    const current = new Set((role.permissions || []).map((permission) => permission.id));
-    if (current.has(permissionId)) current.delete(permissionId);
-    else current.add(permissionId);
-    await setRolePermissions(role.id, Array.from(current));
-    await load();
+    try {
+      const current = new Set((role.permissions || []).map((permission) => permission.id));
+      if (current.has(permissionId)) current.delete(permissionId);
+      else current.add(permissionId);
+      await setRolePermissions(role.id, Array.from(current));
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to update role permissions.');
+    }
   };
 
   const saveRole = async () => {
@@ -78,13 +82,17 @@ function PermissionManagementPage() {
   };
 
   const loadUserPermissions = async (userId) => {
-    setSelectedUserId(userId);
-    if (!userId) {
-      setUserPermissionRows([]);
-      return;
+    try {
+      setSelectedUserId(userId);
+      if (!userId) {
+        setUserPermissionRows([]);
+        return;
+      }
+      const res = await getUserPermissions(userId);
+      setUserPermissionRows(res.data.data.permissions || []);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to load user permissions.');
     }
-    const res = await getUserPermissions(userId);
-    setUserPermissionRows(res.data.data.permissions || []);
   };
 
   const setOverride = (code, override) => {
@@ -92,12 +100,17 @@ function PermissionManagementPage() {
   };
 
   const saveUserOverrides = async () => {
-    const overrides = userPermissionRows
-      .filter((row) => row.override !== 'inherit')
-      .map((row) => ({ code: row.code, effect: row.override }));
-    await setUserPermissions(selectedUserId, overrides);
-    setNotice('User permission overrides saved.');
-    await loadUserPermissions(selectedUserId);
+    try {
+      const overrides = userPermissionRows.map((row) => ({
+        permissionId: row.id,
+        effect: row.override || 'inherit'
+      }));
+      await setUserPermissions(selectedUserId, overrides);
+      setNotice('User permission overrides saved.');
+      await loadUserPermissions(selectedUserId);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to save user permission overrides.');
+    }
   };
 
   return (

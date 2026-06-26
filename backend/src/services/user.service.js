@@ -83,15 +83,27 @@ class UserService {
   }
 
   async repairDuplicateRolePermissions() {
-    await sequelize.query(`
-      DELETE FROM role_permissions a
-      USING role_permissions b
-      WHERE a.ctid < b.ctid
-        AND a.role_id = b.role_id
-        AND a.permission_id = b.permission_id
-    `).catch((error) => {
-      logger.warn('role_permission_duplicate_cleanup_failed', error);
+    const rows = await RolePermission.findAll({ raw: true }).catch((error) => {
+      logger.warn('role_permission_duplicate_scan_failed', error);
+      return [];
     });
+    const counts = new Map();
+    rows.forEach((row) => {
+      const roleId = row.roleId || row.role_id;
+      const permissionId = row.permissionId || row.permission_id;
+      if (!roleId || !permissionId) return;
+      const key = `${roleId}:${permissionId}`;
+      counts.set(key, { roleId, permissionId, count: (counts.get(key)?.count || 0) + 1 });
+    });
+
+    for (const { roleId, permissionId, count } of counts.values()) {
+      if (count < 2) continue;
+      await RolePermission.destroy({ where: { roleId, permissionId }, force: true });
+      await RolePermission.findOrCreate({
+        where: { roleId, permissionId },
+        defaults: { roleId, permissionId }
+      });
+    }
   }
 
   async repairDuplicatePermissionNames() {
@@ -119,10 +131,25 @@ class UserService {
 
     const roles = {};
     for (const name of ROLE_NAMES) {
-      const [role] = await Role.findOrCreate({
-        where: { name: name.toLowerCase() },
-        defaults: { description: `${name} role` }
+      const normalizedName = name.toLowerCase();
+      let role = await Role.findOne({
+        where: sequelize.where(sequelize.fn('lower', sequelize.col('name')), normalizedName),
+        paranoid: false
       });
+      if (role?.deletedAt) {
+        await role.restore();
+      }
+      if (role) {
+        const updates = {};
+        if (role.name !== normalizedName) updates.name = normalizedName;
+        if (!role.description) updates.description = `${name} role`;
+        if (Object.keys(updates).length) await role.update(updates);
+      } else {
+        [role] = await Role.findOrCreate({
+          where: { name: normalizedName },
+          defaults: { description: `${name} role` }
+        });
+      }
       roles[name] = role;
     }
 
@@ -130,10 +157,22 @@ class UserService {
     for (const group of PERMISSION_GROUPS) {
       for (const action of [...PERMISSION_ACTIONS, ...(EXTRA_PERMISSION_ACTIONS[group] || [])]) {
         const code = permissionCode(group, action);
-        const [permission] = await Permission.findOrCreate({
-          where: { code },
-          defaults: { name: `${group} ${action}`, description: `${action} access for ${group}` }
-        });
+        const permissionName = `${group} ${action}`;
+        let permission = await Permission.findOne({ where: { code }, paranoid: false });
+        if (permission?.deletedAt) {
+          await permission.restore();
+        }
+        if (permission) {
+          const updates = {};
+          if (!permission.name) updates.name = permissionName;
+          if (!permission.description) updates.description = `${action} access for ${group}`;
+          if (Object.keys(updates).length) await permission.update(updates);
+        } else {
+          [permission] = await Permission.findOrCreate({
+            where: { code },
+            defaults: { name: permissionName, description: `${action} access for ${group}` }
+          });
+        }
         permissions.push(permission);
       }
     }
@@ -154,6 +193,10 @@ class UserService {
     return { roles, permissions };
   }
 
+  async seedAccessDefaults() {
+    return this.ensureAccessDefaults();
+  }
+
   async safeEnsureAccessDefaults() {
     try {
       return await this.ensureAccessDefaults();
@@ -164,7 +207,6 @@ class UserService {
   }
 
   async getUsers(query = {}) {
-    await this.ensureAccessDefaults();
     const users = await User.findAll({
       where: query,
       include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }],
@@ -174,7 +216,6 @@ class UserService {
   }
 
   async getUserById(id) {
-    await this.ensureAccessDefaults();
     const user = await User.findByPk(id, {
       include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }]
     });
@@ -182,7 +223,6 @@ class UserService {
   }
 
   async createUser(payload) {
-    await this.ensureAccessDefaults();
     const existing = await User.findOne({ where: { email: payload.email } });
     if (existing) {
       const error = new Error('Email already registered');
@@ -270,7 +310,6 @@ class UserService {
   }
 
   async assignRoles(userId, roles = []) {
-    await this.ensureAccessDefaults();
     const user = await User.findByPk(userId);
     if (!user) {
       const error = new Error('User not found');
@@ -286,7 +325,6 @@ class UserService {
   }
 
   async getRoles() {
-    await this.ensureAccessDefaults();
     return Role.findAll({
       include: [{ model: Permission, as: 'permissions' }],
       order: [['name', 'ASC']]
@@ -294,7 +332,6 @@ class UserService {
   }
 
   async createRole(payload) {
-    await this.ensureAccessDefaults();
     const [role] = await Role.findOrCreate({
       where: { name: String(payload.name).trim().toLowerCase() },
       defaults: { description: payload.description || null }
@@ -318,12 +355,10 @@ class UserService {
   }
 
   async getPermissions() {
-    await this.ensureAccessDefaults();
     return Permission.findAll({ order: [['name', 'ASC']] });
   }
 
   async setRolePermissions(roleId, permissionIds = []) {
-    await this.ensureAccessDefaults();
     const role = await Role.findByPk(roleId);
     if (!role) {
       const error = new Error('Role not found');
@@ -338,12 +373,14 @@ class UserService {
   }
 
   async getUserAccessPayload(id) {
-    await this.safeEnsureAccessDefaults();
     const user = await User.findByPk(id, {
       include: [
         { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
         { model: UserPermissionOverride, as: 'permissionOverrides', include: [{ model: Permission, as: 'permission' }] }
       ]
+    }).catch((error) => {
+      logger.warn('user_access_payload_rbac_read_failed', { userId: id, error });
+      return User.findByPk(id);
     });
     if (!user) return null;
     const roles = user.roles || [];
@@ -370,7 +407,6 @@ class UserService {
   }
 
   async getUserPermissions(id) {
-    await this.safeEnsureAccessDefaults();
     const user = await User.findByPk(id, {
       include: [
         { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
@@ -402,17 +438,37 @@ class UserService {
   async setUserPermissions(id, overrides = []) {
     const user = await User.findByPk(id);
     if (!user) throw Object.assign(new Error('User not found'), { status: 404 });
-    await this.safeEnsureAccessDefaults();
-    await UserPermissionOverride.destroy({ where: { userId: id } });
-    const rows = [];
+    if (!Array.isArray(overrides)) {
+      throw Object.assign(new Error('Permission overrides must be an array'), { status: 400 });
+    }
+
     for (const item of overrides) {
-      if (!['allow', 'deny'].includes(item.effect)) continue;
+      if (!['inherit', 'allow', 'deny'].includes(item.effect)) {
+        throw Object.assign(new Error('Permission override effect must be inherit, allow, or deny'), { status: 400 });
+      }
+
       const permission = item.permissionId
         ? await Permission.findByPk(item.permissionId)
         : await Permission.findOne({ where: { code: item.code } });
-      if (permission) rows.push({ userId: id, permissionId: permission.id, effect: item.effect });
+
+      if (!permission) {
+        throw Object.assign(new Error('Permission not found'), { status: 400 });
+      }
+
+      const where = { userId: id, permissionId: permission.id };
+      if (item.effect === 'inherit') {
+        await UserPermissionOverride.destroy({ where });
+        continue;
+      }
+
+      const [override, created] = await UserPermissionOverride.findOrCreate({
+        where,
+        defaults: { ...where, effect: item.effect }
+      });
+      if (!created && override.effect !== item.effect) {
+        await override.update({ effect: item.effect });
+      }
     }
-    if (rows.length) await UserPermissionOverride.bulkCreate(rows);
     return this.getUserPermissions(id);
   }
 }

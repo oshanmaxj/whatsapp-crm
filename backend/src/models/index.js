@@ -173,7 +173,7 @@ models.Course.hasMany(models.Batch, { foreignKey: 'course_id', as: 'batches' });
 models.Course.hasMany(models.Student, { foreignKey: 'course_id', as: 'students' });
 models.Batch.hasMany(models.Student, { foreignKey: 'batch_id', as: 'students' });
 models.Student.hasMany(models.StudentFee, { foreignKey: 'student_id', as: 'fees' });
-models.StudentFee.hasMany(models.FeeInstallment, { foreignKey: 'fee_id', as: 'installments' });
+models.StudentFee.hasMany(models.FeeInstallment, { foreignKey: { name: 'studentFeeId', field: 'fee_id' }, as: 'installments' });
 models.Student.hasMany(models.AttendanceRecord, { foreignKey: 'student_id', as: 'attendance' });
 models.Student.hasMany(models.Certificate, { foreignKey: 'student_id', as: 'certificates' });
 models.User.hasMany(models.Notification, { foreignKey: 'user_id', as: 'notifications' });

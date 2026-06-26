@@ -98,6 +98,13 @@ function exportReportPdf(report, filters = {}) {
   reportWindow.print();
 }
 
+function mergeReportOptions(fallbackOptions, apiOptions = {}) {
+  return Object.fromEntries(Object.entries(fallbackOptions).map(([key, fallbackValue]) => [
+    key,
+    Array.isArray(apiOptions[key]) ? apiOptions[key] : fallbackValue
+  ]));
+}
+
 export function QueuePage() {
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState({});
@@ -538,8 +545,14 @@ export function ReportsPage() {
       setLoading(true);
       setError('');
       const typeKey = reportTypes.some(([value]) => value === nextType) ? nextType : 'overview';
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('reports:request', { type: typeKey, filters: nextFilters });
+      }
       const response = await getReportByType(typeKey, nextFilters);
       setReport(response.data.data);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('reports:response', { type: typeKey, rows: response.data.data?.rows?.length || 0 });
+      }
     } catch (err) {
       console.error('Report API failed', err.response?.data || err);
       setError(err.response?.data?.message || 'Unable to load report.');
@@ -558,7 +571,23 @@ export function ReportsPage() {
 
   useEffect(() => {
     getReportOptions()
-      .then((response) => setOptions({ ...fallbackOptions, ...(response.data.data || {}) }))
+      .then((response) => {
+        const nextOptions = mergeReportOptions(fallbackOptions, response.data.data || {});
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('reports:options', {
+            courses: nextOptions.courses.length,
+            batches: nextOptions.batches.length,
+            agents: nextOptions.agents.length
+          });
+        }
+        setOptions(nextOptions);
+        setFilters((current) => ({
+          ...current,
+          courseId: current.courseId && !nextOptions.courses.some((course) => String(course.id) === String(current.courseId)) ? '' : current.courseId,
+          batchId: current.batchId && !nextOptions.batches.some((batch) => String(batch.id) === String(current.batchId)) ? '' : current.batchId,
+          agentId: current.agentId && !nextOptions.agents.some((agent) => String(agent.id) === String(current.agentId)) ? '' : current.agentId
+        }));
+      })
       .catch((err) => {
         console.error('Report options API failed', err.response?.data || err);
         setOptions(fallbackOptions);

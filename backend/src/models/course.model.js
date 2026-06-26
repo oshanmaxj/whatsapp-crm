@@ -7,6 +7,7 @@ module.exports = (sequelize, DataTypes) => {
     description: { type: DataTypes.TEXT, allowNull: true },
     durationWeeks: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
     feeAmount: { type: DataTypes.DECIMAL(15, 2), allowNull: true },
+    defaultInstallmentCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 1, validate: { min: 1 } },
     status: { type: DataTypes.ENUM('active', 'inactive', 'archived'), allowNull: false, defaultValue: 'active' }
   }, {
     tableName: 'courses',

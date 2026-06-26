@@ -30,6 +30,18 @@ function optionalId(value) {
   return value === '' || value === undefined || value === null ? null : value;
 }
 
+function normalizeCoursePayload(payload) {
+  const next = { ...payload };
+  if (next.defaultInstallmentCount === '' || next.defaultInstallmentCount === undefined || next.defaultInstallmentCount === null) {
+    next.defaultInstallmentCount = 1;
+  }
+  next.defaultInstallmentCount = Number(next.defaultInstallmentCount);
+  if (!Number.isFinite(next.defaultInstallmentCount) || next.defaultInstallmentCount < 1) {
+    throw Object.assign(new Error('Default installment count must be at least 1.'), { status: 400 });
+  }
+  return next;
+}
+
 function certificateNo() {
   return `CERT-${Date.now()}`;
 }
@@ -38,6 +50,75 @@ function addMonths(dateString, months) {
   const date = dateString ? new Date(dateString) : new Date();
   date.setMonth(date.getMonth() + months);
   return date.toISOString().slice(0, 10);
+}
+
+function amount(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function roundMoney(value) {
+  return Math.round((amount(value) + Number.EPSILON) * 100) / 100;
+}
+
+function cleanText(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function feeStatus(totalAmount, paidAmount, paymentType) {
+  if (paymentType === 'free_card') return 'free';
+  if (amount(totalAmount) <= 0) return 'paid';
+  if (amount(paidAmount) >= amount(totalAmount)) return 'paid';
+  if (amount(paidAmount) > 0) return 'partial';
+  return 'pending';
+}
+
+function calculateDiscount({ originalAmount, discountType, discountValue, paymentType, discountReason, approvedBy }) {
+  const original = Math.max(roundMoney(originalAmount), 0);
+  const type = paymentType === 'free_card' ? 'fixed' : discountType || 'none';
+  const value = Math.max(amount(paymentType === 'free_card' ? original : discountValue), 0);
+
+  if (type === 'special_approval' && (!cleanText(discountReason) || !cleanText(approvedBy))) {
+    throw Object.assign(new Error('Special approval discounts require a reason and approver.'), { status: 400 });
+  }
+
+  if (['fixed', 'promotional', 'special_approval'].includes(type) && value > original) {
+    throw Object.assign(new Error('Fixed discount cannot exceed original amount.'), { status: 400 });
+  }
+
+  if (type === 'percentage' && value > 100) {
+    throw Object.assign(new Error('Percentage discount cannot exceed 100%.'), { status: 400 });
+  }
+
+  let discount = 0;
+  if (type === 'fixed' || type === 'promotional' || type === 'special_approval' || type === 'scholarship') discount = value;
+  if (type === 'percentage') discount = original * value / 100;
+  if (type === 'none') discount = 0;
+
+  if (discount > original) {
+    if (type !== 'scholarship') throw Object.assign(new Error('Discount cannot exceed original amount.'), { status: 400 });
+    discount = original;
+  }
+
+  return {
+    discountType: paymentType === 'free_card' ? 'scholarship' : type,
+    discountValue: roundMoney(value),
+    discountAmount: roundMoney(discount),
+    totalAmount: roundMoney(Math.max(original - discount, 0))
+  };
+}
+
+function splitInstallments(totalAmount, count) {
+  const safeCount = Math.max(Number(count) || 1, 1);
+  const cents = Math.round(amount(totalAmount) * 100);
+  const base = Math.floor(cents / safeCount);
+  let remainder = cents - base * safeCount;
+  return Array.from({ length: safeCount }).map(() => {
+    const extra = remainder > 0 ? 1 : 0;
+    remainder -= extra;
+    return (base + extra) / 100;
+  });
 }
 
 class EducationService {
@@ -70,12 +151,12 @@ class EducationService {
 
   async createCourse(payload) {
     if (!payload.name) throw Object.assign(new Error('Course name is required'), { status: 400 });
-    return Course.create(payload);
+    return Course.create(normalizeCoursePayload(payload));
   }
 
   async updateCourse(id, payload) {
     const row = await this.getCourse(id);
-    await row.update(payload);
+    await row.update(normalizeCoursePayload({ ...row.toJSON(), ...payload }));
     return this.getCourse(id);
   }
 
@@ -188,7 +269,11 @@ class EducationService {
 
   async updateStudent(id, payload) {
     const row = await this.getStudent(id);
-    await row.update(payload);
+    const next = { ...payload };
+    if ('courseId' in next) next.courseId = optionalId(next.courseId);
+    if ('batchId' in next) next.batchId = optionalId(next.batchId);
+    if ('leadId' in next) next.leadId = optionalId(next.leadId);
+    await row.update(next);
     return this.getStudent(id);
   }
 
@@ -238,53 +323,125 @@ class EducationService {
     return rows;
   }
 
-  async createFee(payload) {
-    if (!payload.studentId || payload.totalAmount === undefined) throw Object.assign(new Error('Student and total amount are required'), { status: 400 });
-    const student = await this.getStudent(payload.studentId);
-    const fee = await StudentFee.create({
-      studentId: payload.studentId,
-      courseId: payload.courseId || student.courseId || null,
-      batchId: payload.batchId || student.batchId || null,
-      paymentType: payload.paymentType || 'full',
-      totalAmount: payload.totalAmount,
-      paidAmount: payload.paidAmount || 0,
-      discountAmount: payload.discountAmount || 0,
-      dueDate: payload.dueDate || todayDate(),
-      notes: payload.notes || null
-    });
+  async feePayload(payload, existing = null) {
+    if (!payload.studentId && !existing?.studentId) throw Object.assign(new Error('Student is required'), { status: 400 });
+    const student = await this.getStudent(payload.studentId || existing.studentId);
+    const courseId = optionalId(payload.courseId) || student.courseId || existing?.courseId || null;
+    const batchId = optionalId(payload.batchId) || student.batchId || existing?.batchId || null;
+    const course = courseId ? await Course.findByPk(courseId) : student.course;
+    const paymentType = payload.paymentType || existing?.paymentType || 'full';
+    const courseAmount = amount(course?.feeAmount);
+    const originalAmount = payload.originalAmount !== undefined && payload.originalAmount !== null
+      ? amount(payload.originalAmount)
+      : amount(existing?.originalAmount || courseAmount || payload.totalAmount);
 
-    if (payload.paymentType === 'installment') {
-      const count = Math.max(Number(payload.installmentCount) || 2, 1);
-      const amount = Number(payload.totalAmount || 0) / count;
-      const rows = Array.from({ length: count }).map((_, index) => ({
-        feeId: fee.id,
-        installmentNo: index + 1,
-        amount,
-        dueDate: addMonths(payload.dueDate || todayDate(), index),
-        status: 'pending'
-      }));
-      await FeeInstallment.bulkCreate(rows);
-    } else {
-      await FeeInstallment.create({ feeId: fee.id, installmentNo: 1, amount: payload.totalAmount, dueDate: payload.dueDate || todayDate() });
+    if (paymentType !== 'free_card' && originalAmount < 0) {
+      throw Object.assign(new Error('Original amount must be greater than or equal to 0.'), { status: 400 });
     }
 
+    const requestedCount = paymentType === 'full' || paymentType === 'free_card'
+      ? 1
+      : (payload.installmentCount || existing?.installmentCount || course?.defaultInstallmentCount || 1);
+    const installmentCount = Math.max(Number(requestedCount) || 1, 1);
+    const discount = calculateDiscount({
+      originalAmount,
+      discountType: payload.discountType || existing?.discountType || 'none',
+      discountValue: payload.discountValue ?? existing?.discountValue ?? 0,
+      paymentType,
+      discountReason: payload.discountReason ?? existing?.discountReason,
+      approvedBy: payload.approvedBy ?? existing?.approvedBy
+    });
+    const paidAmount = paymentType === 'free_card' ? 0 : Math.min(amount(payload.paidAmount ?? existing?.paidAmount), discount.totalAmount);
+    const balance = roundMoney(Math.max(discount.totalAmount - paidAmount, 0));
+
+    return {
+      studentId: student.id,
+      courseId,
+      batchId,
+      originalAmount: roundMoney(originalAmount),
+      discountType: discount.discountType,
+      discountValue: discount.discountValue,
+      discountAmount: discount.discountAmount,
+      discountReason: cleanText(payload.discountReason ?? existing?.discountReason),
+      approvedBy: cleanText(payload.approvedBy ?? existing?.approvedBy),
+      approvedAt: cleanText(payload.approvedBy ?? existing?.approvedBy) ? (existing?.approvedAt || new Date()) : null,
+      paymentType,
+      installmentCount,
+      totalAmount: discount.totalAmount,
+      paidAmount,
+      balance,
+      status: feeStatus(discount.totalAmount, paidAmount, paymentType),
+      dueDate: payload.dueDate || existing?.dueDate || todayDate(),
+      notes: payload.notes ?? existing?.notes ?? null
+    };
+  }
+
+  async replaceInstallments(fee, feeData, payload = {}) {
+    await FeeInstallment.destroy({ where: { studentFeeId: fee.id } });
+    if (feeData.paymentType === 'free_card') return;
+    const count = feeData.paymentType === 'installment' ? feeData.installmentCount : 1;
+    const amounts = splitInstallments(feeData.totalAmount, count);
+    const paidAmount = amount(feeData.paidAmount);
+    let remainingPaid = paidAmount;
+    const rows = amounts.map((installmentAmount, index) => {
+      const appliedPaid = Math.min(remainingPaid, installmentAmount);
+      remainingPaid = roundMoney(remainingPaid - appliedPaid);
+      return {
+        studentFeeId: fee.id,
+        installmentNo: index + 1,
+        amount: installmentAmount,
+        paidAmount: appliedPaid,
+        dueDate: addMonths(feeData.dueDate || todayDate(), index),
+        paidDate: appliedPaid >= installmentAmount ? (payload.paidDate || todayDate()) : null,
+        paymentMethod: payload.paymentMethod || (feeData.paymentType === 'scholarship' ? 'Scholarship' : null),
+        transactionReference: payload.transactionReference || null,
+        status: appliedPaid >= installmentAmount ? 'paid' : appliedPaid > 0 ? 'partially_paid' : 'pending',
+        notes: payload.notes || null
+      };
+    });
+    await FeeInstallment.bulkCreate(rows);
+  }
+
+  async recalculateFee(feeId) {
+    const fee = await StudentFee.findByPk(feeId, { include: [{ model: FeeInstallment, as: 'installments' }] });
+    if (!fee) throw Object.assign(new Error('Fee record not found'), { status: 404 });
+    const paidAmount = roundMoney((fee.installments || []).reduce((sum, item) => sum + amount(item.paidAmount), 0));
+    const balance = roundMoney(Math.max(amount(fee.totalAmount) - paidAmount, 0));
+    await fee.update({ paidAmount, balance, status: feeStatus(fee.totalAmount, paidAmount, fee.paymentType) });
+    return this.getFee(feeId);
+  }
+
+  async createFee(payload) {
+    const feeData = await this.feePayload(payload);
+    const fee = await StudentFee.create(feeData);
+    await this.replaceInstallments(fee, feeData, payload);
     return this.getFee(fee.id);
   }
 
   async getFee(id) {
-    const row = await StudentFee.findByPk(id, { include: [{ model: Student, as: 'student' }, { model: FeeInstallment, as: 'installments' }] });
+    const row = await StudentFee.findByPk(id, {
+      include: [
+        { model: Student, as: 'student', include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch' }] },
+        { model: Course, as: 'course' },
+        { model: Batch, as: 'batch' },
+        { model: FeeInstallment, as: 'installments' }
+      ]
+    });
     if (!row) throw Object.assign(new Error('Fee record not found'), { status: 404 });
     return row;
   }
 
   async updateFee(id, payload) {
     const row = await this.getFee(id);
-    await row.update(payload);
+    const next = await this.feePayload({ ...row.toJSON(), ...payload, studentId: payload.studentId || row.studentId }, row);
+    await row.update(next);
+    await this.replaceInstallments(row, next, payload);
     return this.getFee(id);
   }
 
   async deleteFee(id) {
     const row = await this.getFee(id);
+    await FeeInstallment.destroy({ where: { studentFeeId: row.id } });
     await row.destroy();
     return { deleted: true, id };
   }
@@ -292,13 +449,22 @@ class EducationService {
   async payInstallment(id, payload = {}) {
     const row = await FeeInstallment.findByPk(id, { include: [{ model: StudentFee, as: 'fee' }] });
     if (!row) throw Object.assign(new Error('Installment not found'), { status: 404 });
-    const paidAmount = Number(row.paidAmount || 0) + Number(payload.amount || row.amount);
-    const status = paidAmount >= Number(row.amount) ? 'paid' : 'partial';
-    await row.update({ paidAmount, status, paidAt: status === 'paid' ? new Date() : row.paidAt, notes: payload.notes ?? row.notes });
-    const installments = await FeeInstallment.findAll({ where: { feeId: row.feeId } });
-    const totalPaid = installments.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
-    await row.fee.update({ paidAmount: totalPaid, status: totalPaid >= Number(row.fee.totalAmount) ? 'paid' : 'partial' });
-    return this.getFee(row.feeId);
+    if (row.status === 'cancelled') throw Object.assign(new Error('Cannot pay a cancelled installment.'), { status: 400 });
+    const remaining = roundMoney(amount(row.amount) - amount(row.paidAmount));
+    const paying = roundMoney(payload.amount === undefined || payload.amount === null ? remaining : payload.amount);
+    if (paying <= 0) throw Object.assign(new Error('Payment amount must be greater than 0.'), { status: 400 });
+    if (paying > remaining) throw Object.assign(new Error('Payment exceeds installment remaining amount.'), { status: 400 });
+    const paidAmount = roundMoney(amount(row.paidAmount) + paying);
+    const status = paidAmount >= amount(row.amount) ? 'paid' : 'partially_paid';
+    await row.update({
+      paidAmount,
+      status,
+      paidDate: payload.paidDate || todayDate(),
+      paymentMethod: payload.paymentMethod || row.paymentMethod || 'Cash',
+      transactionReference: payload.transactionReference ?? row.transactionReference,
+      notes: payload.notes ?? row.notes
+    });
+    return this.recalculateFee(row.studentFeeId);
   }
 
   async markOverdue(fees) {
@@ -306,7 +472,7 @@ class EducationService {
     const feeRows = Array.isArray(fees) ? fees : [fees];
     for (const fee of feeRows) {
       for (const item of fee.installments || []) {
-        if (item.status !== 'paid' && item.dueDate < now) await item.update({ status: 'overdue' });
+        if (!['paid', 'cancelled'].includes(item.status) && item.dueDate < now) await item.update({ status: 'overdue' });
       }
     }
   }
@@ -325,7 +491,6 @@ class EducationService {
     await installment.update({ reminderSentAt: new Date() });
     return { installment, notification };
   }
-
   async listAttendance(query = {}) {
     const where = {};
     if (query.studentId) where.studentId = query.studentId;

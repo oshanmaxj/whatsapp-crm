@@ -43,7 +43,7 @@ const STUDENT_STATUSES = ['enrolled', 'active', 'pending', 'completed', 'dropped
 const LEAD_STATUSES = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
 const LEAD_SOURCES = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 const PAYMENT_STATUSES = ['paid', 'pending', 'partial', 'overdue', 'cancelled'];
-const PAYMENT_METHODS = ['Cash', 'Bank Deposit', 'Bank Transfer', 'Card', 'Online Payment', 'Cheque', 'Other'];
+const PAYMENT_METHODS = ['Cash', 'Bank Deposit', 'Bank Transfer', 'Card', 'Online Payment', 'Cheque', 'Free Card', 'Scholarship', 'Other'];
 const CAMPAIGN_STATUSES = ['Draft', 'Scheduled', 'Processing', 'Completed', 'Failed', 'Cancelled', 'simulated_sent'];
 const ATTENDANCE_STATUSES = ['Present', 'Absent', 'Late', 'Excused'];
 
@@ -120,6 +120,7 @@ class ReportService {
         name: batch.name || '',
         courseId: batch.courseId || null,
         courseName: batch.course?.name || '',
+        courseCode: batch.course?.code || '',
         schedule: batch.schedule || ''
       })),
       agents: agents.map((agent) => ({ id: agent.id, name: userName(agent), email: agent.email, department: agent.department })),
@@ -239,7 +240,15 @@ class ReportService {
 
   async leadRows(filters) {
     const leads = await Lead.findAll({ where: this.leadWhere(filters), include: this.leadInclude(filters), order: [['createdAt', 'DESC']], limit: 1000 });
-    return leads.map((lead) => ({
+    const course = filters.courseId ? await Course.findByPk(filters.courseId).catch(() => null) : null;
+    const courseTokens = filters.courseId
+      ? [String(filters.courseId), course?.code, course?.name].filter(Boolean).map((value) => String(value).toLowerCase())
+      : [];
+    return leads.filter((lead) => {
+      if (!courseTokens.length) return true;
+      const interested = String(lead.courseInterested || '').toLowerCase();
+      return courseTokens.some((token) => interested === token || interested.includes(token));
+    }).map((lead) => ({
       name: contactName(lead.contact),
       phone: lead.contact?.phone || '',
       source: lead.source?.name || '',
@@ -314,10 +323,13 @@ class ReportService {
       phone: fee.student?.phone || '',
       course: fee.course?.name || '',
       batch: fee.batch?.name || '',
+      originalAmount: amount(fee.originalAmount || fee.totalAmount).toFixed(2),
+      discountType: fee.discountType || 'none',
+      discountAmount: amount(fee.discountAmount).toFixed(2),
       amount: amount(fee.totalAmount).toFixed(2),
       paidAmount: amount(fee.paidAmount).toFixed(2),
-      balance: Math.max(amount(fee.totalAmount) - amount(fee.paidAmount), 0).toFixed(2),
-      paymentMethod: '',
+      balance: amount(fee.balance ?? Math.max(amount(fee.totalAmount) - amount(fee.paidAmount), 0)).toFixed(2),
+      paymentMethod: fee.paymentType === 'free_card' ? 'Free Card' : fee.paymentType === 'scholarship' ? 'Scholarship' : '',
       paidDate: dateValue(fee.updatedAt),
       status: fee.status,
       dueDate: dateValue(fee.dueDate)
@@ -330,7 +342,10 @@ class ReportService {
       { key: 'receiptNo', label: 'Receipt no' },
       { key: 'student', label: 'Student' },
       { key: 'course', label: 'Course' },
-      { key: 'amount', label: 'Amount' },
+      { key: 'originalAmount', label: 'Original amount' },
+      { key: 'discountType', label: 'Discount type' },
+      { key: 'discountAmount', label: 'Discount amount' },
+      { key: 'amount', label: 'Final amount' },
       { key: 'paidAmount', label: 'Paid amount' },
       { key: 'balance', label: 'Balance' },
       { key: 'paymentMethod', label: 'Payment method' },
@@ -517,7 +532,10 @@ class ReportService {
   }
 
   async agentReport(filters) {
-    const agents = await User.findAll({ where: filters.agentId ? { id: filters.agentId } : { status: 'active' }, attributes: ['id', 'firstName', 'lastName', 'email', 'department'] });
+    const agents = await User.findAll({
+      where: filters.agentId ? { id: filters.agentId } : { status: 'active' },
+      attributes: ['id', 'firstName', 'lastName', 'email', 'department']
+    });
     const [leads, conversations, followups] = await Promise.all([
       Lead.findAll({ where: this.leadWhere(filters), include: [{ model: LeadStatus, as: 'status' }] }),
       Conversation.findAll({ where: filters.agentId ? { assignedTo: filters.agentId } : {} }),

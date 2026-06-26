@@ -297,6 +297,7 @@ class EducationService {
         phone: data.phone,
         whatsappNumber: data.contact?.whatsappId || data.phone,
         email: data.email || data.contact?.email || null,
+        dateOfBirth: data.dateOfBirth || null,
         address: data.address || data.contact?.address || null,
         registrationDate: data.enrolledAt,
         status: data.status,
@@ -400,6 +401,7 @@ class EducationService {
       name,
       phone,
       email,
+      dateOfBirth: payload.dateOfBirth || null,
       status: payload.status || 'enrolled',
       enrolledAt: payload.enrolledAt || new Date(),
       notes: payload.notes || null
@@ -780,6 +782,7 @@ class EducationService {
       phone: cleanText(payload.phone),
       whatsapp: cleanText(payload.whatsapp),
       email: cleanText(payload.email),
+      dateOfBirth: payload.dateOfBirth || null,
       isPrimary: payload.isPrimary === true,
       isEmergencyContact: payload.isEmergencyContact === true,
       address: cleanText(payload.address),
@@ -791,10 +794,12 @@ class EducationService {
     const guardian = await StudentGuardian.findByPk(guardianId);
     if (!guardian) throw Object.assign(new Error('Student guardian not found'), { status: 404 });
     const changes = {};
-    ['name', 'relationship', 'phone', 'whatsapp', 'email', 'address', 'notes'].forEach((field) => {
+    ['name', 'relationship', 'phone', 'whatsapp', 'email', 'dateOfBirth', 'address', 'notes'].forEach((field) => {
       if (payload[field] !== undefined) changes[field] = ['name', 'relationship'].includes(field)
         ? String(payload[field] || '').trim()
-        : cleanText(payload[field]);
+        : field === 'dateOfBirth'
+          ? payload[field] || null
+          : cleanText(payload[field]);
     });
     if (changes.name === '' || changes.relationship === '') {
       throw Object.assign(new Error('Guardian name and relationship are required'), { status: 400 });

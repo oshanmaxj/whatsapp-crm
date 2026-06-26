@@ -49,9 +49,9 @@ const modules = {
     create: createStudent,
     update: updateStudent,
     remove: deleteStudent,
-    initial: { name: '', phone: '', email: '', courseId: '', batchId: '', status: 'enrolled', notes: '' },
-    fields: ['name', 'phone', 'email', 'courseId', 'batchId', 'status', 'notes'],
-    columns: ['studentNo', 'name', 'phone', 'course.name', 'batch.name', 'status']
+    initial: { name: '', phone: '', email: '', dateOfBirth: '', courseId: '', batchId: '', status: 'enrolled', notes: '' },
+    fields: ['name', 'phone', 'email', 'dateOfBirth', 'courseId', 'batchId', 'status', 'notes'],
+    columns: ['studentNo', 'name', 'phone', 'dateOfBirth', 'course.name', 'batch.name', 'status']
   },
   fees: {
     title: 'Fee & Installment Tracking',

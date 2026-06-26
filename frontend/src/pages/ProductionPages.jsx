@@ -513,6 +513,7 @@ export function ReportsPage() {
     ['class-reminders', 'Class Reminder Report'],
     ['automations', 'Automation Report'],
     ['attendance-alerts', 'Attendance Alert Report'],
+    ['birthday-wishes', 'Birthday Wish Report'],
     ['compliance', 'WhatsApp Compliance Report'],
     ['campaigns', 'Campaign Report'],
     ['campaign-roi', 'Campaign ROI Report'],

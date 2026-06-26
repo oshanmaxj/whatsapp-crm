@@ -30,6 +30,7 @@ const whatsappTemplateRoutes = require('./whatsappTemplate.routes');
 const complianceRoutes = require('./compliance.routes');
 const automationRoutes = require('./automation.routes');
 const attendanceAlertRoutes = require('./attendanceAlert.routes');
+const birthdayWishRoutes = require('./birthdayWish.routes');
 
 const router = express.Router();
 
@@ -62,6 +63,7 @@ router.use('/whatsapp-templates', whatsappTemplateRoutes);
 router.use('/compliance', complianceRoutes);
 router.use('/automations', automationRoutes);
 router.use('/attendance-alerts', attendanceAlertRoutes);
+router.use('/birthday-wishes', birthdayWishRoutes);
 router.use('/', productionRoutes);
 router.use('/', educationRoutes);
 

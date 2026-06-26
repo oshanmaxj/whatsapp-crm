@@ -32,6 +32,11 @@ const DEFAULTS = [
     attendance_alert_below_50_enabled: true,
     attendance_alert_send_to_student_enabled: true,
     attendance_alert_send_to_guardian_enabled: true
+  }],
+  ['birthday_wishes', 'automation', {
+    birthday_auto_send_enabled: false,
+    birthday_send_to_students_enabled: true,
+    birthday_send_to_guardians_enabled: true
   }]
 ];
 
@@ -83,6 +88,15 @@ class SettingsService {
       const automation = await Automation.findOne({ where: { code: 'ATTENDANCE_ALERT' } });
       if (automation && automation.enabled !== value.attendance_alert_auto_send_enabled) {
         await automationService.toggleAutomation(automation.id, value.attendance_alert_auto_send_enabled);
+      }
+    }
+    if (namespace === 'birthday_wishes' && key === 'automation' && typeof value?.birthday_auto_send_enabled === 'boolean') {
+      const automationService = require('./automation.service');
+      await automationService.ensureDefaults();
+      const { Automation } = require('../models');
+      const automation = await Automation.findOne({ where: { code: 'BIRTHDAY_WISH' } });
+      if (automation && automation.enabled !== value.birthday_auto_send_enabled) {
+        await automationService.toggleAutomation(automation.id, value.birthday_auto_send_enabled);
       }
     }
     return row;

@@ -9,6 +9,7 @@ module.exports = (sequelize, DataTypes) => {
     name: { type: DataTypes.STRING(180), allowNull: false },
     phone: { type: DataTypes.STRING(50), allowNull: false },
     email: { type: DataTypes.STRING(255), allowNull: true },
+    dateOfBirth: { type: DataTypes.DATEONLY, allowNull: true },
     status: { type: DataTypes.ENUM('enrolled', 'active', 'completed', 'dropped', 'suspended'), allowNull: false, defaultValue: 'enrolled' },
     enrolledAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
     notes: { type: DataTypes.TEXT, allowNull: true }

@@ -4,6 +4,7 @@ const {
   AttendanceAlert,
   AttendanceRecord,
   Batch,
+  BirthdayWish,
   ClassReminder,
   Contact,
   Conversation,
@@ -14,6 +15,8 @@ const {
   LeadSource,
   LeadStatus,
   Message,
+  Student,
+  StudentGuardian,
   StudentFee,
   User,
   AppSetting,
@@ -66,6 +69,7 @@ class DashboardService {
       classReminderWidgets,
       automationWidgets,
       attendanceAlertWidgets,
+      birthdayWidgets,
       whatsappComplianceWidgets,
       leadsByStatus,
       leadsBySource,
@@ -90,6 +94,7 @@ class DashboardService {
       this.getClassReminderWidgets(todayStart),
       this.getAutomationWidgets(todayStart),
       this.getAttendanceAlertWidgets(todayStart),
+      this.getBirthdayWidgets(todayStart),
       this.getWhatsAppComplianceWidgets(),
       this.getLeadsByStatus(),
       this.getLeadsBySource(),
@@ -126,6 +131,10 @@ class DashboardService {
         attendanceAlertsPending: attendanceAlertWidgets.pending,
         lowAttendanceStudents: attendanceAlertWidgets.lowAttendanceStudents,
         attendanceAlertFailures: attendanceAlertWidgets.failures,
+        birthdaysToday: birthdayWidgets.today,
+        birthdayWishesSent: birthdayWidgets.sent,
+        birthdayWishesPending: birthdayWidgets.pending,
+        birthdayWishesFailed: birthdayWidgets.failed,
         approvedTemplates: whatsappComplianceWidgets.approved,
         pendingTemplates: whatsappComplianceWidgets.pending,
         rejectedTemplates: whatsappComplianceWidgets.rejected,
@@ -271,6 +280,26 @@ class DashboardService {
       return rows.length > 0 && (attended / rows.length) * 100 < 75;
     }).length;
     return { absentToday, pending, failures, lowAttendanceStudents };
+  }
+
+  async getBirthdayWidgets(todayStart = startOfDay()) {
+    const monthDay = formatDateKey(todayStart).slice(5);
+    const [students, guardians, sent, pending, failed] = await Promise.all([
+      Student.findAll({
+        where: { status: { [Op.in]: ['enrolled', 'active'] }, dateOfBirth: { [Op.ne]: null } },
+        attributes: ['dateOfBirth']
+      }),
+      StudentGuardian.findAll({
+        where: { dateOfBirth: { [Op.ne]: null } },
+        attributes: ['dateOfBirth'],
+        include: [{ model: Student, as: 'student', where: { status: { [Op.in]: ['enrolled', 'active'] } }, attributes: [], required: true }]
+      }),
+      BirthdayWish.count({ where: { status: 'sent', sentDate: { [Op.gte]: todayStart } } }),
+      BirthdayWish.count({ where: { status: 'pending' } }),
+      BirthdayWish.count({ where: { status: 'failed', updatedAt: { [Op.gte]: todayStart } } })
+    ]);
+    const today = [...students, ...guardians].filter((row) => String(row.dateOfBirth || '').slice(5) === monthDay).length;
+    return { today, sent, pending, failed };
   }
 
   async getClassReminderWidgets(todayStart = startOfDay()) {

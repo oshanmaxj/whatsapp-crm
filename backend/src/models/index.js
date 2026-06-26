@@ -42,6 +42,7 @@ const Batch = require('./batch.model');
 const Student = require('./student.model');
 const StudentGuardian = require('./studentGuardian.model');
 const AttendanceAlert = require('./attendanceAlert.model');
+const BirthdayWish = require('./birthdayWish.model');
 const ClassReminder = require('./classReminder.model');
 const Automation = require('./automation.model');
 const AutomationLog = require('./automationLog.model');
@@ -102,6 +103,7 @@ const models = {
   Student: Student(sequelize, Sequelize.DataTypes),
   StudentGuardian: StudentGuardian(sequelize, Sequelize.DataTypes),
   AttendanceAlert: AttendanceAlert(sequelize, Sequelize.DataTypes),
+  BirthdayWish: BirthdayWish(sequelize, Sequelize.DataTypes),
   ClassReminder: ClassReminder(sequelize, Sequelize.DataTypes),
   Automation: Automation(sequelize, Sequelize.DataTypes),
   AutomationLog: AutomationLog(sequelize, Sequelize.DataTypes),
@@ -196,6 +198,7 @@ models.Course.hasMany(models.Student, { foreignKey: 'course_id', as: 'students' 
 models.Batch.hasMany(models.Student, { foreignKey: 'batch_id', as: 'students' });
 models.Student.hasMany(models.StudentGuardian, { foreignKey: 'student_id', as: 'guardians' });
 models.Student.hasMany(models.AttendanceAlert, { foreignKey: 'student_id', as: 'attendanceAlerts' });
+models.Student.hasMany(models.BirthdayWish, { foreignKey: 'student_id', as: 'birthdayWishes' });
 models.AttendanceRecord.hasMany(models.AttendanceAlert, { foreignKey: 'attendance_record_id', as: 'alerts' });
 models.Batch.hasMany(models.ClassReminder, { foreignKey: 'batch_id', as: 'classReminders' });
 models.Student.hasMany(models.ClassReminder, { foreignKey: 'student_id', as: 'classReminders' });

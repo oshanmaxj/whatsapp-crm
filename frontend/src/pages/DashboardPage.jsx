@@ -27,6 +27,7 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import LeaderboardIcon from '@mui/icons-material/Leaderboard';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined';
+import CakeOutlinedIcon from '@mui/icons-material/CakeOutlined';
 import { getDashboardSummary } from '../services/dashboard.service';
 
 const defaultSummary = {
@@ -162,6 +163,10 @@ function DashboardPage() {
     { label: 'Attendance Alerts Pending', value: summary.totals.attendanceAlertsPending || 0, icon: <EventAvailableIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
     { label: 'Low Attendance Students', value: summary.totals.lowAttendanceStudents || 0, icon: <EventAvailableIcon sx={{ color: '#6d5b00' }} />, tone: '#fff8cc' },
     { label: 'Attendance Alert Failures', value: summary.totals.attendanceAlertFailures || 0, icon: <EventAvailableIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    { label: 'Birthdays Today', value: summary.totals.birthdaysToday || 0, icon: <CakeOutlinedIcon sx={{ color: '#7a4bd8' }} />, tone: '#f1ecff' },
+    { label: 'Birthday Wishes Sent', value: summary.totals.birthdayWishesSent || 0, icon: <CakeOutlinedIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: 'Pending Wishes', value: summary.totals.birthdayWishesPending || 0, icon: <CakeOutlinedIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
+    { label: 'Failed Wishes', value: summary.totals.birthdayWishesFailed || 0, icon: <CakeOutlinedIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
     { label: 'Approved Templates', value: summary.totals.approvedTemplates || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
     { label: 'Pending Approval', value: summary.totals.pendingTemplates || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
     { label: 'Rejected Templates', value: summary.totals.rejectedTemplates || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },

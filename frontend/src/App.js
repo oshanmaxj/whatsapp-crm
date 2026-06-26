@@ -31,6 +31,7 @@ import { ChangePasswordPage, UserProfilePage } from './pages/AccountPages';
 import WhatsAppTemplatesPage from './pages/WhatsAppTemplatesPage';
 import AutomationCenterPage from './pages/AutomationCenterPage';
 import AttendanceAlertsPage from './pages/AttendanceAlertsPage';
+import BirthdayWishesPage from './pages/BirthdayWishesPage';
 
 function App() {
   const [darkMode, setDarkMode] = React.useState(() => localStorage.getItem('darkMode') === 'true');
@@ -83,6 +84,7 @@ function App() {
             <Route path="/class-reminders" element={permit('attendance.view', <ClassRemindersPage />)} />
             <Route path="/automations" element={permit('settings.view', <AutomationCenterPage />)} />
             <Route path="/attendance-alerts" element={permit('attendance.view', <AttendanceAlertsPage />)} />
+            <Route path="/birthday-wishes" element={permit('students.view', <BirthdayWishesPage />)} />
             <Route path="/attendance" element={permit('attendance.view', <AttendancePage />)} />
             <Route path="/certificates" element={permit('certificates.view', <CertificatesPage />)} />
             <Route path="/queue" element={permit('settings.view', <QueuePage />)} />

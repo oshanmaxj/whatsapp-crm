@@ -3,6 +3,7 @@ const { AppSetting, Automation, AutomationLog } = require('../models');
 const classReminderService = require('./classReminder.service');
 const feeReminderService = require('./feeReminder.service');
 const attendanceAlertService = require('./attendanceAlert.service');
+const birthdayWishService = require('./birthdayWish.service');
 const notificationService = require('./notification.service');
 
 const DEFAULT_AUTOMATIONS = [
@@ -234,15 +235,16 @@ class AutomationService {
   }
 
   async syncLegacySettings(automation) {
-    if (!['CLASS_REMINDER', 'ATTENDANCE_ALERT'].includes(automation.code)) return;
+    if (!['CLASS_REMINDER', 'ATTENDANCE_ALERT', 'BIRTHDAY_WISH'].includes(automation.code)) return;
     const isClassReminder = automation.code === 'CLASS_REMINDER';
-    const namespace = isClassReminder ? 'class_reminders' : 'attendance_alerts';
+    const isAttendanceAlert = automation.code === 'ATTENDANCE_ALERT';
+    const namespace = isClassReminder ? 'class_reminders' : isAttendanceAlert ? 'attendance_alerts' : 'birthday_wishes';
     const defaults = isClassReminder ? {
       class_reminder_auto_send_enabled: false,
       class_reminder_day_before_enabled: true,
       class_reminder_same_day_enabled: true,
       class_reminder_one_hour_enabled: true
-    } : {
+    } : isAttendanceAlert ? {
       attendance_alert_auto_send_enabled: false,
       attendance_alert_absent_today_enabled: true,
       attendance_alert_consecutive_2_enabled: true,
@@ -251,6 +253,10 @@ class AutomationService {
       attendance_alert_below_50_enabled: true,
       attendance_alert_send_to_student_enabled: true,
       attendance_alert_send_to_guardian_enabled: true
+    } : {
+      birthday_auto_send_enabled: false,
+      birthday_send_to_students_enabled: true,
+      birthday_send_to_guardians_enabled: true
     };
     const [setting] = await AppSetting.findOrCreate({
       where: { namespace, key: 'automation' },
@@ -260,7 +266,11 @@ class AutomationService {
       value: {
         ...defaults,
         ...(setting.value || {}),
-        [isClassReminder ? 'class_reminder_auto_send_enabled' : 'attendance_alert_auto_send_enabled']: automation.enabled
+        [isClassReminder
+          ? 'class_reminder_auto_send_enabled'
+          : isAttendanceAlert
+            ? 'attendance_alert_auto_send_enabled'
+            : 'birthday_auto_send_enabled']: automation.enabled
       }
     });
   }
@@ -318,6 +328,7 @@ class AutomationService {
     if (code === 'FEE_REMINDER') return feeReminderService.sendBulkReminders();
     if (code === 'CLASS_REMINDER') return classReminderService.sendBulkReminders();
     if (code === 'ATTENDANCE_ALERT') return attendanceAlertService.sendBulkAlerts();
+    if (code === 'BIRTHDAY_WISH') return birthdayWishService.sendBulkBirthdayWishes();
     throw Object.assign(new Error('This automation is registered but its executor is not available yet'), { status: 501 });
   }
 

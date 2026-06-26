@@ -36,6 +36,7 @@ const emptyGuardian = {
   phone: '',
   whatsapp: '',
   email: '',
+  dateOfBirth: '',
   isPrimary: false,
   isEmergencyContact: false,
   address: '',
@@ -169,6 +170,7 @@ function StudentProfilePage() {
       phone: guardian.phone || '',
       whatsapp: guardian.whatsapp || '',
       email: guardian.email || '',
+      dateOfBirth: guardian.dateOfBirth || '',
       isPrimary: guardian.isPrimary === true,
       isEmergencyContact: guardian.isEmergencyContact === true,
       address: guardian.address || '',
@@ -242,7 +244,7 @@ function StudentProfilePage() {
     {tab === 0 && <Grid container spacing={2}>
       <Grid item xs={12} md={6}><InfoCard title="Student Information" icon={<SchoolIcon color="primary" />}><DetailGrid rows={[
         ['Full Name', student.fullName], ['Student ID', student.studentId], ['NIC', student.nic], ['Phone', student.phone],
-        ['WhatsApp Number', student.whatsappNumber], ['Email', student.email], ['Address', student.address], ['Registration Date', dateText(student.registrationDate)]
+        ['WhatsApp Number', student.whatsappNumber], ['Email', student.email], ['Date of Birth', dateText(student.dateOfBirth)], ['Address', student.address], ['Registration Date', dateText(student.registrationDate)]
       ]} /></InfoCard></Grid>
       <Grid item xs={12} md={6}><InfoCard title="Course Information" icon={<SchoolIcon color="primary" />}><DetailGrid rows={[
         ['Course Name', course.name], ['Course Fee', course.fee ? money(course.fee) : '-'], ['Batch Name', batch.name], ['Start Date', dateText(batch.startDate)],
@@ -274,7 +276,7 @@ function StudentProfilePage() {
                 const whatsappNumber = guardian.whatsapp || guardian.phone || '';
                 const whatsappUrl = whatsappNumber ? `https://wa.me/${whatsappNumber.replace(/\D/g, '')}` : '';
                 return <TableRow key={guardian.id}>
-                  <TableCell><Typography fontWeight={750}>{guardian.name}</Typography><Typography variant="caption" color="text.secondary">{guardian.email || '-'}</Typography></TableCell>
+                  <TableCell><Typography fontWeight={750}>{guardian.name}</Typography><Typography variant="caption" color="text.secondary">{guardian.email || '-'}</Typography><Typography variant="caption" color="text.secondary" display="block">{dateText(guardian.dateOfBirth)}</Typography></TableCell>
                   <TableCell>{guardian.relationship}</TableCell>
                   <TableCell><Typography variant="body2">{guardian.phone || '-'}</Typography><Typography variant="caption" color="text.secondary">{guardian.whatsapp || '-'}</Typography></TableCell>
                   <TableCell><Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>{guardian.isPrimary && <Chip size="small" color="primary" label="Primary" />}{guardian.isEmergencyContact && <Chip size="small" color="warning" label="Emergency" />}</Stack></TableCell>
@@ -333,6 +335,7 @@ function StudentProfilePage() {
           <Grid item xs={12} sm={6}><TextField label="Phone" value={guardianForm.phone} onChange={(e) => setGuardianForm((current) => ({ ...current, phone: e.target.value }))} fullWidth /></Grid>
           <Grid item xs={12} sm={6}><TextField label="WhatsApp" value={guardianForm.whatsapp} onChange={(e) => setGuardianForm((current) => ({ ...current, whatsapp: e.target.value }))} fullWidth /></Grid>
           <Grid item xs={12}><TextField label="Email" type="email" value={guardianForm.email} onChange={(e) => setGuardianForm((current) => ({ ...current, email: e.target.value }))} fullWidth /></Grid>
+          <Grid item xs={12}><TextField label="Date of Birth" type="date" value={guardianForm.dateOfBirth} onChange={(e) => setGuardianForm((current) => ({ ...current, dateOfBirth: e.target.value }))} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
           <Grid item xs={12}><TextField label="Address" value={guardianForm.address} onChange={(e) => setGuardianForm((current) => ({ ...current, address: e.target.value }))} multiline minRows={2} fullWidth /></Grid>
           <Grid item xs={12}><TextField label="Notes" value={guardianForm.notes} onChange={(e) => setGuardianForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} fullWidth /></Grid>
           <Grid item xs={12}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>

@@ -59,6 +59,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsIconBell from '@mui/icons-material/Notifications';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
+import CakeOutlinedIcon from '@mui/icons-material/CakeOutlined';
 import { getAccessPayload } from '../utils/access';
 import { getNotifications, getSettings } from '../services/production.service';
 
@@ -115,6 +116,7 @@ const navigationGroups = [
       { label: 'Fee Reminders', path: '/fee-reminders', icon: <NotificationsIcon />, permission: 'fees.view' },
       { label: 'Class Reminders', path: '/class-reminders', icon: <EventAvailableIcon />, permission: 'attendance.view' },
       { label: 'Attendance Alerts', path: '/attendance-alerts', icon: <NotificationsIcon />, permission: 'attendance.view' },
+      { label: 'Birthday Wishes', path: '/birthday-wishes', icon: <CakeOutlinedIcon />, permission: 'students.view' },
       { label: 'Workflows', path: '/workflows', icon: <AccountTreeIcon />, permission: 'workflows.view' },
       { label: 'Appointments', path: '/appointments', icon: <CalendarMonthIcon />, permission: 'appointments.view' }
     ]

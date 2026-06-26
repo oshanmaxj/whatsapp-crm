@@ -7,6 +7,7 @@ module.exports = (sequelize, DataTypes) => {
     phone: { type: DataTypes.STRING(50), allowNull: true },
     whatsapp: { type: DataTypes.STRING(50), allowNull: true },
     email: { type: DataTypes.STRING(255), allowNull: true },
+    dateOfBirth: { type: DataTypes.DATEONLY, allowNull: true },
     isPrimary: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     isEmergencyContact: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     address: { type: DataTypes.TEXT, allowNull: true },
@@ -25,6 +26,7 @@ module.exports = (sequelize, DataTypes) => {
   StudentGuardian.associate = (models) => {
     StudentGuardian.belongsTo(models.Student, { foreignKey: 'student_id', as: 'student' });
     StudentGuardian.hasMany(models.AttendanceAlert, { foreignKey: 'guardian_id', as: 'attendanceAlerts' });
+    StudentGuardian.hasMany(models.BirthdayWish, { foreignKey: 'guardian_id', as: 'birthdayWishes' });
   };
 
   return StudentGuardian;

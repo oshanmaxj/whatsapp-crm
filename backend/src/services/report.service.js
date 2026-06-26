@@ -24,6 +24,7 @@ const classReminderService = require('./classReminder.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const automationService = require('./automation.service');
 const attendanceAlertService = require('./attendanceAlert.service');
+const birthdayWishService = require('./birthdayWish.service');
 
 const REPORT_TITLES = {
   overview: 'Overview Report',
@@ -47,6 +48,7 @@ const REPORT_TITLES = {
   'class-reminders': 'Class Reminder Report',
   automations: 'Automation Report',
   'attendance-alerts': 'Attendance Alert Report',
+  'birthday-wishes': 'Birthday Wish Report',
   compliance: 'WhatsApp Compliance Report'
 };
 
@@ -204,6 +206,7 @@ class ReportService {
       'class-reminders': () => this.classReminderReport(filters),
       automations: () => this.automationReport(filters),
       'attendance-alerts': () => this.attendanceAlertReport(filters),
+      'birthday-wishes': () => this.birthdayWishReport(filters),
       compliance: () => this.complianceReport(filters)
     }[type];
     if (!handler) return emptyReport(type, filters);
@@ -893,6 +896,36 @@ class ReportService {
       { key: 'alertType', label: 'Alert type' },
       { key: 'recipientType', label: 'Recipients' },
       { key: 'status', label: 'Status' }
+    ], rows, this.countChart(rows, 'status'));
+  }
+
+  async birthdayWishReport(filters) {
+    const report = await birthdayWishService.getBirthdayWishReport(filters);
+    const rows = report.rows.map((row) => ({
+      birthdayDate: dateValue(row.birthdayDate),
+      sentDate: dateValue(row.sentDate),
+      student: row.student?.name || '',
+      guardian: row.guardian?.name || '',
+      course: row.student?.course?.name || '',
+      recipientType: row.recipientType,
+      status: row.status,
+      channel: row.channel
+    }));
+    return makeReport('birthday-wishes', filters, [
+      { label: 'Generated', value: report.generated },
+      { label: 'Sent', value: report.sent },
+      { label: 'Failed', value: report.failed },
+      { label: 'Student Wishes', value: report.studentWishes },
+      { label: 'Guardian Wishes', value: report.guardianWishes }
+    ], [
+      { key: 'birthdayDate', label: 'Birthday' },
+      { key: 'sentDate', label: 'Sent date' },
+      { key: 'student', label: 'Student' },
+      { key: 'guardian', label: 'Guardian' },
+      { key: 'course', label: 'Course' },
+      { key: 'recipientType', label: 'Recipient type' },
+      { key: 'status', label: 'Status' },
+      { key: 'channel', label: 'Channel' }
     ], rows, this.countChart(rows, 'status'));
   }
 

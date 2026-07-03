@@ -27,6 +27,7 @@ class StorageService {
     const relativePath = path.relative(uploadRoot, targetPath).split(path.sep).join('/');
     return {
       path: relativePath,
+      absolutePath: targetPath,
       contentType: contentType || 'application/octet-stream',
       url: publicBaseUrl ? `${publicBaseUrl}/${relativePath}` : `/uploads/${relativePath}`
     };

@@ -1,10 +1,12 @@
 const { Lead, Conversation, Message, Contact, User } = require('../models');
 const aiService = require('../services/ai.service');
+const conversationAccessService = require('../services/conversationAccess.service');
 
 class AIController {
   async getConversationSummary(req, res, next) {
     try {
       const { conversationId } = req.params;
+      await conversationAccessService.assertConversationAccess(conversationId, req.user.id);
       const conversation = await Conversation.findByPk(conversationId, {
         include: [
           { model: Contact, as: 'contact' },
@@ -55,6 +57,7 @@ class AIController {
   async getAgentSuggestion(req, res, next) {
     try {
       const { conversationId } = req.params;
+      await conversationAccessService.assertConversationAccess(conversationId, req.user.id);
       const conversation = await Conversation.findByPk(conversationId, {
         include: [
           { model: Contact, as: 'contact' },

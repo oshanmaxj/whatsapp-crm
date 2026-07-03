@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, MenuItem,
-  Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography
+  FormControlLabel, Paper, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -9,8 +9,15 @@ import LockResetIcon from '@mui/icons-material/LockReset';
 import PersonOffIcon from '@mui/icons-material/PersonOff';
 import { createUser, deactivateUser, getRoles, getUsers, resetUserPassword, updateUser } from '../services/userManagement.service';
 
-const departments = ['Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing'];
-const blankForm = { name: '', email: '', phone: '', password: '', role: 'agent', department: 'Customer Care', status: 'active' };
+const blankForm = () => ({
+  name: '',
+  email: '',
+  phone: '',
+  password: '',
+  roleId: '',
+  receiveAssignmentNotifications: true,
+  status: 'active'
+});
 const roleLabels = {
   admin: 'Admin',
   manager: 'Manager',
@@ -29,20 +36,29 @@ function displayName(user) {
 }
 
 function primaryRole(user) {
-  return user.roles?.[0]?.name || 'agent';
+  return user.roles?.[0] || null;
+}
+
+function requestErrorMessage(error, fallback) {
+  const details = error.response?.data?.details;
+  if (Array.isArray(details) && details.length > 0) {
+    return details.map((detail) => detail?.message || String(detail)).filter(Boolean).join('. ');
+  }
+  return error.response?.data?.message || fallback;
 }
 
 function UserManagerPage() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
-  const [editing, setEditing] = useState(null);
+  const [editing, setEditing] = useState(undefined);
   const [form, setForm] = useState(blankForm);
   const [resetTarget, setResetTarget] = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const roleOptions = useMemo(() => roles.map((role) => role.name), [roles]);
+  const roleOptions = useMemo(() => roles, [roles]);
 
   const load = async () => {
     const [usersRes, rolesRes] = await Promise.all([getUsers(), getRoles()]);
@@ -52,39 +68,77 @@ function UserManagerPage() {
 
   useEffect(() => { load().catch((err) => setError(err.response?.data?.message || 'Unable to load users.')); }, []);
 
-  const openCreate = () => { setEditing(null); setForm(blankForm); };
+  const openCreate = () => {
+    setError('');
+    setNotice('');
+    setEditing(null);
+    setForm(blankForm());
+  };
   const openEdit = (user) => {
+    const role = primaryRole(user);
+    setError('');
     setEditing(user);
-    setForm({ name: displayName(user), email: user.email, phone: user.phone || '', password: '', role: primaryRole(user), department: user.department || '', status: user.status });
+    setForm({
+      name: displayName(user),
+      email: user.email,
+      phone: user.phone || '',
+      password: '',
+      roleId: role?.id || '',
+      receiveAssignmentNotifications: user.receiveAssignmentNotifications !== false,
+      status: user.status || 'active'
+    });
   };
 
-  const save = async () => {
+  const save = async (event) => {
+    event?.preventDefault();
+    const name = form.name.trim();
+    const email = form.email.trim();
+    if (!name) return setError('Name is required.');
+    if (!email) return setError('Email is required.');
+    if (!editing && !form.password) return setError('Password is required.');
+    if (!editing && form.password.length < 6) return setError('Password must be at least 6 characters.');
+    if (!form.roleId) return setError('Department is required.');
+
     try {
+      setSaving(true);
+      setError('');
       if (editing) {
         await updateUser(editing.id, form);
-        setNotice('User updated.');
+        setNotice('User updated successfully');
       } else {
         await createUser(form);
-        setNotice('User created.');
+        setNotice('User created successfully');
       }
       setEditing(undefined);
       await load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Unable to save user.');
+      setError(requestErrorMessage(err, 'Unable to save user.'));
+    } finally {
+      setSaving(false);
     }
   };
 
   const deactivate = async (user) => {
-    await deactivateUser(user.id);
-    setNotice('User deactivated.');
-    await load();
+    try {
+      setError('');
+      await deactivateUser(user.id);
+      setNotice('User deactivated.');
+      await load();
+    } catch (err) {
+      setError(requestErrorMessage(err, 'Unable to deactivate user.'));
+    }
   };
 
   const resetPassword = async () => {
-    await resetUserPassword(resetTarget.id, newPassword);
-    setNotice('Password reset.');
-    setResetTarget(null);
-    setNewPassword('');
+    try {
+      setError('');
+      await resetUserPassword(resetTarget.id, newPassword);
+      setNotice('Password reset.');
+      setResetTarget(null);
+      setNewPassword('');
+    } catch (err) {
+      setError(requestErrorMessage(err, 'Unable to reset password.'));
+    }
   };
 
   return (
@@ -95,7 +149,7 @@ function UserManagerPage() {
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
           <Box sx={{ flex: 1 }}>
             <Typography variant="h5" fontWeight={850}>User Manager</Typography>
-            <Typography color="text.secondary">Create agents and staff, assign roles, and manage active access.</Typography>
+            <Typography color="text.secondary">Create agents and staff, assign departments, and manage active access.</Typography>
           </Box>
           <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>Add User / Agent</Button>
         </Stack>
@@ -104,14 +158,13 @@ function UserManagerPage() {
       <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
         <TableContainer>
           <Table>
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Department</TableCell><TableCell>Role</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Department</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {users.map((user) => (
                 <TableRow key={user.id} hover>
                   <TableCell><Typography fontWeight={800}>{displayName(user)}</Typography></TableCell>
                   <TableCell>{user.email}</TableCell>
                   <TableCell>{user.phone || '-'}</TableCell>
-                  <TableCell>{user.department || '-'}</TableCell>
                   <TableCell>{user.roles?.map((role) => roleLabel(role.name)).join(', ') || '-'}</TableCell>
                   <TableCell><Chip size="small" label={user.status} color={user.status === 'active' ? 'success' : 'default'} /></TableCell>
                   <TableCell align="right">
@@ -128,23 +181,31 @@ function UserManagerPage() {
 
       <Dialog open={editing !== undefined} onClose={() => setEditing(undefined)} maxWidth="sm" fullWidth>
         <DialogTitle>{editing ? 'Edit User' : 'Add User / Agent'}</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid item xs={12}><TextField label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} fullWidth /></Grid>
-            <Grid item xs={12}><TextField label="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} fullWidth /></Grid>
-            <Grid item xs={12}><TextField label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} fullWidth /></Grid>
-            {!editing && <Grid item xs={12}><TextField label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} fullWidth /></Grid>}
-            <Grid item xs={12} md={6}><TextField select label="Role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} fullWidth>{roleOptions.map((role) => <MenuItem key={role} value={role}>{roleLabel(role)}</MenuItem>)}</TextField></Grid>
-            <Grid item xs={12} md={6}><TextField select label="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} fullWidth>{departments.map((department) => <MenuItem key={department} value={department}>{department}</MenuItem>)}</TextField></Grid>
-            <Grid item xs={12} md={6}><TextField select label="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} fullWidth>{['active', 'inactive', 'suspended', 'pending'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField></Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions><Button onClick={() => setEditing(undefined)}>Cancel</Button><Button variant="contained" onClick={save}>Save</Button></DialogActions>
+        <Box component="form" autoComplete="off" onSubmit={save}>
+          <DialogContent>
+            <Grid container spacing={2} sx={{ mt: 0.5 }}>
+              {error && <Grid item xs={12}><Alert severity="error" onClose={() => setError('')}>{error}</Alert></Grid>}
+              <Grid item xs={12}><TextField name="user_agent_name" autoComplete="off" label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12}><TextField name="user_agent_email" autoComplete="new-password" label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} fullWidth /></Grid>
+              <Grid item xs={12}><TextField name="user_agent_phone" autoComplete="new-password" label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} fullWidth /></Grid>
+              {!editing && <Grid item xs={12}><TextField name="user_agent_new_password" autoComplete="new-password" label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} fullWidth /></Grid>}
+              <Grid item xs={12} md={6}><TextField select label="Department" value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })} fullWidth>{roleOptions.map((role) => <MenuItem key={role.id} value={role.id}>{roleLabel(role.name)}</MenuItem>)}</TextField></Grid>
+              <Grid item xs={12} md={6}><TextField select label="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} fullWidth>{['active', 'inactive', 'suspended', 'pending'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField></Grid>
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={<Switch checked={form.receiveAssignmentNotifications} onChange={(e) => setForm({ ...form, receiveAssignmentNotifications: e.target.checked })} />}
+                  label="Receive WhatsApp assignment notifications"
+                />
+              </Grid>
+            </Grid>
+          </DialogContent>
+          <DialogActions><Button onClick={() => setEditing(undefined)}>Cancel</Button><Button type="submit" variant="contained" disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button></DialogActions>
+        </Box>
       </Dialog>
 
       <Dialog open={!!resetTarget} onClose={() => setResetTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Reset Password</DialogTitle>
-        <DialogContent><TextField sx={{ mt: 1 }} label="New Password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} fullWidth /></DialogContent>
+        <DialogContent><TextField name="user_reset_new_password" autoComplete="new-password" sx={{ mt: 1 }} label="New Password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} fullWidth /></DialogContent>
         <DialogActions><Button onClick={() => setResetTarget(null)}>Cancel</Button><Button variant="contained" onClick={resetPassword}>Reset</Button></DialogActions>
       </Dialog>
     </Stack>

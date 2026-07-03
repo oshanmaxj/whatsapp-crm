@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   AppBar,
@@ -60,13 +60,18 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsIconBell from '@mui/icons-material/Notifications';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import CakeOutlinedIcon from '@mui/icons-material/CakeOutlined';
+import VolumeOffIcon from '@mui/icons-material/VolumeOff';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { getAccessPayload } from '../utils/access';
+import { useSocket } from '../hooks/useSocket';
 import { getNotifications, getSettings } from '../services/production.service';
 
 const drawerWidth = 260;
 const collapsedDrawerWidth = 76;
 const appBarHeight = 72;
 const sidebarGroupsStorageKey = 'sidebarExpandedGroups';
+const chatSoundMutedStorageKey = 'crmChatSoundMuted';
+const selectedConversationStorageKey = 'crmSelectedConversationId';
 
 const navigationGroups = [
   {
@@ -88,8 +93,8 @@ const navigationGroups = [
     items: [
       { label: 'Connect WhatsApp', path: '/connect-whatsapp', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
       { label: 'WA Templates', path: '/whatsapp-templates', icon: <ChatBubbleOutlineIcon />, permission: 'connect-whatsapp.view' },
+      { label: 'Broadcasting / Campaigns', path: '/campaigns', icon: <CampaignIcon />, permission: 'campaigns.view' },
       { label: 'Compliance', path: '/compliance', icon: <FactCheckIcon />, permission: 'connect-whatsapp.view' },
-      { label: 'Campaigns', path: '/campaigns', icon: <CampaignIcon />, permission: 'campaigns.view' },
       { label: 'Auto Replies', path: '/auto-replies', icon: <SmartToyIcon />, permission: 'settings.view' },
       { label: 'Flow Builder', path: '/flow-builder', matchChildren: true, icon: <AccountTreeOutlinedIcon />, permission: 'flow-builder.view' }
     ]
@@ -137,7 +142,7 @@ const navigationGroups = [
     icon: <SettingsIcon />,
     items: [
       { label: 'User Manager', path: '/users', icon: <ManageAccountsIcon />, permission: 'user-manager.view' },
-      { label: 'Permissions / Roles', path: '/permissions', icon: <AdminPanelSettingsIcon />, permission: 'user-manager.edit' },
+      { label: 'Departments & Permissions', path: '/permissions', icon: <AdminPanelSettingsIcon />, permission: 'user-manager.edit' },
       { label: 'Company Profile', path: '/company-profile', icon: <BusinessIcon />, permission: 'settings.view' },
       { label: 'SMTP Settings', path: '/smtp-settings', icon: <EmailIcon />, permission: 'settings.view' },
       { label: 'Settings', path: '/settings', icon: <SettingsIcon />, permission: 'settings.view' },
@@ -349,6 +354,11 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
   const [notificationAnchor, setNotificationAnchor] = useState(null);
   const [userAnchor, setUserAnchor] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [soundMuted, setSoundMuted] = useState(() => localStorage.getItem(chatSoundMutedStorageKey) === 'true');
+  const recentMessageIdsRef = useRef(new Map());
+  const audioContextRef = useRef(null);
+  const token = localStorage.getItem('accessToken');
+  const { socket, connected } = useSocket(token);
   const location = useLocation();
   const currentDrawerWidth = isDesktop && sidebarCollapsed ? collapsedDrawerWidth : drawerWidth;
 
@@ -371,6 +381,38 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
     navigate('/login', { replace: true });
   };
 
+  const toggleSound = () => {
+    setSoundMuted((current) => {
+      localStorage.setItem(chatSoundMutedStorageKey, String(!current));
+      return !current;
+    });
+  };
+
+  const playMessageBeep = () => {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      const context = audioContextRef.current || new AudioContext();
+      audioContextRef.current = context;
+      if (context.state === 'suspended') {
+        context.resume().catch(() => {});
+      }
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(720, context.currentTime);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.045, context.currentTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(context.currentTime);
+      oscillator.stop(context.currentTime + 0.2);
+    } catch (error) {
+      // Browsers can block audio before user interaction; notifications should keep working silently.
+    }
+  };
+
   const drawer = <Sidebar collapsed={isDesktop && sidebarCollapsed} onNavigate={() => setMobileOpen(false)} />;
 
   useEffect(() => {
@@ -382,6 +424,44 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
       })
       .catch(() => null);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const shouldSkipDuplicate = (payload) => {
+      const key = payload.id == null
+        ? `${payload.conversationId}-${payload.createdAt || payload.text || ''}`
+        : String(payload.id);
+      const now = Date.now();
+      for (const [messageKey, timestamp] of recentMessageIdsRef.current.entries()) {
+        if (now - timestamp > 10000) recentMessageIdsRef.current.delete(messageKey);
+      }
+      if (recentMessageIdsRef.current.has(key)) return true;
+      recentMessageIdsRef.current.set(key, now);
+      return false;
+    };
+
+    const handleInboundMessage = (payload) => {
+      if (!payload || typeof payload !== 'object' || payload.conversationId == null) return;
+      if (payload.direction !== 'inbound' && payload.status !== 'received') return;
+      if (soundMuted || shouldSkipDuplicate(payload)) return;
+
+      const selectedConversationId = localStorage.getItem(selectedConversationStorageKey);
+      const sameOpenChat = location.pathname === '/chat'
+        && String(selectedConversationId || '') === String(payload.conversationId);
+      const tabFocused = document.visibilityState === 'visible' && document.hasFocus();
+      if (sameOpenChat && tabFocused) return;
+
+      playMessageBeep();
+    };
+
+    socket.on('chat:message', handleInboundMessage);
+    socket.on('whatsapp.message.received', handleInboundMessage);
+    return () => {
+      socket.off('chat:message', handleInboundMessage);
+      socket.off('whatsapp.message.received', handleInboundMessage);
+    };
+  }, [socket, soundMuted, location.pathname]);
 
   return (
     <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: 'background.default' }}>
@@ -421,6 +501,11 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
           <IconButton onClick={onToggleDarkMode} color="inherit" aria-label="Toggle dark mode">
             {darkMode ? <Brightness7Icon /> : <Brightness4Icon />}
           </IconButton>
+          <Tooltip title={soundMuted ? 'Muted' : 'Sound On'}>
+            <IconButton onClick={toggleSound} color="inherit" aria-label={soundMuted ? 'Muted' : 'Sound On'}>
+              {soundMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
+            </IconButton>
+          </Tooltip>
           <IconButton color="inherit" aria-label="Notifications" onClick={(event) => setNotificationAnchor(event.currentTarget)}>
             <Badge badgeContent={unreadCount} color="error">
               <NotificationsIconBell />
@@ -503,7 +588,7 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
       >
         <Toolbar sx={{ minHeight: appBarHeight }} />
         <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: '100%', overflowX: 'hidden' }}>
-          <Outlet />
+          <Outlet context={{ socket, connected }} />
         </Box>
       </Box>
     </Box>

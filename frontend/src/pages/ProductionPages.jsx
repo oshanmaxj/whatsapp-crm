@@ -159,6 +159,7 @@ export function ProductionSettingsPage() {
   const [whatsapp, setWhatsapp] = useState({ accessToken: '', phoneNumberId: '', businessAccountId: '', verifyToken: '', webhookUrl: '' });
   const [smtp, setSmtp] = useState({ host: '', port: 587, username: '', password: '', secure: false, fromEmail: '', fromName: '' });
   const [security, setSecurity] = useState({ timeoutMinutes: 120, passwordMinLength: 6, requireStrongPassword: false, loginHistoryEnabled: true });
+  const [assignmentNotificationsEnabled, setAssignmentNotificationsEnabled] = useState(true);
   const [backups, setBackups] = useState([]);
   const [showSecrets, setShowSecrets] = useState(false);
   const [testPhone, setTestPhone] = useState('');
@@ -192,6 +193,7 @@ export function ProductionSettingsPage() {
       const smtpSettings = map['smtp.settings'] || {};
       const securitySession = map['security.session'] || {};
       const whatsappSettings = whatsappRes.data.data || map['whatsapp.cloud_api'] || {};
+      const assignmentSettings = map['notifications.assignments'] || {};
 
       setSettings(map);
       setCompany({
@@ -231,6 +233,7 @@ export function ProductionSettingsPage() {
         requireStrongPassword: Boolean(securitySession.requireStrongPassword),
         loginHistoryEnabled: securitySession.loginHistoryEnabled !== false
       });
+      setAssignmentNotificationsEnabled(assignmentSettings.assignmentNotificationsEnabled !== false);
       setBackups(backupsRes.data.data || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to load settings.');
@@ -286,10 +289,13 @@ export function ProductionSettingsPage() {
   };
 
   const saveWhatsapp = async () => {
-    await saveWhatsappSettings({
-      ...whatsapp,
-      accessToken: String(whatsapp.accessToken).includes('****') ? '' : whatsapp.accessToken
-    });
+    await Promise.all([
+      saveWhatsappSettings({
+        ...whatsapp,
+        accessToken: String(whatsapp.accessToken).includes('****') ? '' : whatsapp.accessToken
+      }),
+      saveSetting('notifications', 'assignments', { assignmentNotificationsEnabled })
+    ]);
     setNotice('WhatsApp API settings saved.');
   };
 
@@ -420,6 +426,12 @@ export function ProductionSettingsPage() {
 
           {tab === 'whatsapp' && (
             <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={<Switch checked={assignmentNotificationsEnabled} onChange={(e) => setAssignmentNotificationsEnabled(e.target.checked)} />}
+                  label="Send WhatsApp notification when chat is assigned"
+                />
+              </Grid>
               <Grid item xs={12} md={6}><TextField label="Access token" fullWidth {...secretProps('accessToken', whatsapp.accessToken, setWhatsapp, whatsapp)} /></Grid>
               <Grid item xs={12} md={6}><TextField label="Phone number ID" value={whatsapp.phoneNumberId} onChange={(e) => setWhatsapp({ ...whatsapp, phoneNumberId: e.target.value })} fullWidth /></Grid>
               <Grid item xs={12} md={6}><TextField label="Business account ID" value={whatsapp.businessAccountId} onChange={(e) => setWhatsapp({ ...whatsapp, businessAccountId: e.target.value })} fullWidth /></Grid>

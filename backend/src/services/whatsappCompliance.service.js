@@ -16,7 +16,13 @@ class WhatsAppComplianceService {
   async getLastInboundMessage(contactId) {
     if (!contactId) return null;
     return Message.findOne({
-      where: { contactId, direction: 'inbound' },
+      where: {
+        contactId,
+        [Op.or]: [
+          { direction: 'inbound' },
+          { status: 'received' }
+        ]
+      },
       order: [['created_at', 'DESC']]
     });
   }

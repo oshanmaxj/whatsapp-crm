@@ -19,6 +19,15 @@ class CampaignController {
   async send(req, res, next) {
     try { return res.json({ success: true, data: await campaignService.sendCampaign(req.params.id) }); } catch (err) { next(err); }
   }
+  async schedule(req, res, next) {
+    try { return res.json({ success: true, data: await campaignService.scheduleCampaign(req.params.id, req.body.scheduledAt) }); } catch (err) { next(err); }
+  }
+  async importRecipients(req, res, next) {
+    try {
+      const payload = typeof req.body === 'string' ? { csv: req.body } : req.body;
+      return res.json({ success: true, data: await campaignService.importRecipients(req.params.id, payload) });
+    } catch (err) { next(err); }
+  }
   async cancel(req, res, next) {
     try { return res.json({ success: true, data: await campaignService.cancelCampaign(req.params.id) }); } catch (err) { next(err); }
   }
@@ -26,7 +35,15 @@ class CampaignController {
     try { return res.json({ success: true, data: await campaignService.getAnalytics(req.params.id) }); } catch (err) { next(err); }
   }
   async previewAudience(req, res, next) {
-    try { return res.json({ success: true, data: await campaignService.previewAudience(req.query) }); } catch (err) { next(err); }
+    try {
+      const options = req.method === 'POST' ? req.body : req.query;
+      return res.json({ success: true, data: await campaignService.previewAudience(options) });
+    } catch (err) { next(err); }
+  }
+  async audienceOptions(req, res, next) {
+    try {
+      return res.json({ success: true, data: await campaignService.audienceOptions() });
+    } catch (err) { next(err); }
   }
 }
 

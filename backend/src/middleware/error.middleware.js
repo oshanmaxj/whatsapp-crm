@@ -5,12 +5,15 @@ module.exports = (err, req, res, next) => {
   const requestId = req.headers['x-request-id'] || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const response = {
     success: false,
-    message: status >= 500 ? 'Internal server error' : (err.message || 'Request failed'),
+    message: status >= 500 && !err.exposeMessage ? 'Internal server error' : (err.message || 'Request failed'),
     requestId
   };
 
   if (err.details) {
     response.details = err.details;
+  }
+  if (['AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_EXPIRED'].includes(err.code)) {
+    response.code = err.code;
   }
 
   logger[status >= 500 ? 'error' : 'warn']('request_failed', {
@@ -25,6 +28,10 @@ module.exports = (err, req, res, next) => {
   if (process.env.NODE_ENV === 'development') {
     response.stack = err.stack;
     response.message = err.message || response.message;
+  }
+
+  if (err.exposeResponseData && err.response?.data) {
+    return res.status(err.response.status || status).json(err.response.data);
   }
 
   res.status(status).json(response);

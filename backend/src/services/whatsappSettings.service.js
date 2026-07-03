@@ -145,7 +145,14 @@ class WhatsappSettingsService {
   }
 
   async runtimeConfig() {
-    return this.getRaw();
+    const row = await this.row();
+    const stored = row.value || {};
+    const resolved = decryptSettings(stored);
+    return {
+      ...resolved,
+      tokenSource: stored.accessToken ? 'settings' : 'env',
+      phoneNumberIdSource: stored.phoneNumberId ? 'settings' : 'env'
+    };
   }
 
   async testConnection() {

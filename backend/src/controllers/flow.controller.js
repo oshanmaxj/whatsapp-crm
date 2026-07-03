@@ -28,6 +28,33 @@ class FlowController {
   async publish(req, res, next) {
     try { return res.json({ success: true, data: await flowService.publish(req.params.id) }); } catch (err) { next(err); }
   }
+  async unpublish(req, res, next) {
+    try { return res.json({ success: true, data: await flowService.unpublish(req.params.id) }); } catch (err) { next(err); }
+  }
+  async duplicate(req, res, next) {
+    try { return res.status(201).json({ success: true, data: await flowService.duplicate(req.params.id, req.user?.id || null) }); } catch (err) { next(err); }
+  }
+  async logs(req, res, next) {
+    try { return res.json({ success: true, data: await flowService.logs(req.params.id) }); } catch (err) { next(err); }
+  }
+  async stats(req, res, next) {
+    try { return res.json({ success: true, data: await flowService.analytics(req.params.id) }); } catch (err) { next(err); }
+  }
+  async createNode(req, res, next) {
+    try { return res.status(201).json({ success: true, data: await flowService.createNode(req.params.id, req.body) }); } catch (err) { next(err); }
+  }
+  async updateNode(req, res, next) {
+    try { return res.json({ success: true, data: await flowService.updateNode(req.params.id, req.params.nodeKey, req.body) }); } catch (err) { next(err); }
+  }
+  async deleteNode(req, res, next) {
+    try { return res.json({ success: true, data: await flowService.deleteNode(req.params.id, req.params.nodeKey) }); } catch (err) { next(err); }
+  }
+  async createConnection(req, res, next) {
+    try { return res.status(201).json({ success: true, data: await flowService.createConnection(req.params.id, req.body) }); } catch (err) { next(err); }
+  }
+  async deleteConnection(req, res, next) {
+    try { return res.json({ success: true, data: await flowService.deleteConnection(req.params.id, req.params.connectionId) }); } catch (err) { next(err); }
+  }
 
   async test(req, res, next) {
     try { return res.json({ success: true, data: await flowService.test(req.params.id, req.body || {}) }); } catch (err) { next(err); }

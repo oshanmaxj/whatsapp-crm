@@ -1,45 +1,44 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Alert, Avatar, Badge, Box, Button, Chip, Divider, Drawer, FormControl, Grid, IconButton,
-  InputLabel, LinearProgress, List, ListItemButton, ListItemText, MenuItem, Paper, Select,
-  Stack, Tab, Tabs, TextField, Tooltip, Typography
-} from '@mui/material';
-import AttachFileIcon from '@mui/icons-material/AttachFile';
-import CloseIcon from '@mui/icons-material/Close';
-import DownloadIcon from '@mui/icons-material/Download';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import LocalOfferIcon from '@mui/icons-material/LocalOffer';
-import NotesIcon from '@mui/icons-material/Notes';
-import SendIcon from '@mui/icons-material/Send';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Box, Drawer, Snackbar, useMediaQuery } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import {
   assignConversation,
   createNote,
   createTemplate,
+  downloadMedia,
   getConversation,
   getConversationMessages,
   getConversations,
-  downloadMedia,
   getMedia,
   getNotes,
   getTemplates,
   getUnreadCount,
+  sendConversationMessage,
+  sendConversationTemplate,
   setConversationLabels,
   updateConversation,
   uploadMedia
 } from '../services/chat.service';
 import { getAgents } from '../services/agent.service';
-import { useSocket } from '../hooks/useSocket';
+import { getRoles } from '../services/userManagement.service';
+import { updateContact } from '../services/contact.service';
+import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
+import {
+  ChatArea,
+  ChatLayout,
+  ConversationList,
+  WorkspacePanel,
+  safeArray
+} from '../components/chat';
 
-const API_ORIGIN = (process.env.REACT_APP_API_URL || 'http://localhost:4000/api').replace('/api', '');
-
-function contactName(contact) {
-  if (!contact) return 'Unknown contact';
-  return [contact.firstName, contact.lastName].filter(Boolean).join(' ') || contact.phone || 'Unnamed contact';
-}
-
-function agentName(agent) {
-  if (!agent) return 'Unassigned';
-  return agent.name || [agent.firstName, agent.lastName].filter(Boolean).join(' ') || agent.email;
+function useDebouncedValue(value, delay = 250) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timeout);
+  }, [value, delay]);
+  return debounced;
 }
 
 function fileToBase64(file) {
@@ -51,309 +50,700 @@ function fileToBase64(file) {
   });
 }
 
+const MEDIA_ACCEPT = [
+  '.jpg', '.jpeg', '.png', '.webp',
+  '.mp4', '.3gp',
+  '.mp3', '.ogg', '.amr', '.m4a',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'
+].join(',');
+const selectedConversationStorageKey = 'crmSelectedConversationId';
+
 function inferMediaType(file) {
-  if (file.type.startsWith('image/')) return 'image';
-  if (file.type.startsWith('video/')) return 'video';
-  if (file.type.startsWith('audio/')) return 'audio';
-  if (file.type === 'application/pdf') return 'pdf';
-  return 'document';
+  const extension = `.${String(file.name || '').split('.').pop().toLowerCase()}`;
+  if (['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || ['.jpg', '.jpeg', '.png', '.webp'].includes(extension)) return 'image';
+  if (['video/mp4', 'video/3gpp'].includes(file.type) || ['.mp4', '.3gp'].includes(extension)) return 'video';
+  if (['audio/mpeg', 'audio/ogg', 'audio/amr', 'audio/mp4'].includes(file.type) || ['.mp3', '.ogg', '.amr', '.m4a'].includes(extension)) return 'audio';
+  if (['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'].includes(extension)) return 'document';
+  return null;
+}
+
+function isMessagingWindowOpen(conversation, now = Date.now()) {
+  const value = conversation?.lastInboundAt || conversation?.last_inbound_at;
+  const lastInboundTime = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isFinite(lastInboundTime)
+    && lastInboundTime + (24 * 60 * 60 * 1000) > now;
 }
 
 function ChatPage() {
-  const token = localStorage.getItem('accessToken');
-  const { socket, connected } = useSocket(token);
+  const { socket, connected } = useOutletContext() || {};
+  const theme = useTheme();
+  const navigate = useNavigate();
+  const compactLayout = useMediaQuery(theme.breakpoints.down('lg'));
+  const inlineWorkspace = useMediaQuery(theme.breakpoints.up('xl'));
   const fileInputRef = useRef(null);
+  const selectedRef = useRef(null);
+  const seenSocketMessageIdsRef = useRef(new Set());
+
   const [conversations, setConversations] = useState([]);
   const [agents, setAgents] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [selected, setSelected] = useState(null);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [media, setMedia] = useState([]);
   const [notes, setNotes] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [whatsappTemplates, setWhatsAppTemplates] = useState([]);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [replyToMessage, setReplyToMessage] = useState(null);
+  const [windowNow, setWindowNow] = useState(() => Date.now());
   const [newMessage, setNewMessage] = useState('');
   const [noteText, setNoteText] = useState('');
   const [labelText, setLabelText] = useState('');
-  const [filters, setFilters] = useState({ search: '', assignedTo: '', status: '', unread: '' });
-  const [sideOpen, setSideOpen] = useState(true);
-  const [tab, setTab] = useState('profile');
+  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', unread: '' });
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
-  const selectedConversation = useMemo(
-    () => conversations.find((item) => item.id === selected) || conversation,
-    [conversations, selected, conversation]
-  );
+  const debouncedSearch = useDebouncedValue(filters.search);
+  const queryFilters = useMemo(() => ({
+    search: debouncedSearch || undefined,
+    assignedUserId: filters.assignedUserId || undefined,
+    assignedRoleId: filters.assignedRoleId || undefined,
+    mine: filters.mine || undefined,
+    status: filters.status || undefined,
+    unread: filters.unread || undefined
+  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.unread]);
 
-  const loadConversations = async () => {
-    setLoading(true);
-    try {
-      const response = await getConversations({
-        search: filters.search || undefined,
-        assignedTo: filters.assignedTo || undefined,
-        status: filters.status || undefined,
-        unread: filters.unread || undefined
-      });
-      setConversations(response.data.data || []);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Unable to load conversations.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadDetails = async (conversationId) => {
-    if (!conversationId) return;
-    const [conversationResponse, messageResponse, mediaResponse, noteResponse] = await Promise.all([
-      getConversation(conversationId),
-      getConversationMessages(conversationId),
-      getMedia(conversationId),
-      getNotes(conversationId)
-    ]);
-    setConversation(conversationResponse.data.data);
-    setMessages(messageResponse.data.data || []);
-    setMedia(mediaResponse.data.data || []);
-    setNotes(noteResponse.data.data || []);
-    socket?.emit('chat:join', { conversationId });
-    socket?.emit('chat:markRead', { conversationId });
-  };
+  const selectedConversation = conversation
+    || safeArray(conversations).find((item) => String(item.id) === String(selected))
+    || null;
+  const windowOpen = isMessagingWindowOpen(selectedConversation, windowNow);
 
   useEffect(() => {
-    loadConversations();
-  }, [filters]);
-
-  useEffect(() => {
-    getAgents().then((response) => setAgents(response.data.data || [])).catch(() => {});
-    getTemplates().then((response) => setTemplates(response.data.data || [])).catch(() => {});
-    getUnreadCount().then((response) => setUnread(response.data.data.unread || 0)).catch(() => {});
+    const interval = window.setInterval(() => setWindowNow(Date.now()), 60000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    if (!selected) return;
-    loadDetails(selected);
+    selectedRef.current = selected;
+    if (selected) {
+      localStorage.setItem(selectedConversationStorageKey, String(selected));
+    } else {
+      localStorage.removeItem(selectedConversationStorageKey);
+    }
   }, [selected]);
 
   useEffect(() => {
-    if (!socket) return;
+    setWorkspaceOpen(inlineWorkspace);
+  }, [inlineWorkspace]);
 
-    const handleNewMessage = (message) => {
-      if (message.conversationId === selected) {
-        setMessages((current) => [...current, message]);
+  const loadConversations = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    try {
+      const response = await getConversations(queryFilters);
+      setConversations(safeArray(response.data?.data));
+    } catch (requestError) {
+      if (!silent) setError(requestError.response?.data?.message || 'Unable to load conversations.');
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [queryFilters]);
+
+  const loadDetails = useCallback(async (conversationId, { silent = false } = {}) => {
+    if (!conversationId) return;
+    try {
+      const [conversationResponse, messageResponse, mediaResponse, noteResponse] = await Promise.all([
+        getConversation(conversationId),
+        getConversationMessages(conversationId),
+        getMedia(conversationId),
+        getNotes(conversationId)
+      ]);
+      if (String(selectedRef.current) !== String(conversationId)) return;
+      setConversation(conversationResponse.data?.data || null);
+      setMessages(safeArray(messageResponse.data?.data));
+      setMedia(safeArray(mediaResponse.data?.data));
+      setNotes(safeArray(noteResponse.data?.data));
+    } catch (requestError) {
+      if (!silent) setError(requestError.response?.data?.message || 'Unable to load conversation details.');
+    }
+  }, []);
+
+  const refreshUnread = useCallback(() => {
+    getUnreadCount()
+      .then((response) => setUnread(response.data?.data?.unread || 0))
+      .catch(() => {});
+  }, []);
+
+  const applyInteractionMessage = useCallback((currentConversation, message) => {
+    if (!currentConversation || String(currentConversation.id) !== String(message.conversationId)) return currentConversation;
+    const currentRate = currentConversation.interactionRate || {};
+    const internal = message.isInternalNotification || message.is_internal_notification;
+    const successfulOutbound = message.direction === 'outbound' && message.status !== 'failed' && !internal;
+    const inbound = message.direction === 'inbound' || message.status === 'received';
+    if (!successfulOutbound && !inbound) return currentConversation;
+    const messagesSent = Number(currentRate.messagesSent || 0) + (successfulOutbound ? 1 : 0);
+    const repliesReceived = Number(currentRate.repliesReceived || 0) + (inbound ? 1 : 0);
+    const precisePercentage = messagesSent > 0 ? (repliesReceived / messagesSent) * 100 : 0;
+    return {
+      ...currentConversation,
+      interactionRate: {
+        messagesSent,
+        repliesReceived,
+        percentage: Math.round(precisePercentage),
+        precisePercentage: Math.round(precisePercentage * 10) / 10
       }
-      loadConversations();
-      getUnreadCount().then((response) => setUnread(response.data.data.unread || 0)).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
+
+  useEffect(() => {
+    Promise.allSettled([
+      getAgents().then((response) => setAgents(safeArray(response.data?.data))),
+      getRoles().then((response) => setRoles(safeArray(response.data?.data))),
+      getTemplates().then((response) => setTemplates(safeArray(response.data?.data))),
+      listWhatsAppTemplates({ status: 'APPROVED' }).then((response) => setWhatsAppTemplates(safeArray(response.data?.data))),
+      getUnreadCount().then((response) => setUnread(response.data?.data?.unread || 0))
+    ]);
+  }, []);
+
+  useEffect(() => {
+    if (!selected) {
+      setConversation(null);
+      setMessages([]);
+      setMedia([]);
+      setNotes([]);
+      setReplyToMessage(null);
+      return;
+    }
+    loadDetails(selected);
+  }, [selected, loadDetails]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const handleNewMessage = (payload) => {
+      if (!payload || typeof payload !== 'object' || payload.conversationId == null) return;
+      const incoming = {
+        contactId: null,
+        leadId: null,
+        mediaUrl: null,
+        text: null,
+        type: 'text',
+        direction: 'inbound',
+        ...payload
+      };
+      if (incoming.id != null) {
+        const messageId = String(incoming.id);
+        if (seenSocketMessageIdsRef.current.has(messageId)) return;
+        seenSocketMessageIdsRef.current.add(messageId);
+      }
+
+      if (String(incoming.conversationId) === String(selectedRef.current)) {
+        setMessages((current) => {
+          const rows = safeArray(current);
+          if (incoming.id != null && rows.some((item) => String(item.id) === String(incoming.id))) return rows;
+          return [...rows, incoming];
+        });
+        if (incoming.direction === 'inbound' || incoming.status === 'received') {
+          setConversation((current) => current
+            ? { ...current, lastInboundAt: incoming.createdAt || new Date().toISOString() }
+            : current);
+        }
+        setConversation((current) => applyInteractionMessage(current, incoming));
+      }
+      setConversations((current) => {
+        const updated = safeArray(current).map((item) => (
+          String(item.id) === String(incoming.conversationId)
+            ? {
+                ...item,
+                lastMessage: incoming,
+                lastMessageAt: incoming.createdAt || new Date().toISOString(),
+                lastInboundAt: incoming.direction === 'inbound' || incoming.status === 'received'
+                  ? incoming.createdAt || new Date().toISOString()
+                  : item.lastInboundAt,
+                interactionRate: applyInteractionMessage(item, incoming).interactionRate
+              }
+            : item
+        ));
+        return updated.sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0));
+      });
+      loadConversations({ silent: true });
+      refreshUnread();
     };
 
+    const handleStatusUpdate = (update) => {
+      if (!update || update.messageId == null) return;
+      setMessages((current) => safeArray(current).map((message) => (
+        String(message.id) === String(update.messageId)
+          || (update.whatsappMessageId && String(message.whatsappMessageId) === String(update.whatsappMessageId))
+          ? {
+              ...message,
+              status: update.status,
+              statusUpdatedAt: update.timestamp,
+              errorCode: update.status === 'failed' ? (update.errorCode ?? message.errorCode) : null,
+              errorMessage: update.status === 'failed' ? (update.errorMessage ?? message.errorMessage) : null
+            }
+          : message
+      )));
+      setConversations((current) => safeArray(current).map((item) => (
+        item.lastMessage && (
+          String(item.lastMessage.id) === String(update.messageId)
+          || (update.whatsappMessageId && String(item.lastMessage.whatsappMessageId) === String(update.whatsappMessageId))
+        )
+          ? { ...item, lastMessage: { ...item.lastMessage, status: update.status } }
+          : item
+      )));
+      if (update.status) {
+        if (selectedRef.current) loadDetails(selectedRef.current, { silent: true });
+        loadConversations({ silent: true });
+      }
+    };
+
+    const handleSocketError = ({ message } = {}) => setError(message || 'Unable to send WhatsApp message.');
     socket.on('chat:message', handleNewMessage);
-    return () => socket.off('chat:message', handleNewMessage);
-  }, [socket, selected]);
+    socket.on('whatsapp.message.received', handleNewMessage);
+    socket.on('message_status_updated', handleStatusUpdate);
+    socket.on('chat:error', handleSocketError);
+    return () => {
+      socket.off('chat:message', handleNewMessage);
+      socket.off('whatsapp.message.received', handleNewMessage);
+      socket.off('message_status_updated', handleStatusUpdate);
+      socket.off('chat:error', handleSocketError);
+    };
+  }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage]);
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !selected) return;
-    socket?.emit('chat:message', { conversationId: selected, text: newMessage });
-    setMessages((current) => [
-      ...current,
-      { id: Date.now(), conversationId: selected, direction: 'outbound', text: newMessage, type: 'text', createdAt: new Date().toISOString() }
-    ]);
+  useEffect(() => {
+    if (!socket || !connected || !selected) return;
+    socket.emit('chat:join', { conversationId: selected });
+    socket.emit('chat:markRead', { conversationId: selected });
+  }, [socket, connected, selected]);
+
+  useEffect(() => {
+    if (connected) return undefined;
+    const interval = window.setInterval(() => {
+      loadConversations({ silent: true });
+      refreshUnread();
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, [connected, loadConversations, refreshUnread]);
+
+  useEffect(() => {
+    if (!selected) return undefined;
+    const interval = window.setInterval(() => {
+      getConversationMessages(selected)
+        .then((response) => {
+          if (String(selectedRef.current) === String(selected)) {
+            setMessages(safeArray(response.data?.data));
+          }
+        })
+        .catch(() => {});
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, [selected]);
+
+  const handleSelectConversation = useCallback((conversationId) => {
+    setConversation(null);
+    setMessages([]);
+    setMedia([]);
+    setNotes([]);
+    setSelectedTemplate(null);
+    setReplyToMessage(null);
     setNewMessage('');
-  };
+    setSelected(conversationId);
+  }, []);
 
-  const handleAssign = async (assignedTo) => {
+  const handleBack = useCallback(() => {
+    setSelected(null);
+    setSelectedTemplate(null);
+    setReplyToMessage(null);
+    setWorkspaceOpen(false);
+  }, []);
+
+  const handleSendMessage = useCallback(async () => {
+    const text = newMessage.trim();
+    if (!text || !selected || sending) return;
+    if (!selectedTemplate && !isMessagingWindowOpen(selectedConversation)) {
+      setNotice('Template required to message this customer.');
+      return;
+    }
+    const optimisticId = `pending-${Date.now()}`;
+    const optimisticMessage = {
+      id: optimisticId,
+      conversationId: selected,
+      direction: 'outbound',
+      type: selectedTemplate ? 'template' : 'text',
+      text,
+      templateName: selectedTemplate?.name || null,
+      replyToMessageId: replyToMessage?.id || null,
+      replyPreview: replyToMessage ? {
+        id: replyToMessage.id,
+        whatsappMessageId: replyToMessage.whatsappMessageId,
+        sender: replyToMessage.direction === 'outbound' ? 'You' : 'Customer',
+        direction: replyToMessage.direction,
+        type: replyToMessage.type,
+        text: replyToMessage.text || replyToMessage.templateName || replyToMessage.type
+      } : null,
+      status: 'pending',
+      statusUpdatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    };
+    setMessages((current) => [...safeArray(current), optimisticMessage]);
+    setNewMessage('');
+    setSending(true);
+    setError('');
+
+    try {
+      const response = selectedTemplate
+        ? await sendConversationTemplate(selected, {
+            templateName: selectedTemplate.name,
+            languageCode: selectedTemplate.language || 'en_US',
+            components: [],
+            replyToMessageId: replyToMessage?.id || null
+          })
+        : await sendConversationMessage(selected, { text, replyToMessageId: replyToMessage?.id || null });
+      const sentMessage = response.data?.data;
+      if (!sentMessage || typeof sentMessage !== 'object') throw new Error('The server returned an invalid message response.');
+      if (sentMessage.id != null) seenSocketMessageIdsRef.current.add(String(sentMessage.id));
+      setMessages((current) => {
+        const withoutOptimistic = safeArray(current).filter((item) => item.id !== optimisticId);
+        if (sentMessage.id != null && withoutOptimistic.some((item) => String(item.id) === String(sentMessage.id))) return withoutOptimistic;
+        return [...withoutOptimistic, sentMessage];
+      });
+      setConversation((current) => applyInteractionMessage(current, sentMessage));
+      setConversations((current) => safeArray(current).map((item) => (
+        String(item.id) === String(selected)
+          ? {
+              ...applyInteractionMessage(item, sentMessage),
+              lastMessage: sentMessage,
+              lastMessageAt: sentMessage.createdAt || new Date().toISOString()
+            }
+          : item
+      )));
+      setSelectedTemplate(null);
+      setReplyToMessage(null);
+      loadConversations({ silent: true });
+    } catch (requestError) {
+      const message = requestError.response?.data?.message || requestError.message || 'Unable to send WhatsApp message.';
+      const failedRecord = requestError.response?.data?.data;
+      const metaError = requestError.response?.data?.metaError?.error || requestError.response?.data?.metaError || {};
+      setMessages((current) => safeArray(current).map((item) => (
+        item.id === optimisticId
+          ? {
+              ...item,
+              ...(failedRecord && typeof failedRecord === 'object' ? failedRecord : {}),
+              status: 'failed',
+              statusUpdatedAt: failedRecord?.statusUpdatedAt || new Date().toISOString(),
+              errorCode: failedRecord?.errorCode || (metaError.code == null ? null : String(metaError.code)),
+              errorMessage: failedRecord?.errorMessage || metaError.error_user_msg || metaError.message || message
+            }
+          : item
+      )));
+      setError(`Message send failed: ${message}`);
+    } finally {
+      setSending(false);
+    }
+  }, [newMessage, selected, sending, selectedTemplate, selectedConversation, replyToMessage, loadConversations, applyInteractionMessage]);
+
+  const handleAssign = useCallback(async (assignment) => {
     if (!selected) return;
-    await assignConversation(selected, assignedTo || null);
-    await loadDetails(selected);
-    await loadConversations();
-  };
+    try {
+      await assignConversation(selected, assignment);
+      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to assign this conversation.');
+    }
+  }, [selected, loadDetails, loadConversations]);
 
-  const handleStatus = async (status) => {
+  const handleStatus = useCallback(async (status) => {
     if (!selected) return;
-    await updateConversation(selected, { status });
-    await loadDetails(selected);
-    await loadConversations();
-  };
+    try {
+      await updateConversation(selected, { status });
+      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to update conversation status.');
+    }
+  }, [selected, loadDetails, loadConversations]);
 
-  const addNote = async (type = 'private') => {
+  const handleAddNote = useCallback(async (type = 'private') => {
     if (!selected || !noteText.trim()) return;
-    await createNote({ conversationId: selected, type, note: noteText });
-    setNoteText('');
-    const response = await getNotes(selected);
-    setNotes(response.data.data || []);
-  };
+    try {
+      await createNote({ conversationId: selected, type, note: noteText.trim() });
+      setNoteText('');
+      const response = await getNotes(selected);
+      setNotes(safeArray(response.data?.data));
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to add note.');
+    }
+  }, [selected, noteText]);
 
-  const addLabel = async () => {
+  const handleAddLabel = useCallback(async () => {
     if (!selected || !labelText.trim()) return;
-    const current = (conversation?.labels || []).map((label) => ({ name: label.name, color: label.color }));
-    await setConversationLabels(selected, [...current, { name: labelText, color: '#25d366' }]);
-    setLabelText('');
-    await loadDetails(selected);
-    await loadConversations();
-  };
+    try {
+      const current = safeArray(conversation?.labels).map((label) => ({ name: label.name, color: label.color }));
+      await setConversationLabels(selected, [...current, { name: labelText.trim(), color: '#25d366' }]);
+      setLabelText('');
+      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to add label.');
+    }
+  }, [selected, labelText, conversation, loadDetails, loadConversations]);
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files?.[0];
+  const sendAttachment = useCallback(async (file) => {
     if (!file || !selected) return;
+    const mediaType = inferMediaType(file);
+    if (!mediaType) {
+      setError('Unsupported attachment type.');
+      return;
+    }
+    const previewUrl = window.URL.createObjectURL(file);
+    const optimisticId = `media-${Date.now()}`;
+    setMessages((current) => [
+      ...safeArray(current),
+      {
+        id: optimisticId,
+        conversationId: selected,
+        direction: 'outbound',
+        type: mediaType,
+        text: newMessage || file.name,
+        mediaUrl: previewUrl,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        rawPayload: { fileName: file.name },
+        replyToMessageId: replyToMessage?.id || null,
+        replyPreview: replyToMessage ? {
+          id: replyToMessage.id,
+          whatsappMessageId: replyToMessage.whatsappMessageId,
+          sender: replyToMessage.direction === 'outbound' ? 'You' : 'Customer',
+          direction: replyToMessage.direction,
+          type: replyToMessage.type,
+          text: replyToMessage.text || replyToMessage.templateName || replyToMessage.type
+        } : null
+      }
+    ]);
     try {
       const dataBase64 = await fileToBase64(file);
-      await uploadMedia({
+      const response = await uploadMedia({
         conversationId: selected,
         fileName: file.name,
         mimeType: file.type || 'application/octet-stream',
-        mediaType: inferMediaType(file),
+        mediaType,
         dataBase64,
-        caption: newMessage || file.name
+        caption: newMessage || file.name,
+        replyToMessageId: replyToMessage?.id || null
       });
+      const sentMessage = response.data?.data?.message;
+      if (sentMessage?.id != null) {
+        seenSocketMessageIdsRef.current.add(String(sentMessage.id));
+        setMessages((current) => {
+          const withoutOptimistic = safeArray(current).filter((item) => item.id !== optimisticId);
+          return withoutOptimistic.some((item) => String(item.id) === String(sentMessage.id))
+            ? withoutOptimistic
+            : [...withoutOptimistic, sentMessage];
+        });
+      }
       setNewMessage('');
-      await loadDetails(selected);
-      await loadConversations();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Unable to upload media.');
+      setReplyToMessage(null);
+      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+    } catch (requestError) {
+      setMessages((current) => safeArray(current).filter((item) => item.id !== optimisticId));
+      setError(requestError.response?.data?.message || 'Unable to send media.');
     } finally {
-      event.target.value = '';
+      window.URL.revokeObjectURL(previewUrl);
     }
-  };
+  }, [selected, newMessage, replyToMessage, loadDetails, loadConversations]);
 
-  const handleDownload = async (item) => {
-    const response = await downloadMedia(item.id);
-    const blobUrl = window.URL.createObjectURL(response.data);
-    const link = document.createElement('a');
-    link.href = blobUrl;
-    link.download = item.originalName || item.fileName || 'media';
-    link.click();
-    window.URL.revokeObjectURL(blobUrl);
-  };
+  const handleFileUpload = useCallback(async (event) => {
+    const file = event.target.files?.[0];
+    await sendAttachment(file);
+    event.target.value = '';
+  }, [sendAttachment]);
 
-  const saveTemplate = async () => {
+  const handleUpdateContact = useCallback(async (payload) => {
+    const contactId = selectedConversation?.contact?.id;
+    if (!contactId || !selected) return;
+    try {
+      await updateContact(contactId, payload);
+      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+      setNotice('Contact profile updated.');
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to update contact profile.');
+      throw requestError;
+    }
+  }, [selectedConversation, selected, loadDetails, loadConversations]);
+
+  const handleDownload = useCallback(async (item) => {
+    try {
+      const response = await downloadMedia(item.id);
+      const blobUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = item.originalName || item.fileName || 'media';
+      link.click();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to download media.');
+    }
+  }, []);
+
+  const handleSaveTemplate = useCallback(async () => {
     if (!newMessage.trim()) return;
-    await createTemplate({ name: newMessage.slice(0, 40), category: 'saved_reply', body: newMessage });
-    const response = await getTemplates();
-    setTemplates(response.data.data || []);
-  };
+    try {
+      await createTemplate({ name: newMessage.slice(0, 40), category: 'saved_reply', body: newMessage });
+      const response = await getTemplates();
+      setTemplates(safeArray(response.data?.data));
+      setNotice('Quick reply saved.');
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to save quick reply.');
+    }
+  }, [newMessage]);
+
+  const handleWorkspaceAction = useCallback((action) => {
+    if (action === 'Create appointment') {
+      const contact = selectedConversation?.contact || {};
+      navigate('/appointments', {
+        state: {
+          openCreate: true,
+          contact,
+          selectedContact: contact,
+          conversation: selectedConversation,
+          selectedConversation
+        }
+      });
+      return;
+    }
+    if (action === 'Convert to student') {
+      const contact = selectedConversation?.contact || {};
+      const lead = selectedConversation?.lead || null;
+      navigate('/students', {
+        state: {
+          openCreate: true,
+          source: 'chat',
+          contact,
+          selectedContact: contact,
+          conversation: selectedConversation,
+          selectedConversation,
+          lead
+        }
+      });
+      return;
+    }
+    if (action === 'Create follow-up') {
+      setNoteText('Follow up: ');
+      setNotice('Add the follow-up details in the Notes tab.');
+      return;
+    }
+    if (action === 'Assign agent') {
+      setNotice('Choose an agent from the Profile tab.');
+      return;
+    }
+    setNotice(`${action} is ready for a future automation integration.`);
+  }, [navigate, selectedConversation]);
+
+  const workspace = (
+    <WorkspacePanel
+      conversation={selectedConversation}
+      agents={agents}
+      roles={roles}
+      notes={notes}
+      media={media}
+      noteText={noteText}
+      onNoteTextChange={setNoteText}
+      labelText={labelText}
+      onLabelTextChange={setLabelText}
+      onAddNote={handleAddNote}
+      onAddLabel={handleAddLabel}
+      onAssign={handleAssign}
+      onUpdateContact={handleUpdateContact}
+      onDownload={handleDownload}
+      onAction={handleWorkspaceAction}
+      onClose={() => setWorkspaceOpen(false)}
+      showClose={!inlineWorkspace}
+    />
+  );
 
   return (
-    <Box sx={{ height: 'calc(100vh - 120px)', display: 'grid', gridTemplateColumns: { xs: '1fr', lg: sideOpen ? '340px 1fr 360px' : '340px 1fr' }, gap: 2 }}>
-      {error && <Alert severity="error" onClose={() => setError('')} sx={{ position: 'fixed', right: 24, bottom: 24, zIndex: 20 }}>{error}</Alert>}
+    <Box sx={{ mx: { xs: -2, md: -1 }, mt: { xs: -2, md: -1 } }}>
+      <input ref={fileInputRef} type="file" hidden onChange={handleFileUpload} accept={MEDIA_ACCEPT} />
+      <ChatLayout
+        showConversationList={!compactLayout || !selected}
+        showChat={!compactLayout || Boolean(selected)}
+        showWorkspace={inlineWorkspace && workspaceOpen}
+        conversationList={(
+          <ConversationList
+            conversations={conversations}
+            selectedId={selected}
+            onSelect={handleSelectConversation}
+            filters={filters}
+            onFiltersChange={setFilters}
+            agents={agents}
+            roles={roles}
+            unread={unread}
+            connected={connected}
+            loading={loading}
+            onRefresh={() => {
+              loadConversations();
+              refreshUnread();
+            }}
+          />
+        )}
+        chat={(
+          <ChatArea
+            conversation={selectedConversation}
+            messages={messages}
+            messagesReady={Boolean(conversation)}
+            quickReplies={templates}
+            whatsappTemplates={whatsappTemplates}
+            selectedTemplate={selectedTemplate}
+            onSelectTemplate={(template) => {
+              setSelectedTemplate(template);
+              setNewMessage(template?.body || '');
+            }}
+            windowOpen={windowOpen}
+            composerValue={newMessage}
+            onComposerChange={(value) => {
+              setSelectedTemplate(null);
+              setNewMessage(value);
+            }}
+            onSend={handleSendMessage}
+            onAttach={() => fileInputRef.current?.click()}
+            onDropFile={sendAttachment}
+            onSaveTemplate={handleSaveTemplate}
+            onBack={handleBack}
+            onToggleWorkspace={() => setWorkspaceOpen((value) => !value)}
+            onEdit={() => setWorkspaceOpen(true)}
+            onStatusChange={handleStatus}
+            replyToMessage={replyToMessage}
+            onReply={(message) => setReplyToMessage(message)}
+            onCancelReply={() => setReplyToMessage(null)}
+            mobile={compactLayout}
+            sending={sending}
+          />
+        )}
+        workspace={inlineWorkspace ? workspace : null}
+      />
 
-      <Paper elevation={0} sx={{ border: '1px solid #e8edf2', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        <Box sx={{ p: 2 }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
-            <Box>
-              <Typography variant="h6" fontWeight={850}>Inbox</Typography>
-              <Typography variant="caption" color="text.secondary">{connected ? 'Socket connected' : 'Socket offline'} • unread {unread}</Typography>
-            </Box>
-            <Badge badgeContent={unread} color="success" />
-          </Stack>
-          <Stack spacing={1}>
-            <TextField size="small" label="Search conversations" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
-            <Stack direction="row" spacing={1}>
-              <FormControl size="small" fullWidth><InputLabel>Agent</InputLabel><Select label="Agent" value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value })}><MenuItem value="">All</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}</Select></FormControl>
-              <FormControl size="small" fullWidth><InputLabel>Status</InputLabel><Select label="Status" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><MenuItem value="">All</MenuItem><MenuItem value="open">Open</MenuItem><MenuItem value="pending">Pending</MenuItem><MenuItem value="closed">Closed</MenuItem><MenuItem value="archived">Archived</MenuItem></Select></FormControl>
-            </Stack>
-            <FormControl size="small"><InputLabel>Unread</InputLabel><Select label="Unread" value={filters.unread} onChange={(e) => setFilters({ ...filters, unread: e.target.value })}><MenuItem value="">All</MenuItem><MenuItem value="true">Unread only</MenuItem></Select></FormControl>
-          </Stack>
-        </Box>
-        {loading && <LinearProgress />}
-        <Divider />
-        <List sx={{ overflowY: 'auto', flex: 1 }}>
-          {conversations.map((item) => (
-            <ListItemButton key={item.id} selected={selected === item.id} onClick={() => setSelected(item.id)}>
-              <Avatar sx={{ mr: 1.5, bgcolor: '#e7f7ee', color: '#128c7e' }}>{contactName(item.contact).slice(0, 1)}</Avatar>
-              <ListItemText
-                primary={<Stack direction="row" justifyContent="space-between"><Typography fontWeight={800}>{contactName(item.contact)}</Typography><Chip size="small" label={item.status} /></Stack>}
-                secondary={<>{item.contact?.phone || item.whatsappThreadId || `Conversation ${item.id}`} {item.unreadCount > 0 ? `• ${item.unreadCount} unread` : ''}</>}
-              />
-            </ListItemButton>
-          ))}
-          {!loading && conversations.length === 0 && <Box sx={{ p: 3, textAlign: 'center' }}><Typography color="text.secondary">No conversations found.</Typography></Box>}
-        </List>
-      </Paper>
-
-      <Paper elevation={0} sx={{ border: '1px solid #e8edf2', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <Box sx={{ p: 2, borderBottom: '1px solid #e8edf2' }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Box>
-              <Typography variant="h6" fontWeight={850}>{contactName(selectedConversation?.contact)}</Typography>
-              <Typography variant="body2" color="text.secondary">Assigned to {agentName(selectedConversation?.assignee)}</Typography>
-            </Box>
-            <Stack direction="row" spacing={1}>
-              <Button size="small" variant={selectedConversation?.status === 'open' ? 'contained' : 'outlined'} onClick={() => handleStatus('open')}>Open</Button>
-              <Button size="small" variant={selectedConversation?.status === 'closed' ? 'contained' : 'outlined'} onClick={() => handleStatus('closed')}>Closed</Button>
-              <Tooltip title="Details"><IconButton onClick={() => setSideOpen((value) => !value)}><InfoOutlinedIcon /></IconButton></Tooltip>
-            </Stack>
-          </Stack>
-        </Box>
-        <Box sx={{ flex: 1, overflowY: 'auto', p: 2, bgcolor: '#eef7f2' }}>
-          {messages.map((message) => (
-            <Box key={message.id} sx={{ display: 'flex', justifyContent: message.direction === 'outbound' ? 'flex-end' : 'flex-start', mb: 1 }}>
-              <Paper elevation={0} sx={{ p: 1.5, maxWidth: '75%', borderRadius: 2, bgcolor: message.direction === 'outbound' ? '#dcf8c6' : '#fff' }}>
-                <Typography variant="body2">{message.text || message.templateName || message.type}</Typography>
-                {message.mediaUrl && <Button size="small" href={`${API_ORIGIN}${message.mediaUrl}`} target="_blank">Open attachment</Button>}
-                <Typography display="block" variant="caption" color="text.secondary">{message.createdAt ? new Date(message.createdAt).toLocaleString() : ''}</Typography>
-              </Paper>
-            </Box>
-          ))}
-          {!selected && <Box sx={{ textAlign: 'center', mt: 10 }}><Typography color="text.secondary">Select a conversation to start.</Typography></Box>}
-        </Box>
-        <Box sx={{ p: 2, borderTop: '1px solid #e8edf2' }}>
-          <Stack direction="row" spacing={1} sx={{ mb: 1, overflowX: 'auto' }}>
-            {templates.slice(0, 8).map((template) => <Chip key={template.id} label={template.name} onClick={() => setNewMessage(template.body)} />)}
-          </Stack>
-          <Stack direction="row" spacing={1} alignItems="flex-end">
-            <input ref={fileInputRef} type="file" hidden onChange={handleFileUpload} />
-            <IconButton disabled={!selected} onClick={() => fileInputRef.current?.click()}><AttachFileIcon /></IconButton>
-            <TextField value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Type a message, quick reply, or caption..." fullWidth multiline minRows={2} />
-            <Button disabled={!newMessage.trim()} onClick={saveTemplate}>Save Reply</Button>
-            <IconButton color="primary" disabled={!selected || !newMessage.trim()} onClick={handleSendMessage}><SendIcon /></IconButton>
-          </Stack>
-        </Box>
-      </Paper>
-
-      {sideOpen && (
-        <Paper elevation={0} sx={{ border: '1px solid #e8edf2', overflow: 'hidden', display: { xs: 'none', lg: 'flex' }, flexDirection: 'column' }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 2 }}>
-            <Typography variant="h6" fontWeight={850}>Workspace</Typography>
-            <IconButton onClick={() => setSideOpen(false)}><CloseIcon /></IconButton>
-          </Stack>
-          <Tabs value={tab} onChange={(e, value) => setTab(value)} variant="fullWidth">
-            <Tab value="profile" label="Profile" />
-            <Tab value="notes" label="Notes" />
-            <Tab value="media" label="Media" />
-          </Tabs>
-          <Divider />
-          <Box sx={{ p: 2, overflowY: 'auto' }}>
-            {tab === 'profile' && (
-              <Stack spacing={2}>
-                <Box><Typography fontWeight={800}>Contact</Typography><Typography>{contactName(conversation?.contact)}</Typography><Typography color="text.secondary">{conversation?.contact?.phone || '-'}</Typography><Typography color="text.secondary">{conversation?.contact?.email || '-'}</Typography></Box>
-                <Box><Typography fontWeight={800}>Lead Information</Typography><Typography>Status: {conversation?.lead?.status?.name || '-'}</Typography><Typography>Source: {conversation?.lead?.source?.name || '-'}</Typography><Typography>Course: {conversation?.lead?.courseInterested || '-'}</Typography><Typography>Budget: {conversation?.lead?.budget || '-'}</Typography></Box>
-                <FormControl fullWidth size="small"><InputLabel>Assign Agent</InputLabel><Select label="Assign Agent" value={conversation?.assignedTo || ''} onChange={(e) => handleAssign(e.target.value)}><MenuItem value="">Unassigned</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}</Select></FormControl>
-                <Box>
-                  <Typography fontWeight={800} sx={{ mb: 1 }}>Labels</Typography>
-                  <Stack direction="row" gap={0.75} flexWrap="wrap" sx={{ mb: 1 }}>{(conversation?.labels || []).map((label) => <Chip key={label.id} size="small" icon={<LocalOfferIcon />} label={label.name} />)}</Stack>
-                  <Stack direction="row" spacing={1}><TextField size="small" label="Add label" value={labelText} onChange={(e) => setLabelText(e.target.value)} fullWidth /><Button onClick={addLabel}>Add</Button></Stack>
-                </Box>
-              </Stack>
-            )}
-            {tab === 'notes' && (
-              <Stack spacing={2}>
-                <TextField label="Internal note" value={noteText} onChange={(e) => setNoteText(e.target.value)} multiline minRows={3} fullWidth />
-                <Grid container spacing={1}><Grid item xs={4}><Button fullWidth onClick={() => addNote('private')}>Private</Button></Grid><Grid item xs={4}><Button fullWidth onClick={() => addNote('agent')}>Agent</Button></Grid><Grid item xs={4}><Button fullWidth onClick={() => addNote('follow_up')}>Follow-up</Button></Grid></Grid>
-                <Divider />
-                {notes.map((note) => <Paper key={note.id} variant="outlined" sx={{ p: 1.5 }}><Stack direction="row" spacing={1} alignItems="center"><NotesIcon fontSize="small" /><Chip size="small" label={note.type} /></Stack><Typography sx={{ mt: 1 }}>{note.note}</Typography><Typography variant="caption" color="text.secondary">{note.createdAt ? new Date(note.createdAt).toLocaleString() : ''}</Typography></Paper>)}
-              </Stack>
-            )}
-            {tab === 'media' && (
-              <Stack spacing={1.5}>
-                {media.map((item) => <Paper key={item.id} variant="outlined" sx={{ p: 1.5 }}><Typography fontWeight={800}>{item.originalName}</Typography><Typography variant="body2" color="text.secondary">{item.mediaType} • {Math.round((item.size || 0) / 1024)} KB</Typography><Stack direction="row" spacing={1} sx={{ mt: 1 }}><Button size="small" href={`${API_ORIGIN}${item.publicUrl}`} target="_blank">Preview</Button><Button size="small" startIcon={<DownloadIcon />} onClick={() => handleDownload(item)}>Download</Button></Stack></Paper>)}
-                {media.length === 0 && <Typography color="text.secondary">No media history yet.</Typography>}
-              </Stack>
-            )}
-          </Box>
-        </Paper>
+      {!inlineWorkspace && (
+        <Drawer
+          anchor="right"
+          open={workspaceOpen && Boolean(selectedConversation)}
+          onClose={() => setWorkspaceOpen(false)}
+          PaperProps={{ sx: { width: { xs: '100%', sm: 380 }, maxWidth: '100vw' } }}
+        >
+          {workspace}
+        </Drawer>
       )}
 
-      <Drawer anchor="right" open={sideOpen && window.innerWidth < 1200} onClose={() => setSideOpen(false)}>
-        <Box sx={{ width: 340, p: 2 }}><Typography>Conversation details are available on desktop or wider screens.</Typography></Box>
-      </Drawer>
+      <Snackbar open={Boolean(error)} autoHideDuration={6500} onClose={() => setError('')} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
+        <Alert severity="error" variant="filled" onClose={() => setError('')}>{error}</Alert>
+      </Snackbar>
+      <Snackbar open={Boolean(notice)} autoHideDuration={3500} onClose={() => setNotice('')} message={notice} />
     </Box>
   );
 }

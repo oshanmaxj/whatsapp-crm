@@ -1,6 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { Op, fn, col, literal } = require('sequelize');
+const logger = require('../config/logger');
+const whatsappService = require('./whatsapp.service');
+const assignmentNotificationService = require('./assignmentNotification.service');
+const conversationAccessService = require('./conversationAccess.service');
 const {
   sequelize,
   Contact,
@@ -14,6 +18,7 @@ const {
   Media,
   Message,
   MessageTemplate,
+  Role,
   User
 } = require('../models');
 
@@ -21,6 +26,11 @@ const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'media');
 
 function ensureUploadDir() {
   fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+function normalizeWhatsAppNumber(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits.startsWith('00') ? digits.slice(2) : digits;
 }
 
 function serializeAgent(agent) {
@@ -32,16 +42,115 @@ function serializeAgent(agent) {
   };
 }
 
+function calculateInteractionRate(messagesSent, repliesReceived) {
+  const sent = Number(messagesSent || 0);
+  const received = Number(repliesReceived || 0);
+  const precisePercentage = sent > 0 ? (received / sent) * 100 : 0;
+  return {
+    messagesSent: sent,
+    repliesReceived: received,
+    percentage: Math.round(precisePercentage),
+    precisePercentage: Math.round(precisePercentage * 10) / 10
+  };
+}
+
+async function resolveReplyContext(conversationId, replyToMessageId) {
+  if (!replyToMessageId) return { replyToMessageId: null, replyToWhatsappMessageId: null };
+  const original = await Message.findOne({
+    where: { id: replyToMessageId, conversationId },
+    attributes: ['id', 'whatsappMessageId']
+  });
+  if (!original) {
+    const error = new Error('Reply target message not found');
+    error.status = 404;
+    throw error;
+  }
+  if (!original.whatsappMessageId) {
+    const error = new Error('Reply target does not have a WhatsApp message id yet');
+    error.status = 409;
+    throw error;
+  }
+  return {
+    replyToMessageId: original.id,
+    replyToWhatsappMessageId: original.whatsappMessageId
+  };
+}
+
 function serializeConversation(conversation) {
   const json = conversation.toJSON ? conversation.toJSON() : conversation;
+  const { messages, ...conversationData } = json;
+  const messagesSent = Number(json.messagesSent || 0);
+  const repliesReceived = Number(json.repliesReceived || 0);
   return {
-    ...json,
+    ...conversationData,
     assignee: serializeAgent(json.assignee),
-    unreadCount: Number(json.unreadCount || 0)
+    assignedUser: serializeAgent(json.assignedUser || json.assignee),
+    assignedTo: json.assignedUserId,
+    assigned_user_id: json.assignedUserId,
+    assigned_role_id: json.assignedRoleId,
+    unreadCount: Number(json.unreadCount || 0),
+    lastMessage: messages?.[0] || null,
+    interactionRate: calculateInteractionRate(messagesSent, repliesReceived)
   };
 }
 
 class InboxService {
+  conversationAttributes() {
+    return {
+      include: [
+        [
+          literal('(SELECT COUNT(*) FROM messages WHERE messages.conversation_id = "Conversation"."id" AND messages.direction = \'inbound\' AND messages.is_read = false AND messages.deleted_at IS NULL)'),
+          'unreadCount'
+        ],
+        [
+          literal('(SELECT MAX(messages.created_at) FROM messages WHERE messages.conversation_id = "Conversation"."id" AND (messages.direction = \'inbound\' OR messages.status = \'received\') AND messages.deleted_at IS NULL)'),
+          'lastInboundAt'
+        ]
+      ]
+    };
+  }
+
+  async attachInteractionRates(conversations) {
+    const conversationIds = conversations.map((conversation) => conversation.id).filter(Boolean);
+    if (conversationIds.length === 0) return conversations;
+
+    const counts = await Message.findAll({
+      where: {
+        conversationId: { [Op.in]: conversationIds }
+      },
+      attributes: [
+        ['conversation_id', 'conversationId'],
+        [
+          literal("SUM(CASE WHEN (direction = 'outbound' OR status IN ('sent', 'delivered', 'read', 'queued')) AND status <> 'failed' AND COALESCE(is_internal_notification, false) = false THEN 1 ELSE 0 END)"),
+          'messagesSent'
+        ],
+        [
+          literal("SUM(CASE WHEN direction = 'inbound' OR status = 'received' THEN 1 ELSE 0 END)"),
+          'repliesReceived'
+        ]
+      ],
+      group: ['conversation_id'],
+      raw: true
+    });
+
+    const statsByConversation = new Map(conversationIds.map((id) => [String(id), { messagesSent: 0, repliesReceived: 0 }]));
+    for (const row of counts) {
+      const conversationId = row.conversationId || row.conversation_id;
+      statsByConversation.set(String(conversationId), {
+        messagesSent: Number(row.messagesSent || 0),
+        repliesReceived: Number(row.repliesReceived || 0)
+      });
+    }
+
+    return conversations.map((conversation) => {
+      const stats = statsByConversation.get(String(conversation.id)) || {};
+      return {
+        ...conversation,
+        interactionRate: calculateInteractionRate(stats.messagesSent, stats.repliesReceived)
+      };
+    });
+  }
+
   conversationIncludes() {
     return [
       { model: Contact, as: 'contact', required: false },
@@ -56,14 +165,40 @@ class InboxService {
         ]
       },
       { model: User, as: 'assignee', attributes: ['id', 'firstName', 'lastName', 'email'], required: false },
+      { model: User, as: 'assignedUser', attributes: ['id', 'firstName', 'lastName', 'email'], required: false },
+      { model: Role, as: 'assignedRole', attributes: ['id', 'name', 'description'], required: false },
       { model: Label, as: 'labels', through: { attributes: [] }, required: false }
     ];
   }
 
-  async listConversations({ search, assignedTo, status, unread } = {}) {
-    const where = {};
-    if (assignedTo) where.assignedTo = assignedTo;
-    if (status) where.status = status;
+  async listConversations({
+    search,
+    assignedTo,
+    assigned_to,
+    assignedUserId,
+    assigned_user_id,
+    assignedRoleId,
+    assigned_role_id,
+    mine,
+    status,
+    unread
+  } = {}, userId) {
+    const filters = {};
+    const requestedAssignee = assignedUserId || assigned_user_id || assignedTo || assigned_to;
+    const requestedRole = assignedRoleId || assigned_role_id;
+    if (requestedAssignee) filters.assignedUserId = requestedAssignee;
+    if (requestedRole) filters.assignedRoleId = requestedRole;
+    if (mine === 'assigned') filters.assignedUserId = userId;
+    if (['role', 'department'].includes(mine)) {
+      const currentUser = await User.findByPk(userId, {
+        include: [{ model: Role, as: 'roles', attributes: ['id'], through: { attributes: [] } }]
+      });
+      const roleIds = (currentUser?.roles || []).map((role) => role.id);
+      if (roleIds.length) filters.assignedRoleId = { [Op.in]: roleIds };
+      else filters.id = null;
+    }
+    if (status) filters.status = status;
+    const where = await conversationAccessService.scopedWhere(userId, filters);
 
     const contactWhere = {};
     if (search) {
@@ -78,14 +213,7 @@ class InboxService {
     }
 
     const conversations = await Conversation.findAll({
-      attributes: {
-        include: [
-          [
-            literal('(SELECT COUNT(*) FROM messages WHERE messages.conversation_id = "Conversation"."id" AND messages.direction = \'inbound\' AND messages.is_read = false AND messages.deleted_at IS NULL)'),
-            'unreadCount'
-          ]
-        ]
-      },
+      attributes: this.conversationAttributes(),
       where,
       include: this.conversationIncludes().map((include) =>
         include.as === 'contact'
@@ -96,19 +224,38 @@ class InboxService {
     });
 
     const serialized = conversations.map(serializeConversation);
-    return unread === 'true' ? serialized.filter((item) => item.unreadCount > 0) : serialized;
+    const conversationIds = serialized.map((conversation) => conversation.id).filter(Boolean);
+    const latestByConversation = new Map();
+
+    if (conversationIds.length > 0) {
+      const recentMessages = await Message.findAll({
+        where: { conversationId: { [Op.in]: conversationIds } },
+        order: [['created_at', 'DESC']],
+        attributes: ['id', 'conversationId', 'direction', 'type', 'messageType', 'text', 'templateName', 'mediaUrl', 'status', 'isInternalNotification', 'createdAt']
+      });
+
+      for (const message of recentMessages) {
+        const conversationId = String(message.conversationId);
+        if (!latestByConversation.has(conversationId)) {
+          latestByConversation.set(conversationId, message);
+        }
+      }
+    }
+
+    const withLatestMessages = serialized.map((conversation) => ({
+      ...conversation,
+      lastMessage: latestByConversation.get(String(conversation.id)) || null
+    }));
+    const withInteractionRates = await this.attachInteractionRates(withLatestMessages);
+    return unread === 'true'
+      ? withInteractionRates.filter((item) => item.unreadCount > 0)
+      : withInteractionRates;
   }
 
-  async getConversation(id) {
+  async getConversation(id, userId) {
+    await conversationAccessService.assertConversationAccess(id, userId);
     const conversation = await Conversation.findByPk(id, {
-      attributes: {
-        include: [
-          [
-            literal('(SELECT COUNT(*) FROM messages WHERE messages.conversation_id = "Conversation"."id" AND messages.direction = \'inbound\' AND messages.is_read = false AND messages.deleted_at IS NULL)'),
-            'unreadCount'
-          ]
-        ]
-      },
+      attributes: this.conversationAttributes(),
       include: [
         ...this.conversationIncludes(),
         { model: ConversationNote, as: 'notes', include: [{ model: User, as: 'author', attributes: ['id', 'firstName', 'lastName', 'email'] }] },
@@ -120,10 +267,12 @@ class InboxService {
       error.status = 404;
       throw error;
     }
-    return serializeConversation(conversation);
+    const [withInteractionRate] = await this.attachInteractionRates([serializeConversation(conversation)]);
+    return withInteractionRate;
   }
 
-  async updateConversation(id, payload) {
+  async updateConversation(id, payload, userId) {
+    await conversationAccessService.assertConversationAccess(id, userId);
     const conversation = await Conversation.findByPk(id);
     if (!conversation) {
       const error = new Error('Conversation not found');
@@ -131,14 +280,84 @@ class InboxService {
       throw error;
     }
     await conversation.update(payload);
-    return this.getConversation(id);
+    return this.getConversation(id, userId);
   }
 
-  async assignConversation(id, assignedTo) {
-    return this.updateConversation(id, { assignedTo });
+  async assignConversation(id, payload = {}, userId) {
+    await conversationAccessService.assertConversationAccess(id, userId);
+    const current = await Conversation.findByPk(id, {
+      attributes: ['id', 'assignedUserId', 'assignedRoleId']
+    });
+    if (!current) throw Object.assign(new Error('Conversation not found'), { status: 404 });
+
+    const updates = {};
+    const hasAssignedUserId = ['assigned_user_id', 'assignedUserId', 'assigned_to', 'assignedTo']
+      .some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+    const hasAssignedRoleId = ['assigned_role_id', 'assignedRoleId']
+      .some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+    if (!hasAssignedUserId && !hasAssignedRoleId) {
+      throw Object.assign(new Error('Provide assigned_user_id and/or assigned_role_id'), { status: 422 });
+    }
+
+    if (hasAssignedUserId) {
+      const assignedUserId = payload.assigned_user_id
+        ?? payload.assignedUserId
+        ?? payload.assigned_to
+        ?? payload.assignedTo
+        ?? null;
+      if (assignedUserId !== null && !await User.findOne({ where: { id: assignedUserId, status: 'active' }, attributes: ['id'] })) {
+        throw Object.assign(new Error('Assigned user not found or inactive'), { status: 422 });
+      }
+      updates.assignedUserId = assignedUserId;
+    }
+    if (hasAssignedRoleId) {
+      const assignedRoleId = payload.assigned_role_id ?? payload.assignedRoleId ?? null;
+      if (assignedRoleId !== null && !await Role.findOne({ where: { id: assignedRoleId, isActive: true }, attributes: ['id'] })) {
+        throw Object.assign(new Error('Assigned role/department not found'), { status: 422 });
+      }
+      updates.assignedRoleId = assignedRoleId;
+    }
+
+    const assignedUserChanged = Object.prototype.hasOwnProperty.call(updates, 'assignedUserId')
+      && String(current.assignedUserId ?? '') !== String(updates.assignedUserId ?? '');
+    const departmentChanged = Object.prototype.hasOwnProperty.call(updates, 'assignedRoleId')
+      && String(current.assignedRoleId ?? '') !== String(updates.assignedRoleId ?? '');
+
+    await current.update(updates);
+    const result = await this.getConversation(id, userId);
+
+    if (assignedUserChanged || departmentChanged) {
+      try {
+        const [assignedUser, department, assignedBy] = await Promise.all([
+          result.assignedUserId
+            ? User.findByPk(result.assignedUserId, {
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phone', 'receiveAssignmentNotifications']
+              })
+            : null,
+          result.assignedRoleId ? Role.findByPk(result.assignedRoleId) : null,
+          User.findByPk(userId, { attributes: ['id', 'firstName', 'lastName', 'email'] })
+        ]);
+        await assignmentNotificationService.sendAssignmentNotification({
+          conversation: result,
+          assignedUser,
+          department,
+          assignedBy,
+          assignedUserChanged,
+          departmentChanged,
+          notifyAssignedUser: payload.notify_assigned_user !== false && payload.notifyAssignedUser !== false
+        });
+      } catch (error) {
+        logger.warn('assignment_notification_processing_failed', {
+          conversationId: id,
+          error: error.message
+        });
+      }
+    }
+    return result;
   }
 
-  async setLabels(conversationId, labels = []) {
+  async setLabels(conversationId, labels = [], userId) {
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
     const conversation = await Conversation.findByPk(conversationId);
     if (!conversation) {
       const error = new Error('Conversation not found');
@@ -160,17 +379,19 @@ class InboxService {
         defaults: { conversationId, labelId: label.id }
       });
     }
-    return this.getConversation(conversationId);
+    return this.getConversation(conversationId, userId);
   }
 
-  async createNote({ conversationId, createdBy, type = 'private', note }) {
+  async createNote({ conversationId, createdBy, type = 'private', note }, userId) {
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
     const row = await ConversationNote.create({ conversationId, createdBy, type, note });
     return ConversationNote.findByPk(row.id, {
       include: [{ model: User, as: 'author', attributes: ['id', 'firstName', 'lastName', 'email'] }]
     });
   }
 
-  async listNotes(conversationId) {
+  async listNotes(conversationId, userId) {
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
     return ConversationNote.findAll({
       where: { conversationId },
       include: [{ model: User, as: 'author', attributes: ['id', 'firstName', 'lastName', 'email'] }],
@@ -178,58 +399,170 @@ class InboxService {
     });
   }
 
-  async createMedia({ conversationId, uploadedBy, fileName, mimeType, mediaType, dataBase64, caption }) {
+  async createMedia({ conversationId, uploadedBy, fileName, mimeType, mediaType, dataBase64, caption, replyToMessageId = null }, userId) {
+    if (!conversationId || !fileName || !mimeType || !mediaType || !dataBase64) {
+      const error = new Error('Conversation, file name, MIME type, media type, and file data are required');
+      error.status = 400;
+      throw error;
+    }
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
+
+    const conversation = await Conversation.findByPk(conversationId, {
+      include: [{
+        model: Contact,
+        as: 'contact',
+        attributes: ['id', 'phone', 'whatsappId']
+      }]
+    });
+    if (!conversation) {
+      const error = new Error('Conversation not found');
+      error.status = 404;
+      throw error;
+    }
+
+    const toNumber = normalizeWhatsAppNumber(
+      conversation.contact?.whatsappId || conversation.contact?.phone
+    );
+    if (!toNumber) {
+      const error = new Error('Conversation contact does not have a WhatsApp number');
+      error.status = 400;
+      throw error;
+    }
+
     ensureUploadDir();
     const buffer = Buffer.from(dataBase64, 'base64');
+    if (buffer.length === 0) {
+      const error = new Error('Uploaded media file is empty');
+      error.status = 400;
+      throw error;
+    }
     const safeName = `${Date.now()}-${String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const storagePath = path.join(uploadDir, safeName);
     fs.writeFileSync(storagePath, buffer);
 
     const publicUrl = `/uploads/media/${safeName}`;
-    const message = await Message.create({
+    logger.info('media_file_stored_locally', {
       conversationId,
-      direction: 'outbound',
-      type: mediaType === 'pdf' ? 'document' : mediaType === 'voice' ? 'audio' : mediaType,
-      text: caption || fileName,
-      mediaUrl: publicUrl,
-      status: 'sent',
-      isRead: true,
-      rawPayload: { fileName, mimeType, mediaType }
-    });
-
-    const media = await Media.create({
-      conversationId,
-      messageId: message.id,
-      uploadedBy,
-      fileName: safeName,
-      originalName: fileName,
+      fileName,
       mimeType,
       mediaType,
-      size: buffer.length,
-      storagePath,
-      publicUrl,
-      caption
+      size: buffer.length
     });
 
-    await Conversation.update({ lastMessageAt: new Date() }, { where: { id: conversationId } });
-    return media;
+    const messageType = mediaType === 'pdf'
+      ? 'document'
+      : mediaType === 'voice'
+        ? 'audio'
+        : mediaType;
+    if (!['image', 'video', 'audio', 'document'].includes(messageType)) {
+      const error = new Error('Unsupported WhatsApp media type');
+      error.status = 400;
+      throw error;
+    }
+    const replyContext = await resolveReplyContext(conversationId, replyToMessageId);
+    const uploadResponse = await whatsappService.uploadMedia({
+      filePath: storagePath,
+      mimeType
+    });
+    const metaMediaId = uploadResponse?.id;
+    if (!metaMediaId) {
+      const error = new Error('Meta media upload did not return a media ID');
+      error.status = 502;
+      throw error;
+    }
+
+    const sendResult = await whatsappService.sendMediaMessage({
+      to: toNumber,
+      mediaType: messageType,
+      mediaId: metaMediaId,
+      caption: caption || fileName,
+      filename: fileName,
+      mimeType,
+      contextMessageId: replyContext.replyToWhatsappMessageId,
+      log: false,
+      returnMetaResponse: true
+    });
+    const whatsappMessageId = sendResult.message?.id;
+    if (!whatsappMessageId) {
+      const error = new Error('WhatsApp media send did not return a message ID');
+      error.status = 502;
+      throw error;
+    }
+    const runtimeConfig = await whatsappService.getRuntimeConfig();
+
+    return sequelize.transaction(async (transaction) => {
+      const message = await Message.create({
+        whatsappMessageId,
+        conversationId,
+        contactId: conversation.contactId,
+        sentByUserId: userId,
+        direction: 'outbound',
+        type: messageType,
+        text: caption || fileName,
+        mediaId: metaMediaId,
+        mediaUrl: publicUrl,
+        fromNumber: runtimeConfig.phoneNumberId || null,
+        toNumber,
+        status: 'sent',
+        replyToMessageId: replyContext.replyToMessageId,
+        replyToWhatsappMessageId: replyContext.replyToWhatsappMessageId,
+        isRead: true,
+        rawPayload: {
+          file: { fileName, mimeType, mediaType, size: buffer.length },
+          metaMediaUpload: uploadResponse,
+          whatsappMediaSend: sendResult.responseData
+        }
+      }, { transaction });
+
+      const media = await Media.create({
+        conversationId,
+        messageId: message.id,
+        uploadedBy,
+        fileName: safeName,
+        originalName: fileName,
+        mimeType,
+        mediaType,
+        size: buffer.length,
+        storagePath,
+        publicUrl,
+        caption
+      }, { transaction });
+
+      await conversation.update({ lastMessageAt: new Date() }, { transaction });
+      logger.info('outbound_media_persisted', {
+        conversationId,
+        messageId: message.id,
+        mediaRecordId: media.id,
+        metaMediaId,
+        whatsappMessageId,
+        fromNumber: runtimeConfig.phoneNumberId || null,
+        toNumber,
+        status: 'sent'
+      });
+      return media;
+    });
   }
 
-  async listMedia(conversationId) {
+  async listMedia(conversationId, userId) {
+    if (!conversationId) {
+      throw Object.assign(new Error('conversationId is required'), { status: 400 });
+    }
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
     return Media.findAll({
-      where: conversationId ? { conversationId } : {},
+      where: { conversationId },
       include: [{ model: User, as: 'uploader', attributes: ['id', 'firstName', 'lastName', 'email'] }],
       order: [['created_at', 'DESC']]
     });
   }
 
-  async getMedia(id) {
+  async getMedia(id, userId) {
     const media = await Media.findByPk(id);
     if (!media) {
       const error = new Error('Media not found');
       error.status = 404;
       throw error;
     }
+    await conversationAccessService.assertConversationAccess(media.conversationId, userId);
     return media;
   }
 

@@ -18,8 +18,12 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       unique: true
     },
-    assignedTo: {
+    assignedUserId: {
       type: DataTypes.BIGINT.UNSIGNED,
+      allowNull: true
+    },
+    assignedRoleId: {
+      type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true
     },
     status: {
@@ -39,6 +43,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: true
     },
+    lastMessage: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
     deletedAt: {
       type: DataTypes.DATE,
       allowNull: true
@@ -51,7 +59,8 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       { fields: ['contact_id'] },
       { fields: ['lead_id'] },
-      { fields: ['assigned_to'] },
+      { fields: ['assigned_user_id'] },
+      { fields: ['assigned_role_id'] },
       { fields: ['status'] },
       { fields: ['status', 'updated_at'] },
       { fields: ['last_message_at'] },
@@ -62,7 +71,9 @@ module.exports = (sequelize, DataTypes) => {
   Conversation.associate = (models) => {
     Conversation.belongsTo(models.Contact, { foreignKey: 'contact_id', as: 'contact' });
     Conversation.belongsTo(models.Lead, { foreignKey: 'lead_id', as: 'lead' });
-    Conversation.belongsTo(models.User, { foreignKey: 'assigned_to', as: 'assignee' });
+    Conversation.belongsTo(models.User, { foreignKey: 'assigned_user_id', as: 'assignee' });
+    Conversation.belongsTo(models.User, { foreignKey: 'assigned_user_id', as: 'assignedUser' });
+    Conversation.belongsTo(models.Role, { foreignKey: 'assigned_role_id', as: 'assignedRole' });
   };
 
   return Conversation;

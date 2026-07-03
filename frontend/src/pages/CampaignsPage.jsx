@@ -1,89 +1,33 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Divider,
-  FormControl,
-  Grid,
-  IconButton,
-  InputLabel,
-  LinearProgress,
-  MenuItem,
-  Paper,
-  Select,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography
+  Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
+  FormControl, Grid, IconButton, InputLabel, LinearProgress, MenuItem, Paper, Select,
+  Stack, Step, StepLabel, Stepper, Table, TableBody, TableCell, TableContainer, TableHead,
+  TableRow, TextField, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
-import CancelIcon from '@mui/icons-material/Cancel';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import PreviewIcon from '@mui/icons-material/Preview';
-import ScheduleIcon from '@mui/icons-material/Schedule';
 import {
-  cancelCampaign,
-  createCampaign,
-  deleteCampaign,
-  getCampaignAnalytics,
-  getCampaigns,
-  previewAudience,
-  sendCampaign
+  createCampaign, deleteCampaign, getCampaignAnalytics, getCampaigns, importCampaignRecipients,
+  getCampaignAudienceOptions, previewBroadcastAudience, scheduleCampaign, sendCampaign
 } from '../services/campaign.service';
-import { getAgents } from '../services/agent.service';
-import { getTemplates } from '../services/chat.service';
+import { getContacts } from '../services/contact.service';
+import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
+import { getRoles } from '../services/userManagement.service';
 
-const statusColors = {
-  Draft: 'default',
-  Scheduled: 'info',
-  Processing: 'warning',
-  Completed: 'success',
-  Failed: 'error',
-  Cancelled: 'default'
-};
-
+const steps = ['Details', 'Template', 'Recipients', 'Variables', 'Schedule', 'Review'];
 const leadStatuses = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
-const contactStatuses = ['new', 'active', 'inactive', 'archived'];
-const sources = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
-const courses = ['Forex', 'Crypto', 'Stock Market', 'Home Decoration', 'Other'];
+const statusColors = { Draft: 'default', Scheduled: 'info', Processing: 'warning', Completed: 'success', Failed: 'error', Cancelled: 'default' };
+const blankForm = () => ({
+  name: '', description: '', whatsappTemplateId: '', recipientMode: 'all', contactIds: [],
+  tag: '', leadStatus: '', departmentId: '', csv: '', startDate: '', endDate: '',
+  statusId: '', sourceId: '', variables: {}, sendMode: 'now', scheduledAt: ''
+});
 
-const initialForm = {
-  name: '',
-  description: '',
-  audienceType: 'contacts',
-  tag: '',
-  status: '',
-  source: '',
-  courseInterested: '',
-  assignedAgentId: '',
-  templateId: '',
-  messageBody: '',
-  variables: '{}',
-  mediaId: '',
-  scheduledAt: ''
-};
-
-function getRows(payload) {
-  if (Array.isArray(payload)) return payload;
-  return payload?.data || payload?.campaigns || [];
-}
-
-function agentName(agent) {
-  if (!agent) return 'Unassigned';
-  return agent.name || [agent.firstName, agent.lastName].filter(Boolean).join(' ') || agent.email;
+function displayName(contact) {
+  return [contact.firstName, contact.lastName].filter(Boolean).join(' ') || contact.phone;
 }
 
 function formatDate(value) {
@@ -92,429 +36,283 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
 }
 
-function rate(value) {
-  return `${Number(value || 0).toFixed(1)}%`;
+function variableIndexes(template) {
+  const matches = String(template?.body || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g);
+  return [...new Set(Array.from(matches, (match) => match[1]))].sort((a, b) => Number(a) - Number(b));
+}
+
+function apiMessage(error, fallback) {
+  return error.response?.data?.details?.[0]?.message || error.response?.data?.message || fallback;
 }
 
 function CampaignsPage() {
   const [campaigns, setCampaigns] = useState([]);
-  const [agents, setAgents] = useState([]);
   const [templates, setTemplates] = useState([]);
-  const [form, setForm] = useState(initialForm);
-  const [preview, setPreview] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [audienceOptions, setAudienceOptions] = useState({ statuses: [], sources: [] });
+  const [form, setForm] = useState(blankForm);
+  const [step, setStep] = useState(0);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const totals = useMemo(() => {
-    const empty = { Draft: 0, Scheduled: 0, Processing: 0, Completed: 0, Failed: 0, Cancelled: 0 };
-    return campaigns.reduce((acc, campaign) => {
-      acc[campaign.status] = (acc[campaign.status] || 0) + 1;
-      return acc;
-    }, empty);
-  }, [campaigns]);
+  const selectedTemplate = templates.find((template) => String(template.id) === String(form.whatsappTemplateId));
+  const variables = useMemo(() => variableIndexes(selectedTemplate), [selectedTemplate]);
+  const allTags = useMemo(() => [...new Set(contacts.flatMap((contact) => contact.tags || []))].sort(), [contacts]);
 
-  const loadCampaigns = async () => {
+  const load = async () => {
     try {
       setLoading(true);
       setError('');
-      const response = await getCampaigns();
-      setCampaigns(getRows(response.data));
+      const [campaignRes, templateRes, contactRes, roleRes, audienceOptionsRes] = await Promise.all([
+        getCampaigns(),
+        listWhatsAppTemplates({ status: 'APPROVED' }),
+        getContacts({ limit: 100 }),
+        getRoles(),
+        getCampaignAudienceOptions()
+      ]);
+      setCampaigns(campaignRes.data.data || []);
+      setTemplates(templateRes.data.data || []);
+      setContacts(contactRes.data.data?.contacts || []);
+      setRoles(roleRes.data.data || []);
+      setAudienceOptions(audienceOptionsRes.data.data || { statuses: [], sources: [] });
     } catch (err) {
-      setError(err.response?.data?.message || 'Unable to load campaigns.');
+      setError(apiMessage(err, 'Unable to load broadcasting data.'));
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadCampaigns();
-    getAgents().then((response) => setAgents(response.data.data || [])).catch(() => {});
-    getTemplates().then((response) => setTemplates(response.data.data || [])).catch(() => {});
-  }, []);
+  useEffect(() => { load(); }, []);
 
-  const setField = (field) => (event) => {
-    const value = event.target.value;
-    setForm((current) => {
-      const next = { ...current, [field]: value };
-      if (field === 'templateId') {
-        const selected = templates.find((template) => String(template.id) === String(value));
-        if (selected?.body) next.messageBody = selected.body;
-      }
-      return next;
-    });
+  const openWizard = () => {
+    setForm(blankForm());
+    setStep(0);
+    setPreview(null);
+    setError('');
+    setWizardOpen(true);
   };
 
-  const buildPayload = (status) => {
-    let variables = {};
-    try {
-      variables = form.variables.trim() ? JSON.parse(form.variables) : {};
-    } catch (err) {
-      const error = new Error('Variables must be valid JSON.');
-      error.isValidation = true;
-      throw error;
-    }
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
+  const validateStep = () => {
+    if (step === 0 && !form.name.trim()) return 'Campaign name is required.';
+    if (step === 1 && !form.whatsappTemplateId) return 'Select an approved WhatsApp template.';
+    if (step === 2) {
+      if (form.recipientMode === 'selected' && !form.contactIds.length) return 'Select at least one contact.';
+      if (form.recipientMode === 'tag' && !form.tag) return 'Select a contact tag.';
+      if (form.recipientMode === 'lead_status' && !form.leadStatus) return 'Select a lead status.';
+      if (form.recipientMode === 'department' && !form.departmentId) return 'Select a department.';
+      if (form.recipientMode === 'lead_date_range' && (!form.startDate || !form.endDate)) return 'Choose both a start date and an end date.';
+      if (form.recipientMode === 'lead_date_range' && form.startDate > form.endDate) return 'Start date must be on or before end date.';
+      if (form.recipientMode === 'csv' && !form.csv.trim()) return 'Import a CSV containing phone and name columns.';
+    }
+    if (step === 3 && variables.some((key) => !form.variables[key])) return 'Map every template variable.';
+    if (step === 4 && form.sendMode === 'schedule' && !form.scheduledAt) return 'Choose a schedule date and time.';
+    return '';
+  };
+
+  const next = async () => {
+    const validation = validateStep();
+    if (validation) return setError(validation);
+    setError('');
+    if (step === 2 && !await previewRecipients()) return;
+    setStep((current) => Math.min(current + 1, steps.length - 1));
+  };
+
+  const audiencePayload = () => {
     const filters = {};
-    ['tag', 'status', 'source', 'courseInterested', 'assignedAgentId'].forEach((key) => {
-      if (form[key]) filters[key] = form[key];
-    });
-
-    return {
-      name: form.name.trim(),
-      description: form.description || null,
-      status,
-      audienceType: form.audienceType,
-      filters,
-      templateId: form.templateId || null,
-      messageBody: form.messageBody.trim(),
-      variables,
-      mediaId: form.mediaId || null,
-      scheduledAt: form.scheduledAt ? new Date(form.scheduledAt).toISOString() : null
-    };
+    let audienceType = 'contacts';
+    if (form.recipientMode === 'selected') filters.contactIds = form.contactIds;
+    if (form.recipientMode === 'tag') filters.tag = form.tag;
+    if (form.recipientMode === 'lead_status') { audienceType = 'leads'; filters.leadStatus = form.leadStatus; }
+    if (form.recipientMode === 'department') { audienceType = 'leads'; filters.departmentId = form.departmentId; }
+    if (form.recipientMode === 'lead_date_range') {
+      audienceType = 'leads';
+      filters.recipientSource = 'lead_date_range';
+      filters.startDate = form.startDate;
+      filters.endDate = form.endDate;
+      if (form.statusId) filters.statusId = Number(form.statusId);
+      if (form.sourceId) filters.sourceId = Number(form.sourceId);
+      return {
+        audienceType,
+        filters,
+        recipient_source: 'lead_date_range',
+        start_date: form.startDate,
+        end_date: form.endDate,
+        status_id: form.statusId ? Number(form.statusId) : undefined,
+        source_id: form.sourceId ? Number(form.sourceId) : undefined,
+        limit: 10000
+      };
+    }
+    return { audienceType, filters, limit: 10000 };
   };
 
-  const runPreview = async () => {
+  const previewRecipients = async () => {
+    if (form.recipientMode === 'csv') {
+      const rows = form.csv.split(/\r?\n/).filter((line) => line.trim());
+      setPreview({ total: Math.max(rows.length - 1, 0), recipients: [] });
+      return true;
+    }
     try {
       setSaving(true);
-      const response = await previewAudience({
-        audienceType: form.audienceType,
-        tag: form.tag || undefined,
-        status: form.status || undefined,
-        source: form.source || undefined,
-        courseInterested: form.courseInterested || undefined,
-        assignedAgentId: form.assignedAgentId || undefined,
-        limit: 25
-      });
+      const response = await previewBroadcastAudience(audiencePayload());
       setPreview(response.data.data);
+      return true;
     } catch (err) {
-      setError(err.response?.data?.message || 'Unable to preview audience.');
+      setError(apiMessage(err, 'Unable to preview recipients.'));
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  const saveCampaign = async (mode) => {
+  const confirm = async (saveOnly = false) => {
     try {
       setSaving(true);
       setError('');
-      const payload = buildPayload(mode === 'schedule' ? 'Scheduled' : 'Draft');
-      const response = await createCampaign(payload);
+      const audience = audiencePayload();
+      const response = await createCampaign({
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        whatsappTemplateId: Number(form.whatsappTemplateId),
+        ...audience,
+        variables: form.variables,
+        scheduledAt: form.sendMode === 'schedule' ? new Date(form.scheduledAt).toISOString() : null
+      });
       const campaign = response.data.data;
-      if (mode === 'send') {
-        await sendCampaign(campaign.id);
-        setSuccess('Campaign queued in local simulation mode.');
-      } else {
-        setSuccess(mode === 'schedule' ? 'Campaign scheduled.' : 'Campaign saved as draft.');
+      if (form.recipientMode === 'csv') await importCampaignRecipients(campaign.id, { csv: form.csv });
+      if (!saveOnly) {
+        if (form.sendMode === 'schedule') await scheduleCampaign(campaign.id, new Date(form.scheduledAt).toISOString());
+        else await sendCampaign(campaign.id);
       }
-      setDialogOpen(false);
-      setForm(initialForm);
-      setPreview(null);
-      await loadCampaigns();
+      setSuccess(saveOnly ? 'Broadcast saved as draft.' : form.sendMode === 'schedule' ? 'Broadcast scheduled and queued.' : 'Broadcast queued for sending.');
+      setWizardOpen(false);
+      await load();
     } catch (err) {
-      setError(err.isValidation ? err.message : err.response?.data?.message || 'Unable to save campaign.');
+      setError(apiMessage(err, 'Unable to create broadcast.'));
     } finally {
       setSaving(false);
     }
   };
 
-  const sendExisting = async (campaign) => {
-    if (!window.confirm(`Send campaign "${campaign.name}" in local simulation mode?`)) return;
+  const retryOrSend = async (campaign) => {
+    if (!window.confirm(`Queue eligible recipients for "${campaign.name}"?`)) return;
     try {
       setLoading(true);
-      await sendCampaign(campaign.id);
-      setSuccess('Campaign sent through local simulation.');
-      await loadCampaigns();
+      setError('');
+      const response = await sendCampaign(campaign.id);
+      setSuccess(`${response.data.data?.queued || 0} recipient(s) queued; ${response.data.data?.skipped || 0} duplicate/completed recipient(s) skipped.`);
+      await load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Unable to send campaign.');
+      setError(apiMessage(err, 'Unable to queue broadcast.'));
     } finally {
       setLoading(false);
     }
   };
 
-  const cancelExisting = async (campaign) => {
+  const remove = async (campaign) => {
+    if (!window.confirm(`Delete broadcast "${campaign.name}"?`)) return;
     try {
-      await cancelCampaign(campaign.id);
-      setSuccess('Campaign cancelled.');
-      await loadCampaigns();
+      await deleteCampaign(campaign.id);
+      setSuccess('Broadcast deleted.');
+      await load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Unable to cancel campaign.');
+      setError(apiMessage(err, 'Unable to delete broadcast.'));
     }
   };
 
-  const removeCampaign = async (campaign) => {
-    if (!window.confirm(`Delete campaign "${campaign.name}"?`)) return;
-    await deleteCampaign(campaign.id);
-    setSuccess('Campaign deleted.');
-    await loadCampaigns();
-  };
-
-  const openAnalytics = async (campaign) => {
+  const showAnalytics = async (campaign) => {
     try {
       setLoading(true);
       const response = await getCampaignAnalytics(campaign.id);
       setAnalytics(response.data.data);
       setAnalyticsOpen(true);
     } catch (err) {
-      setError(err.response?.data?.message || 'Unable to load analytics.');
+      setError(apiMessage(err, 'Unable to load campaign analytics.'));
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <Stack spacing={2.5}>
-      {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
-      {success && <Alert severity="success" onClose={() => setSuccess('')}>{success}</Alert>}
+  const readCsv = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setField('csv', String(reader.result || ''));
+    reader.onerror = () => setError('Unable to read the selected CSV file.');
+    reader.readAsText(file);
+  };
 
-      <Grid container spacing={2}>
-        {Object.entries(totals).map(([status, count]) => (
-          <Grid item xs={6} md={2} key={status}>
-            <Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}>
-              <Typography variant="h5" fontWeight={850}>{count}</Typography>
-              <Typography variant="body2" color="text.secondary">{status}</Typography>
-            </Paper>
-          </Grid>
-        ))}
-      </Grid>
+  const renderStep = () => {
+    if (step === 0) return <Grid container spacing={2}>
+      <Grid item xs={12}><TextField label="Campaign name" value={form.name} onChange={(e) => setField('name', e.target.value)} required fullWidth /></Grid>
+      <Grid item xs={12}><TextField label="Campaign description" value={form.description} onChange={(e) => setField('description', e.target.value)} multiline minRows={3} fullWidth /></Grid>
+    </Grid>;
+    if (step === 1) return <Stack spacing={2}>
+      <FormControl fullWidth><InputLabel>Approved WhatsApp template</InputLabel><Select label="Approved WhatsApp template" value={form.whatsappTemplateId} onChange={(e) => {
+        setField('whatsappTemplateId', e.target.value);
+        setForm((current) => ({ ...current, whatsappTemplateId: e.target.value, variables: {} }));
+      }}>{templates.map((template) => <MenuItem key={template.id} value={template.id}>{template.name} · {template.language}</MenuItem>)}</Select></FormControl>
+      {selectedTemplate && <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}><Typography fontWeight={850}>{selectedTemplate.name}</Typography><Typography sx={{ whiteSpace: 'pre-wrap', mt: 1 }}>{selectedTemplate.body}</Typography><Stack direction="row" spacing={1} sx={{ mt: 1 }}><Chip size="small" label={selectedTemplate.category} /><Chip size="small" color="success" label="APPROVED" /></Stack></Paper>}
+    </Stack>;
+    if (step === 2) return <Stack spacing={2}>
+      <FormControl fullWidth><InputLabel>Recipient source</InputLabel><Select label="Recipient source" value={form.recipientMode} onChange={(e) => { setField('recipientMode', e.target.value); setPreview(null); }}>
+        <MenuItem value="all">All contacts</MenuItem><MenuItem value="selected">Selected contacts</MenuItem><MenuItem value="tag">By label / tag</MenuItem>
+        <MenuItem value="lead_status">By lead status</MenuItem><MenuItem value="department">By department</MenuItem><MenuItem value="csv">Imported CSV</MenuItem>
+        <MenuItem value="lead_date_range">By Lead Date Range</MenuItem>
+      </Select></FormControl>
+      {form.recipientMode === 'selected' && <FormControl fullWidth><InputLabel>Contacts</InputLabel><Select multiple label="Contacts" value={form.contactIds} onChange={(e) => setField('contactIds', e.target.value)} renderValue={(selected) => `${selected.length} contact(s) selected`}>{contacts.map((contact) => <MenuItem key={contact.id} value={contact.id}><Checkbox checked={form.contactIds.includes(contact.id)} />{displayName(contact)} · {contact.phone}</MenuItem>)}</Select></FormControl>}
+      {form.recipientMode === 'tag' && <TextField select label="Contact label / tag" value={form.tag} onChange={(e) => setField('tag', e.target.value)} fullWidth>{allTags.map((tag) => <MenuItem key={tag} value={tag}>{tag}</MenuItem>)}</TextField>}
+      {form.recipientMode === 'lead_status' && <TextField select label="Lead status" value={form.leadStatus} onChange={(e) => setField('leadStatus', e.target.value)} fullWidth>{leadStatuses.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField>}
+      {form.recipientMode === 'department' && <TextField select label="Department" value={form.departmentId} onChange={(e) => setField('departmentId', e.target.value)} fullWidth>{roles.map((role) => <MenuItem key={role.id} value={role.id}>{role.name}</MenuItem>)}</TextField>}
+      {form.recipientMode === 'lead_date_range' && <Grid container spacing={2}>
+        <Grid item xs={12} sm={6}><TextField label="Start date" type="date" value={form.startDate} onChange={(e) => { setField('startDate', e.target.value); setPreview(null); }} InputLabelProps={{ shrink: true }} required fullWidth /></Grid>
+        <Grid item xs={12} sm={6}><TextField label="End date" type="date" value={form.endDate} onChange={(e) => { setField('endDate', e.target.value); setPreview(null); }} InputLabelProps={{ shrink: true }} required fullWidth /></Grid>
+        <Grid item xs={12} sm={6}><TextField select label="Lead status (optional)" value={form.statusId} onChange={(e) => { setField('statusId', e.target.value); setPreview(null); }} fullWidth><MenuItem value="">All statuses</MenuItem>{audienceOptions.statuses.map((status) => <MenuItem key={status.id} value={status.id}>{status.name}</MenuItem>)}</TextField></Grid>
+        <Grid item xs={12} sm={6}><TextField select label="Lead source (optional)" value={form.sourceId} onChange={(e) => { setField('sourceId', e.target.value); setPreview(null); }} fullWidth><MenuItem value="">All sources</MenuItem>{audienceOptions.sources.map((source) => <MenuItem key={source.id} value={source.id}>{source.name}</MenuItem>)}</TextField></Grid>
+        <Grid item xs={12}><Button variant="outlined" onClick={previewRecipients} disabled={saving || !form.startDate || !form.endDate}>{saving ? 'Counting...' : 'Preview recipient count'}</Button></Grid>
+      </Grid>}
+      {form.recipientMode === 'csv' && <Stack spacing={1}><Button component="label" variant="outlined">Choose CSV<input hidden type="file" accept=".csv,text/csv" onChange={readCsv} /></Button><Typography variant="body2" color="text.secondary">CSV headers: phone, name, plus optional fields used in variable mapping.</Typography>{form.csv && <Chip color="success" label={`${Math.max(form.csv.split(/\r?\n/).filter(Boolean).length - 1, 0)} CSV row(s) loaded`} />}</Stack>}
+      {preview && <Alert severity={preview.total ? 'success' : 'warning'}>{preview.total} unique recipient(s) matched.</Alert>}
+    </Stack>;
+    if (step === 3) return <Stack spacing={2}>
+      <Typography color="text.secondary">Map each numbered template placeholder to recipient data.</Typography>
+      {variables.map((key) => <TextField key={key} select label={`{{${key}}}`} value={form.variables[key] || ''} onChange={(e) => setForm((current) => ({ ...current, variables: { ...current.variables, [key]: e.target.value } }))} fullWidth>
+        {['contact_name', 'phone', 'course_name', 'date', 'time', 'date_time', 'campaign_name'].map((value) => <MenuItem key={value} value={value}>{value.replaceAll('_', ' ')}</MenuItem>)}
+      </TextField>)}
+      {!variables.length && <Alert severity="info">This template has no numbered body variables.</Alert>}
+    </Stack>;
+    if (step === 4) return <Stack spacing={2}>
+      <TextField select label="Delivery" value={form.sendMode} onChange={(e) => setField('sendMode', e.target.value)} fullWidth><MenuItem value="now">Send now</MenuItem><MenuItem value="schedule">Schedule date/time</MenuItem></TextField>
+      {form.sendMode === 'schedule' && <TextField label="Schedule date/time" type="datetime-local" value={form.scheduledAt} onChange={(e) => setField('scheduledAt', e.target.value)} InputLabelProps={{ shrink: true }} inputProps={{ min: new Date().toISOString().slice(0, 16) }} fullWidth />}
+    </Stack>;
+    return <Grid container spacing={2}>
+      {[['Campaign', form.name], ['Template', selectedTemplate?.name], ['Recipients', preview ? `${preview.total} unique recipient(s)` : form.recipientMode], ['Delivery', form.sendMode === 'schedule' ? formatDate(form.scheduledAt) : 'Send now']].map(([label, value]) => <Grid item xs={12} sm={6} key={label}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography fontWeight={850}>{value || '-'}</Typography></Paper></Grid>)}
+      <Grid item xs={12}><Alert severity="warning">Confirming will create deduplicated queue jobs. Actual delivery requires valid WhatsApp Cloud API credentials.</Alert></Grid>
+    </Grid>;
+  };
 
-      <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
-          <Box sx={{ flex: 1 }}>
-            <Typography variant="h5" fontWeight={850}>WhatsApp Broadcast Campaigns</Typography>
-            <Typography color="text.secondary">Build audiences from contacts or leads, preview recipients, and test campaigns safely with simulated sends.</Typography>
-          </Box>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setForm(initialForm); setPreview(null); setDialogOpen(true); }} sx={{ bgcolor: '#128c7e' }}>
-            Create Campaign
-          </Button>
-        </Stack>
-      </Paper>
+  return <Stack spacing={2.5}>
+    {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+    {success && <Alert severity="success" onClose={() => setSuccess('')}>{success}</Alert>}
+    {loading && <LinearProgress />}
+    <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }}><Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}><Box sx={{ flex: 1 }}><Typography variant="h5" fontWeight={850}>Broadcasting / Campaigns</Typography><Typography color="text.secondary">Create compliant WhatsApp broadcasts, schedule queue delivery, and monitor results.</Typography></Box><Button variant="contained" startIcon={<AddIcon />} onClick={openWizard}>Create Broadcast</Button></Stack></Paper>
+    <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}><TableContainer><Table><TableHead><TableRow><TableCell>Campaign</TableCell><TableCell>Template</TableCell><TableCell>Recipients</TableCell><TableCell>Status</TableCell><TableCell>Scheduled</TableCell><TableCell>Sent</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
+      {campaigns.map((campaign) => <TableRow key={campaign.id} hover><TableCell><Typography fontWeight={850}>{campaign.name}</Typography><Typography variant="caption" color="text.secondary">{campaign.description || 'No description'}</Typography></TableCell><TableCell>{campaign.whatsappTemplate?.name || campaign.templateName || '-'}</TableCell><TableCell>{campaign.recipientCount || 0}</TableCell><TableCell><Chip size="small" label={campaign.status} color={statusColors[campaign.status] || 'default'} /></TableCell><TableCell>{formatDate(campaign.scheduledAt)}</TableCell><TableCell>{formatDate(campaign.sentAt)}</TableCell><TableCell align="right">{['Draft', 'Failed', 'Completed'].includes(campaign.status) && <IconButton title={campaign.status === 'Draft' ? 'Send now' : 'Retry failed recipients'} onClick={() => retryOrSend(campaign)}><PlayArrowIcon /></IconButton>}<IconButton title="Analytics" onClick={() => showAnalytics(campaign)}><AnalyticsIcon /></IconButton><IconButton color="error" title="Delete" onClick={() => remove(campaign)}><DeleteOutlineIcon /></IconButton></TableCell></TableRow>)}
+      {!campaigns.length && !loading && <TableRow><TableCell colSpan={7}><Box sx={{ py: 6, textAlign: 'center' }}><Typography fontWeight={850}>No broadcasts yet</Typography><Typography color="text.secondary">Create your first professional WhatsApp campaign.</Typography></Box></TableCell></TableRow>}
+    </TableBody></Table></TableContainer></Paper>
 
-      <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
-        {loading && <LinearProgress />}
-        <TableContainer>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Campaign</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Audience</TableCell>
-                <TableCell>Scheduled</TableCell>
-                <TableCell>Sent</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {campaigns.map((campaign) => (
-                <TableRow key={campaign.id} hover>
-                  <TableCell>
-                    <Typography fontWeight={800}>{campaign.name}</Typography>
-                    <Typography variant="body2" color="text.secondary">{campaign.templateName || campaign.description || 'Custom message'}</Typography>
-                  </TableCell>
-                  <TableCell><Chip size="small" label={campaign.status} color={statusColors[campaign.status] || 'default'} /></TableCell>
-                  <TableCell>{campaign.audienceType}</TableCell>
-                  <TableCell>{formatDate(campaign.scheduledAt)}</TableCell>
-                  <TableCell>{formatDate(campaign.sentAt)}</TableCell>
-                  <TableCell align="right">
-                    {['Draft', 'Scheduled', 'Failed'].includes(campaign.status) && (
-                      <IconButton title="Send now" onClick={() => sendExisting(campaign)}><PlayArrowIcon /></IconButton>
-                    )}
-                    {['Draft', 'Scheduled'].includes(campaign.status) && (
-                      <IconButton title="Cancel" onClick={() => cancelExisting(campaign)}><CancelIcon /></IconButton>
-                    )}
-                    <IconButton title="Analytics" onClick={() => openAnalytics(campaign)}><AnalyticsIcon /></IconButton>
-                    <IconButton color="error" title="Delete" onClick={() => removeCampaign(campaign)}><DeleteOutlineIcon /></IconButton>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!loading && campaigns.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6}>
-                    <Box sx={{ py: 5, textAlign: 'center' }}>
-                      <Typography fontWeight={800}>No campaigns yet</Typography>
-                      <Typography color="text.secondary">Create your first local test broadcast.</Typography>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+    <Dialog open={wizardOpen} onClose={() => !saving && setWizardOpen(false)} maxWidth="md" fullWidth><DialogTitle>Create Broadcast</DialogTitle><DialogContent><Stepper activeStep={step} alternativeLabel sx={{ py: 2 }}>{steps.map((label) => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}</Stepper><Box sx={{ py: 2, minHeight: 300 }}>{renderStep()}</Box></DialogContent><DialogActions><Button onClick={() => setWizardOpen(false)} disabled={saving}>Cancel</Button>{step > 0 && <Button onClick={() => { setError(''); setStep((current) => current - 1); }} disabled={saving}>Back</Button>}{step < steps.length - 1 ? <Button variant="contained" onClick={next} disabled={saving}>{saving ? 'Checking...' : 'Next'}</Button> : <><Button onClick={() => confirm(true)} disabled={saving}>Save Draft</Button><Button variant="contained" onClick={() => confirm(false)} disabled={saving}>{saving ? 'Queueing...' : form.sendMode === 'schedule' ? 'Confirm Schedule' : 'Confirm & Send'}</Button></>}</DialogActions></Dialog>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="lg" fullWidth>
-        <DialogTitle>Create Broadcast Campaign</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid item xs={12} md={8}>
-              <TextField label="Campaign Name" required value={form.name} onChange={setField('name')} fullWidth />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <FormControl fullWidth>
-                <InputLabel>Audience</InputLabel>
-                <Select label="Audience" value={form.audienceType} onChange={setField('audienceType')}>
-                  <MenuItem value="contacts">Contacts</MenuItem>
-                  <MenuItem value="leads">Leads</MenuItem>
-                  <MenuItem value="mixed">Contacts and Leads</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12}>
-              <TextField label="Description" value={form.description} onChange={setField('description')} fullWidth />
-            </Grid>
-
-            <Grid item xs={12}><Divider><Chip label="Audience Filters" /></Divider></Grid>
-            <Grid item xs={12} md={2.4}><TextField label="Tag" value={form.tag} onChange={setField('tag')} fullWidth /></Grid>
-            <Grid item xs={12} md={2.4}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select label="Status" value={form.status} onChange={setField('status')}>
-                  <MenuItem value="">Any</MenuItem>
-                  {(form.audienceType === 'contacts' ? contactStatuses : leadStatuses).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={2.4}>
-              <FormControl fullWidth>
-                <InputLabel>Source</InputLabel>
-                <Select label="Source" value={form.source} onChange={setField('source')} disabled={form.audienceType === 'contacts'}>
-                  <MenuItem value="">Any</MenuItem>
-                  {sources.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={2.4}>
-              <FormControl fullWidth>
-                <InputLabel>Course</InputLabel>
-                <Select label="Course" value={form.courseInterested} onChange={setField('courseInterested')} disabled={form.audienceType === 'contacts'}>
-                  <MenuItem value="">Any</MenuItem>
-                  {courses.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={2.4}>
-              <FormControl fullWidth>
-                <InputLabel>Agent</InputLabel>
-                <Select label="Agent" value={form.assignedAgentId} onChange={setField('assignedAgentId')} disabled={form.audienceType === 'contacts'}>
-                  <MenuItem value="">Any</MenuItem>
-                  {agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12}><Divider><Chip label="Message" /></Divider></Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Template</InputLabel>
-                <Select label="Template" value={form.templateId} onChange={setField('templateId')}>
-                  <MenuItem value="">Custom message</MenuItem>
-                  {templates.map((template) => <MenuItem key={template.id} value={template.id}>{template.name}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={3}><TextField label="Media ID" value={form.mediaId} onChange={setField('mediaId')} fullWidth /></Grid>
-            <Grid item xs={12} md={3}><TextField label="Schedule Date/Time" type="datetime-local" value={form.scheduledAt} onChange={setField('scheduledAt')} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
-            <Grid item xs={12}>
-              <TextField
-                label="Message Body"
-                required
-                value={form.messageBody}
-                onChange={setField('messageBody')}
-                helperText="Use placeholders like {{name}} or {{phone}}."
-                multiline
-                minRows={4}
-                fullWidth
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField label="Variables JSON" value={form.variables} onChange={setField('variables')} multiline minRows={2} fullWidth />
-            </Grid>
-            <Grid item xs={12}>
-              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
-                <Button variant="outlined" startIcon={<PreviewIcon />} onClick={runPreview} disabled={saving}>Preview Audience</Button>
-                {preview && <Chip color="success" label={`${preview.total} recipient(s) matched`} />}
-              </Stack>
-              {preview?.recipients?.length > 0 && (
-                <TableContainer component={Paper} elevation={0} sx={{ mt: 2, border: '1px solid #e8edf2', maxHeight: 260 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Phone</TableCell><TableCell>Status</TableCell><TableCell>Source</TableCell><TableCell>Course</TableCell></TableRow></TableHead>
-                    <TableBody>
-                      {preview.recipients.map((recipient) => (
-                        <TableRow key={`${recipient.phone}-${recipient.leadId || recipient.contactId}`}>
-                          <TableCell>{recipient.name}</TableCell>
-                          <TableCell>{recipient.phone}</TableCell>
-                          <TableCell>{recipient.status || '-'}</TableCell>
-                          <TableCell>{recipient.source || '-'}</TableCell>
-                          <TableCell>{recipient.courseInterested || '-'}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              )}
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Close</Button>
-          <Button onClick={() => saveCampaign('draft')} disabled={saving || !form.name.trim() || !form.messageBody.trim()}>Save Draft</Button>
-          <Button startIcon={<ScheduleIcon />} onClick={() => saveCampaign('schedule')} disabled={saving || !form.scheduledAt || !form.name.trim() || !form.messageBody.trim()}>Schedule</Button>
-          <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={() => saveCampaign('send')} disabled={saving || !form.name.trim() || !form.messageBody.trim()}>Send Now</Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Campaign Analytics</DialogTitle>
-        <DialogContent>
-          {analytics && (
-            <Stack spacing={2}>
-              <Box>
-                <Typography variant="h6" fontWeight={850}>{analytics.campaign?.name}</Typography>
-                <Typography color="text.secondary">{analytics.totals.totalTargeted} total targeted</Typography>
-              </Box>
-              <Grid container spacing={2}>
-                {Object.entries(analytics.totals).map(([key, value]) => (
-                  <Grid item xs={6} md={3} key={key}>
-                    <Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}>
-                      <Typography variant="h5" fontWeight={850}>{value}</Typography>
-                      <Typography variant="body2" color="text.secondary">{key}</Typography>
-                    </Paper>
-                  </Grid>
-                ))}
-              </Grid>
-              {Object.entries(analytics.rates).map(([key, value]) => (
-                <Box key={key}>
-                  <Stack direction="row" justifyContent="space-between"><Typography fontWeight={800}>{key}</Typography><Typography>{rate(value)}</Typography></Stack>
-                  <LinearProgress variant="determinate" value={Math.min(Number(value || 0), 100)} sx={{ height: 8, borderRadius: 1 }} />
-                </Box>
-              ))}
-              <Divider />
-              <Typography variant="subtitle1" fontWeight={850}>Failure Report</Typography>
-              {analytics.failureReport?.length ? (
-                <TableContainer>
-                  <Table size="small">
-                    <TableHead><TableRow><TableCell>Recipient</TableCell><TableCell>Phone</TableCell><TableCell>Error</TableCell></TableRow></TableHead>
-                    <TableBody>
-                      {analytics.failureReport.map((row) => (
-                        <TableRow key={row.id}><TableCell>{row.name || '-'}</TableCell><TableCell>{row.phone}</TableCell><TableCell>{row.errorMessage || row.status}</TableCell></TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              ) : (
-                <Typography color="text.secondary">No failures recorded.</Typography>
-              )}
-            </Stack>
-          )}
-        </DialogContent>
-        <DialogActions><Button onClick={() => setAnalyticsOpen(false)}>Close</Button></DialogActions>
-      </Dialog>
-    </Stack>
-  );
+    <Dialog open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} maxWidth="md" fullWidth><DialogTitle>Campaign Analytics</DialogTitle><DialogContent>{analytics && <Stack spacing={2}><Typography variant="h6" fontWeight={850}>{analytics.campaign?.name}</Typography><Grid container spacing={2}>{Object.entries(analytics.totals || {}).map(([key, value]) => <Grid item xs={6} md={4} key={key}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="h5" fontWeight={900}>{value}</Typography><Typography color="text.secondary">{key.replaceAll(/([A-Z])/g, ' $1')}</Typography></Paper></Grid>)}</Grid><Stack direction="row" spacing={1}>{Object.entries(analytics.rates || {}).map(([key, value]) => <Chip key={key} color="primary" variant="outlined" label={`${key.replaceAll(/([A-Z])/g, ' $1')}: ${Number(value).toFixed(1)}%`} />)}</Stack><Typography fontWeight={850}>Failed recipients</Typography>{analytics.failureReport?.length ? <Table size="small"><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Phone</TableCell><TableCell>Reason</TableCell></TableRow></TableHead><TableBody>{analytics.failureReport.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.phone}</TableCell><TableCell>{item.errorMessage || item.status}</TableCell></TableRow>)}</TableBody></Table> : <Alert severity="success">No failed recipients.</Alert>}</Stack>}</DialogContent><DialogActions><Button onClick={() => setAnalyticsOpen(false)}>Close</Button></DialogActions></Dialog>
+  </Stack>;
 }
 
 export default CampaignsPage;

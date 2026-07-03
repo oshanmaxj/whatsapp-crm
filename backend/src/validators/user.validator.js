@@ -1,29 +1,31 @@
 const Joi = require('joi');
 
 exports.updateUserSchema = Joi.object({
-  name: Joi.string().max(220).optional(),
+  name: Joi.string().trim().max(220).optional(),
   firstName: Joi.string().max(100).optional(),
   lastName: Joi.string().max(100).optional(),
   email: Joi.string().email().optional(),
   phone: Joi.string().max(50).optional(),
-  department: Joi.string().valid('Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing').allow('', null).optional(),
+  roleId: Joi.number().integer().positive().optional(),
   role: Joi.alternatives(Joi.string(), Joi.number()).optional(),
   roles: Joi.array().items(Joi.alternatives(Joi.string(), Joi.number())).optional(),
   status: Joi.string().valid('active', 'inactive', 'suspended', 'pending').optional(),
+  receiveAssignmentNotifications: Joi.boolean().optional(),
   isSystemAdmin: Joi.boolean().optional()
 });
 
 exports.createUserSchema = Joi.object({
-  name: Joi.string().max(220).optional(),
+  name: Joi.string().trim().max(220).required(),
   firstName: Joi.string().max(100).optional(),
   lastName: Joi.string().max(100).optional(),
   email: Joi.string().email().required(),
   phone: Joi.string().max(50).allow('', null).optional(),
-  department: Joi.string().valid('Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing').allow('', null).optional(),
   password: Joi.string().min(6).required(),
-  role: Joi.alternatives(Joi.string(), Joi.number()).required(),
+  roleId: Joi.number().integer().positive().optional(),
+  role: Joi.alternatives(Joi.string(), Joi.number()).optional(),
+  receiveAssignmentNotifications: Joi.boolean().default(true),
   status: Joi.string().valid('active', 'inactive', 'suspended', 'pending').default('active')
-});
+}).or('roleId', 'role');
 
 exports.resetPasswordSchema = Joi.object({
   password: Joi.string().min(6).required()

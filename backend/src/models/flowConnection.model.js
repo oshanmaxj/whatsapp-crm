@@ -6,7 +6,8 @@ module.exports = (sequelize, DataTypes) => {
     sourceHandle: { type: DataTypes.STRING(120), allowNull: true },
     targetNodeKey: { type: DataTypes.STRING(120), allowNull: false },
     targetHandle: { type: DataTypes.STRING(120), allowNull: true },
-    conditionLabel: { type: DataTypes.STRING(180), allowNull: true }
+    conditionLabel: { type: DataTypes.STRING(180), allowNull: true },
+    condition: { type: DataTypes.JSON, allowNull: false, defaultValue: {} }
   }, {
     tableName: 'flow_connections',
     timestamps: true,

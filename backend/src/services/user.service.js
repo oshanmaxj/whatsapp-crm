@@ -143,11 +143,17 @@ class UserService {
         const updates = {};
         if (role.name !== normalizedName) updates.name = normalizedName;
         if (!role.description) updates.description = `${name} role`;
+        if (!role.chatVisibilityScope) {
+          updates.chatVisibilityScope = ['Admin', 'Manager'].includes(name) ? 'all' : 'assigned_only';
+        }
         if (Object.keys(updates).length) await role.update(updates);
       } else {
         [role] = await Role.findOrCreate({
           where: { name: normalizedName },
-          defaults: { description: `${name} role` }
+          defaults: {
+            description: `${name} role`,
+            chatVisibilityScope: ['Admin', 'Manager'].includes(name) ? 'all' : 'assigned_only'
+          }
         });
       }
       roles[name] = role;
@@ -215,74 +221,130 @@ class UserService {
     return users.map(serializeUser);
   }
 
-  async getUserById(id) {
+  async getUserById(id, transaction = null) {
     const user = await User.findByPk(id, {
-      include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }]
+      include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }],
+      transaction
     });
     return serializeUser(user);
   }
 
+  async resolveRole(roleReference, transaction = null) {
+    if (roleReference === null || roleReference === undefined || roleReference === '') {
+      throw Object.assign(new Error('Invalid role'), { status: 422 });
+    }
+
+    const numericRoleId = Number(roleReference);
+    const role = Number.isInteger(numericRoleId) && numericRoleId > 0
+      ? await Role.findByPk(numericRoleId, { transaction })
+      : await Role.findOne({
+          where: sequelize.where(
+            sequelize.fn('lower', sequelize.col('name')),
+            String(roleReference).trim().toLowerCase()
+          ),
+          transaction
+        });
+
+    if (!role || role.isActive === false) {
+      throw Object.assign(new Error('Invalid role'), { status: 422 });
+    }
+    return role;
+  }
+
   async createUser(payload) {
-    const existing = await User.findOne({ where: { email: payload.email } });
-    if (existing) {
-      const error = new Error('Email already registered');
-      error.status = 409;
+    const email = String(payload.email || '').trim().toLowerCase();
+    const name = String(payload.name || '').trim();
+    const [firstName, ...rest] = String(payload.name || '').trim().split(/\s+/).filter(Boolean);
+    if (!name || !email || !payload.password) {
+      throw Object.assign(new Error('Name, email, and password are required'), { status: 422 });
+    }
+
+    let createdUser;
+    try {
+      await sequelize.transaction(async (transaction) => {
+        const existing = await User.findOne({ where: { email }, paranoid: false, transaction });
+        if (existing) {
+          throw Object.assign(new Error('Email already exists'), { status: 409 });
+        }
+
+        const role = await this.resolveRole(payload.roleId ?? payload.role, transaction);
+        const user = await User.create({
+          firstName: payload.firstName || firstName || null,
+          lastName: payload.lastName || rest.join(' ') || null,
+          email,
+          phone: String(payload.phone || '').trim() || null,
+          receiveAssignmentNotifications: payload.receiveAssignmentNotifications !== false,
+          passwordHash: payload.password,
+          status: payload.status || 'active',
+          isSystemAdmin: String(role.name).toLowerCase() === 'admin'
+        }, { transaction });
+
+        await UserRole.create({
+          userId: Number(user.id),
+          roleId: Number(role.id)
+        }, { transaction });
+        createdUser = await this.getUserById(user.id, transaction);
+        if (!createdUser) throw new Error('Unable to load created user');
+      });
+    } catch (error) {
+      if (error.status) throw error;
+      if (error.name === 'SequelizeUniqueConstraintError' || ['23505', 'ER_DUP_ENTRY'].includes(error.original?.code)) {
+        throw Object.assign(new Error('Email already exists'), { status: 409 });
+      }
       throw error;
     }
 
-    const [firstName, ...rest] = String(payload.name || '').trim().split(/\s+/).filter(Boolean);
-    const user = await User.create({
-      firstName: payload.firstName || firstName || null,
-      lastName: payload.lastName || rest.join(' ') || null,
-      email: payload.email,
-      phone: payload.phone || null,
-      department: payload.department || null,
-      passwordHash: payload.password,
-      status: payload.status || 'active',
-      isSystemAdmin: String(payload.role).toLowerCase() === 'admin'
-    });
-
-    if (payload.role) {
-      await this.assignRoles(user.id, [payload.role]);
-    }
-
-    return this.getUserById(user.id);
+    return createdUser;
   }
 
   async updateUser(id, payload) {
-    const user = await User.findByPk(id);
-    if (!user) {
-      const error = new Error('User not found');
-      error.status = 404;
+    const userId = Number(id);
+    try {
+      await sequelize.transaction(async (transaction) => {
+        const user = await User.findByPk(userId, { transaction });
+        if (!user) {
+          throw Object.assign(new Error('User not found'), { status: 404 });
+        }
+
+        const updates = { ...payload };
+        delete updates.name;
+        delete updates.roleId;
+        delete updates.role;
+        delete updates.roles;
+        delete updates.password;
+        if (payload.name && !payload.firstName && !payload.lastName) {
+          const [firstName, ...rest] = String(payload.name).trim().split(/\s+/).filter(Boolean);
+          updates.firstName = firstName || null;
+          updates.lastName = rest.join(' ') || null;
+        }
+
+        if (updates.email) {
+          updates.email = String(updates.email).trim().toLowerCase();
+          if (updates.email !== user.email) {
+            const existing = await User.findOne({ where: { email: updates.email }, paranoid: false, transaction });
+            if (existing && String(existing.id) !== String(user.id)) {
+              throw Object.assign(new Error('Email already exists'), { status: 409 });
+            }
+          }
+        }
+
+        await user.update(updates, { transaction });
+        const roleReference = payload.roleId ?? payload.role;
+        if (roleReference !== undefined && roleReference !== null && roleReference !== '') {
+          const role = await this.resolveRole(roleReference, transaction);
+          await UserRole.destroy({ where: { userId }, transaction });
+          await UserRole.create({ userId, roleId: Number(role.id) }, { transaction });
+          await user.update({ isSystemAdmin: String(role.name).toLowerCase() === 'admin' }, { transaction });
+        }
+      });
+    } catch (error) {
+      if (error.status) throw error;
+      if (error.name === 'SequelizeUniqueConstraintError' || ['23505', 'ER_DUP_ENTRY'].includes(error.original?.code)) {
+        throw Object.assign(new Error('Email already exists'), { status: 409 });
+      }
       throw error;
     }
-
-    const updates = { ...payload };
-    delete updates.role;
-    delete updates.roles;
-    delete updates.password;
-    if (payload.name && !payload.firstName && !payload.lastName) {
-      const [firstName, ...rest] = String(payload.name).trim().split(/\s+/).filter(Boolean);
-      updates.firstName = firstName || null;
-      updates.lastName = rest.join(' ') || null;
-    }
-
-    if (updates.email && updates.email !== user.email) {
-      const existing = await User.findOne({ where: { email: updates.email } });
-      if (existing && String(existing.id) !== String(user.id)) {
-        const error = new Error('Email already registered');
-        error.status = 409;
-        throw error;
-      }
-    }
-
-    await user.update(updates);
-    if (payload.role) {
-      await this.assignRoles(id, [payload.role]);
-    } else if (payload.roles) {
-      await this.assignRoles(id, payload.roles);
-    }
-    return this.getUserById(id);
+    return this.getUserById(userId);
   }
 
   async deleteUser(id) {
@@ -310,31 +372,51 @@ class UserService {
   }
 
   async assignRoles(userId, roles = []) {
-    const user = await User.findByPk(userId);
-    if (!user) {
-      const error = new Error('User not found');
-      error.status = 404;
-      throw error;
+    const normalizedUserId = Number(userId);
+    if (!Number.isInteger(normalizedUserId) || normalizedUserId <= 0) {
+      throw Object.assign(new Error('Invalid user'), { status: 422 });
+    }
+    if (!Array.isArray(roles) || roles.length === 0) {
+      throw Object.assign(new Error('At least one valid role is required'), { status: 422 });
     }
 
-    const normalized = roles.map((role) => String(role).trim().toLowerCase()).filter(Boolean);
-    const allRoles = await Role.findAll();
-    const selectedRoles = allRoles.filter((role) => normalized.includes(String(role.id)) || normalized.includes(String(role.name).toLowerCase()));
-    await user.setRoles(selectedRoles);
-    return this.getUserById(userId);
+    await sequelize.transaction(async (transaction) => {
+      const user = await User.findByPk(normalizedUserId, { transaction });
+      if (!user) throw Object.assign(new Error('User not found'), { status: 404 });
+
+      const selectedRoles = [];
+      for (const roleReference of [...new Set(roles.map((role) => String(role).trim()))]) {
+        selectedRoles.push(await this.resolveRole(roleReference, transaction));
+      }
+      const roleIds = [...new Set(selectedRoles.map((role) => Number(role.id)))];
+
+      await UserRole.destroy({ where: { userId: normalizedUserId }, transaction });
+      await UserRole.bulkCreate(
+        roleIds.map((roleId) => ({ userId: normalizedUserId, roleId })),
+        { transaction }
+      );
+      await user.update({
+        isSystemAdmin: selectedRoles.some((role) => String(role.name).toLowerCase() === 'admin')
+      }, { transaction });
+    });
+    return this.getUserById(normalizedUserId);
   }
 
-  async getRoles() {
+  async getRoles({ includeInactive = false } = {}) {
     return Role.findAll({
+      where: includeInactive ? {} : { isActive: true },
       include: [{ model: Permission, as: 'permissions' }],
       order: [['name', 'ASC']]
     });
   }
 
   async createRole(payload) {
+    const chatVisibilityScope = ['all', 'assigned_only', 'role_only', 'role_and_assigned'].includes(payload.chatVisibilityScope)
+      ? payload.chatVisibilityScope
+      : 'assigned_only';
     const [role] = await Role.findOrCreate({
       where: { name: String(payload.name).trim().toLowerCase() },
-      defaults: { description: payload.description || null }
+      defaults: { description: payload.description || null, chatVisibilityScope }
     });
     if (payload.description !== undefined) await role.update({ description: payload.description });
     return role.reload({ include: [{ model: Permission, as: 'permissions' }] });
@@ -347,11 +429,42 @@ class UserService {
       error.status = 404;
       throw error;
     }
+    if (payload.chatVisibilityScope !== undefined && !['all', 'assigned_only', 'role_only', 'role_and_assigned'].includes(payload.chatVisibilityScope)) {
+      throw Object.assign(new Error('Invalid chat visibility scope'), { status: 422 });
+    }
+    if (
+      String(role.name).trim().toLowerCase() === 'admin'
+      && payload.isActive === false
+    ) {
+      throw Object.assign(new Error('The ADMIN department cannot be deactivated because it protects administrator access'), { status: 409 });
+    }
     await role.update({
       name: payload.name ? String(payload.name).trim().toLowerCase() : role.name,
-      description: payload.description !== undefined ? payload.description : role.description
+      description: payload.description !== undefined ? payload.description : role.description,
+      chatVisibilityScope: payload.chatVisibilityScope ?? role.chatVisibilityScope,
+      receiveDepartmentAssignmentNotifications: payload.receiveDepartmentAssignmentNotifications
+        ?? role.receiveDepartmentAssignmentNotifications,
+      isActive: payload.isActive ?? role.isActive
     });
     return role.reload({ include: [{ model: Permission, as: 'permissions' }] });
+  }
+
+  async deactivateRole(id) {
+    const role = await Role.findByPk(id);
+    if (!role) throw Object.assign(new Error('Department not found'), { status: 404 });
+    if (String(role.name).trim().toLowerCase() === 'admin') {
+      throw Object.assign(new Error('The ADMIN department cannot be deactivated because it protects administrator access'), { status: 409 });
+    }
+
+    const userCount = await role.countUsers();
+    await role.update({ isActive: false });
+    return {
+      ...role.toJSON(),
+      userCount,
+      warning: userCount > 0
+        ? `${userCount} user(s) still belong to this department. It was deactivated and retained for history.`
+        : 'Department deactivated and retained for history.'
+    };
   }
 
   async getPermissions() {
@@ -359,16 +472,51 @@ class UserService {
   }
 
   async setRolePermissions(roleId, permissionIds = []) {
-    const role = await Role.findByPk(roleId);
+    const normalizedRoleId = Number(roleId);
+    if (!Number.isInteger(normalizedRoleId) || normalizedRoleId <= 0) {
+      throw Object.assign(new Error('Invalid role'), { status: 422 });
+    }
+    if (!Array.isArray(permissionIds)) {
+      throw Object.assign(new Error('Invalid permission list'), { status: 422 });
+    }
+
+    const providedPermissionIds = permissionIds.filter((permissionId) => permissionId !== null && permissionId !== undefined);
+    const numericPermissionIds = providedPermissionIds.map((permissionId) => Number(permissionId));
+    if (numericPermissionIds.some((permissionId) => !Number.isInteger(permissionId) || permissionId <= 0)) {
+      throw Object.assign(new Error('Invalid permission'), { status: 422 });
+    }
+    const cleanPermissionIds = [...new Set(numericPermissionIds)];
+
+    const role = await Role.findByPk(normalizedRoleId);
     if (!role) {
-      const error = new Error('Role not found');
-      error.status = 404;
+      const error = new Error('Invalid role');
+      error.status = 422;
       throw error;
     }
-    const requested = permissionIds.map((permission) => String(permission));
-    const allPermissions = await Permission.findAll();
-    const permissions = allPermissions.filter((permission) => requested.includes(String(permission.id)) || requested.includes(permission.code));
-    await role.setPermissions(permissions);
+
+    if (cleanPermissionIds.length > 0) {
+      const permissionCount = await Permission.count({ where: { id: cleanPermissionIds } });
+      if (permissionCount !== cleanPermissionIds.length) {
+        throw Object.assign(new Error('Invalid permission'), { status: 422 });
+      }
+    }
+
+    await sequelize.transaction(async (transaction) => {
+      await RolePermission.destroy({
+        where: { roleId: normalizedRoleId },
+        transaction
+      });
+      if (cleanPermissionIds.length > 0) {
+        await RolePermission.bulkCreate(
+          cleanPermissionIds.map((permissionId) => ({
+            roleId: normalizedRoleId,
+            permissionId: Number(permissionId)
+          })),
+          { transaction }
+        );
+      }
+    });
+
     return role.reload({ include: [{ model: Permission, as: 'permissions' }] });
   }
 
@@ -398,7 +546,6 @@ class UserService {
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
-      department: user.department,
       status: user.status,
       isSystemAdmin: user.isSystemAdmin,
       roles: roles.map((role) => role.name),

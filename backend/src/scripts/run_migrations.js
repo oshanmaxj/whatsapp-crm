@@ -1,5 +1,19 @@
+require('dotenv').config();
+
 const sequelize = require('../config/database');
-const { DataTypes } = require('sequelize');
+const Sequelize = require('sequelize');
+const { DataTypes } = Sequelize;
+const birthdayWishesMigration = require('../../migrations/002_create_birthday_wishes');
+const messageStatusMigration = require('../../migrations/003_add_message_status_tracking');
+const messageReplyContextMigration = require('../../migrations/004_add_message_reply_context');
+const roleChatVisibilityMigration = require('../../migrations/005_add_role_chat_visibility_scope');
+const messageSenderTrackingMigration = require('../../migrations/006_add_message_sender_tracking');
+const conversationRoleAssignmentMigration = require('../../migrations/007_add_conversation_role_assignment');
+const departmentNotificationSettingsMigration = require('../../migrations/008_add_department_and_assignment_notification_settings');
+const broadcastQueueTrackingMigration = require('../../migrations/009_add_broadcast_queue_tracking');
+const messageContextFieldsMigration = require('../../migrations/010_add_message_context_fields');
+const interactiveMessageFieldsMigration = require('../../migrations/011_add_interactive_message_fields');
+const flowBuilderUpgradeMigration = require('../../migrations/012_upgrade_flow_builder');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -52,6 +66,41 @@ async function run() {
     console.log('Connected. Running migrations...');
 
     const queryInterface = sequelize.getQueryInterface();
+
+    const birthdayWishesCreated = await birthdayWishesMigration.up(queryInterface, Sequelize);
+    console.log(birthdayWishesCreated
+      ? 'Created: birthday_wishes'
+      : 'Skipping: birthday_wishes already exists');
+
+    await messageStatusMigration.up(queryInterface, Sequelize);
+    console.log('Applied: message status tracking');
+
+    await messageReplyContextMigration.up(queryInterface, Sequelize);
+    console.log('Applied: message reply context');
+
+    await roleChatVisibilityMigration.up(queryInterface, Sequelize);
+    console.log('Applied: role chat visibility scope');
+
+    await messageSenderTrackingMigration.up(queryInterface, Sequelize);
+    console.log('Applied: message sender tracking');
+
+    await conversationRoleAssignmentMigration.up(queryInterface, Sequelize);
+    console.log('Applied: conversation role/team assignment');
+
+    await departmentNotificationSettingsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: department and assignment notification settings');
+
+    await broadcastQueueTrackingMigration.up(queryInterface, Sequelize);
+    console.log('Applied: broadcast queue tracking');
+
+    await messageContextFieldsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: broadcast and internal message context');
+
+    await interactiveMessageFieldsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: interactive WhatsApp message fields');
+
+    await flowBuilderUpgradeMigration.up(queryInterface, Sequelize);
+    console.log('Applied: flow builder runtime upgrade');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

@@ -5,6 +5,7 @@ module.exports = (sequelize, DataTypes) => {
     nodeKey: { type: DataTypes.STRING(120), allowNull: false },
     nodeType: { type: DataTypes.STRING(80), allowNull: false },
     status: { type: DataTypes.STRING(40), allowNull: false },
+    eventType: { type: DataTypes.STRING(60), allowNull: true },
     inputJson: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
     outputJson: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
     errorMessage: { type: DataTypes.TEXT, allowNull: true }

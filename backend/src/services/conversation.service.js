@@ -10,7 +10,7 @@ class ConversationService {
       contactId,
       leadId,
       whatsappThreadId,
-      assignedTo,
+      assignedUserId: assignedTo,
       lastMessageAt
     });
   }
@@ -26,12 +26,19 @@ class ConversationService {
   }
 
   async upsertConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt }) {
-    const conversation = await this.findByThreadId(whatsappThreadId);
+    let conversation = await this.findByThreadId(whatsappThreadId);
+    if (!conversation && contactId) {
+      conversation = await Conversation.findOne({
+        where: { contactId },
+        order: [['last_message_at', 'DESC'], ['updated_at', 'DESC']]
+      });
+    }
     if (conversation) {
       return conversation.update({
         contactId,
-        leadId,
-        assignedTo,
+        leadId: leadId || conversation.leadId,
+        whatsappThreadId,
+        assignedUserId: assignedTo ?? conversation.assignedUserId,
         lastMessageAt
       });
     }

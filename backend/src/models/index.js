@@ -126,27 +126,27 @@ const models = {
 models.User.belongsToMany(models.Role, {
   through: models.UserRole,
   as: 'roles',
-  foreignKey: 'user_id',
-  otherKey: 'role_id'
+  foreignKey: 'userId',
+  otherKey: 'roleId'
 });
 models.Role.belongsToMany(models.User, {
   through: models.UserRole,
   as: 'users',
-  foreignKey: 'role_id',
-  otherKey: 'user_id'
+  foreignKey: 'roleId',
+  otherKey: 'userId'
 });
 
 models.Role.belongsToMany(models.Permission, {
   through: models.RolePermission,
   as: 'permissions',
-  foreignKey: 'role_id',
-  otherKey: 'permission_id'
+  foreignKey: 'roleId',
+  otherKey: 'permissionId'
 });
 models.Permission.belongsToMany(models.Role, {
   through: models.RolePermission,
   as: 'roles',
-  foreignKey: 'permission_id',
-  otherKey: 'role_id'
+  foreignKey: 'permissionId',
+  otherKey: 'roleId'
 });
 
 models.Contact.hasMany(models.Lead, { foreignKey: 'contact_id', as: 'leads' });
@@ -162,7 +162,12 @@ models.Lead.hasMany(models.Conversation, { foreignKey: 'lead_id', as: 'conversat
 
 models.Conversation.hasMany(models.Message, { foreignKey: 'conversation_id', as: 'messages' });
 models.Message.belongsTo(models.Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
-models.User.hasMany(models.Conversation, { foreignKey: 'assigned_to', as: 'assignedConversations' });
+models.Message.belongsTo(models.Message, { foreignKey: 'reply_to_message_id', as: 'replyToMessage' });
+models.Message.hasMany(models.Message, { foreignKey: 'reply_to_message_id', as: 'messageReplies' });
+models.Message.belongsTo(models.User, { foreignKey: 'sentByUserId', as: 'sentBy' });
+models.User.hasMany(models.Message, { foreignKey: 'sentByUserId', as: 'sentMessages' });
+models.User.hasMany(models.Conversation, { foreignKey: 'assigned_user_id', as: 'assignedConversations' });
+models.Role.hasMany(models.Conversation, { foreignKey: 'assigned_role_id', as: 'assignedConversations' });
 
 models.Conversation.belongsToMany(models.Label, {
   through: models.ConversationLabel,

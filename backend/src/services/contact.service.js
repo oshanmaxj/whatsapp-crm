@@ -108,6 +108,19 @@ class ContactService {
     return Contact.findOne({ where: { phone } });
   }
 
+  async findByWhatsappIdentity(phone, whatsappId) {
+    const identities = [phone, whatsappId].filter(Boolean);
+    if (!identities.length) return null;
+    return Contact.findOne({
+      where: {
+        [Op.or]: [
+          { phone: { [Op.in]: identities } },
+          { whatsappId: { [Op.in]: identities } }
+        ]
+      }
+    });
+  }
+
   buildContactWhere({ search, status, tag } = {}) {
     const where = {};
     const and = [];
@@ -220,7 +233,7 @@ class ContactService {
   }
 
   async findOrCreateFromWhatsapp({ phone, whatsappId, firstName, lastName }) {
-    let contact = await this.findByPhone(phone);
+    let contact = await this.findByWhatsappIdentity(phone, whatsappId);
     if (!contact) {
       contact = await this.createFromWhatsapp({ phone, whatsappId, firstName, lastName });
       return contact;

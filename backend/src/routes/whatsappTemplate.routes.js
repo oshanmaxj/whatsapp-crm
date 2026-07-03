@@ -6,6 +6,7 @@ const router = express.Router();
 router.use(authMiddleware.authenticate);
 
 router.get('/', whatsappTemplateController.list.bind(whatsappTemplateController));
+router.post('/sample-media', whatsappTemplateController.uploadSample.bind(whatsappTemplateController));
 router.get('/:id', whatsappTemplateController.get.bind(whatsappTemplateController));
 router.post('/', whatsappTemplateController.create.bind(whatsappTemplateController));
 router.patch('/:id', whatsappTemplateController.update.bind(whatsappTemplateController));

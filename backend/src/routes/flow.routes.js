@@ -14,8 +14,17 @@ router.patch('/:id', requirePermission('flow-builder.edit'), flowController.upda
 router.delete('/:id', requirePermission('flow-builder.delete'), flowController.remove.bind(flowController));
 router.post('/:id/save-builder', requirePermission('flow-builder.edit'), flowController.saveBuilder.bind(flowController));
 router.post('/:id/publish', requirePermission('flow-builder.publish'), flowController.publish.bind(flowController));
+router.post('/:id/unpublish', requirePermission('flow-builder.publish'), flowController.unpublish.bind(flowController));
 router.post('/:id/test', requirePermission('flow-builder.test'), flowController.test.bind(flowController));
+router.post('/:id/duplicate', requirePermission('flow-builder.create'), flowController.duplicate.bind(flowController));
 router.get('/:id/analytics', requirePermission('flow-builder.view'), flowController.analytics.bind(flowController));
+router.get('/:id/stats', requirePermission('flow-builder.view'), flowController.stats.bind(flowController));
 router.get('/:id/runs', requirePermission('flow-builder.view'), flowController.runs.bind(flowController));
+router.get('/:id/logs', requirePermission('flow-builder.view'), flowController.logs.bind(flowController));
+router.post('/:id/nodes', requirePermission('flow-builder.edit'), flowController.createNode.bind(flowController));
+router.patch('/:id/nodes/:nodeKey', requirePermission('flow-builder.edit'), flowController.updateNode.bind(flowController));
+router.delete('/:id/nodes/:nodeKey', requirePermission('flow-builder.edit'), flowController.deleteNode.bind(flowController));
+router.post('/:id/connections', requirePermission('flow-builder.edit'), flowController.createConnection.bind(flowController));
+router.delete('/:id/connections/:connectionId', requirePermission('flow-builder.edit'), flowController.deleteConnection.bind(flowController));
 
 module.exports = router;

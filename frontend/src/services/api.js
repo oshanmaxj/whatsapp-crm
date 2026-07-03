@@ -1,24 +1,48 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:4000/api',
-  headers: {
-    'Content-Type': 'application/json'
-  }
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:4000/api'
 });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken');
+  config.headers = config.headers || {};
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  const hasAuthorization = Boolean(
+    config.headers.Authorization
+    || config.headers.authorization
+    || config.headers.get?.('Authorization')
+  );
+  console.info('API authentication', {
+    tokenExists: Boolean(token),
+    requestUrl: `${config.baseURL || ''}${config.url || ''}`,
+    hasAuthorization
+  });
+
   return config;
 });
 
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const message = error.response?.data?.message || error.message || 'Request failed';
+    const requestUrl = `${error.config?.baseURL || ''}${error.config?.url || ''}`;
+
+    console.error('API request failed', {
+      requestUrl,
+      status: status || 'NETWORK_ERROR',
+      message
+    });
+
+    const authErrorCodes = ['AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_EXPIRED'];
+    const isAuthenticationFailure = status === 401
+      && authErrorCodes.includes(error.response?.data?.code);
+
+    if (isAuthenticationFailure) {
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
 

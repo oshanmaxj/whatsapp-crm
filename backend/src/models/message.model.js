@@ -18,6 +18,40 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: true
     },
+    sentByUserId: {
+      type: DataTypes.BIGINT.UNSIGNED,
+      allowNull: true
+    },
+    channel: {
+      type: DataTypes.STRING(30),
+      allowNull: false,
+      defaultValue: 'whatsapp'
+    },
+    messageType: {
+      type: DataTypes.STRING(50),
+      allowNull: true
+    },
+    campaignId: {
+      type: DataTypes.BIGINT.UNSIGNED,
+      allowNull: true
+    },
+    campaignRecipientId: {
+      type: DataTypes.BIGINT.UNSIGNED,
+      allowNull: true
+    },
+    isInternalNotification: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
+    },
+    sentToUserId: {
+      type: DataTypes.BIGINT.UNSIGNED,
+      allowNull: true
+    },
+    sentToPhone: {
+      type: DataTypes.STRING(50),
+      allowNull: true
+    },
     direction: {
       type: DataTypes.ENUM('inbound', 'outbound'),
       allowNull: false
@@ -31,12 +65,28 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    buttonPayload: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    interactiveType: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
     mediaId: {
       type: DataTypes.STRING(255),
       allowNull: true
     },
     mediaUrl: {
       type: DataTypes.STRING(512),
+      allowNull: true
+    },
+    replyToMessageId: {
+      type: DataTypes.BIGINT.UNSIGNED,
+      allowNull: true
+    },
+    replyToWhatsappMessageId: {
+      type: DataTypes.STRING(255),
       allowNull: true
     },
     templateName: {
@@ -52,9 +102,16 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     status: {
-      type: DataTypes.ENUM('queued', 'sent', 'delivered', 'read', 'failed', 'received'),
+      type: DataTypes.STRING(50),
       allowNull: false,
-      defaultValue: 'queued'
+      defaultValue: 'pending',
+      validate: {
+        isIn: [['pending', 'sent', 'delivered', 'read', 'failed']]
+      }
+    },
+    statusUpdatedAt: {
+      type: DataTypes.DATE,
+      allowNull: true
     },
     isRead: {
       type: DataTypes.BOOLEAN,
@@ -82,7 +139,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     errorMessage: {
-      type: DataTypes.STRING(255),
+      type: DataTypes.TEXT,
       allowNull: true
     },
     deletedAt: {
@@ -98,8 +155,14 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['whatsapp_message_id'] },
       { fields: ['contact_id'] },
       { fields: ['conversation_id'] },
+      { fields: ['sent_by_user_id'] },
+      { fields: ['campaign_id'] },
+      { fields: ['campaign_recipient_id'] },
+      { fields: ['message_type'] },
       { fields: ['direction'] },
       { fields: ['status'] },
+      { fields: ['reply_to_message_id'] },
+      { fields: ['reply_to_whatsapp_message_id'] },
       { fields: ['conversation_id', 'created_at'] },
       { fields: ['conversation_id', 'is_read'] },
       { fields: ['created_at'] }

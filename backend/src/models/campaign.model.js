@@ -15,6 +15,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     filters: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
     templateId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+    whatsappTemplateId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     templateName: { type: DataTypes.STRING(150), allowNull: true },
     messageBody: { type: DataTypes.TEXT, allowNull: false },
     variables: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
@@ -32,6 +33,7 @@ module.exports = (sequelize, DataTypes) => {
 
   Campaign.associate = (models) => {
     Campaign.belongsTo(models.MessageTemplate, { foreignKey: 'template_id', as: 'template' });
+    Campaign.belongsTo(models.WhatsAppTemplate, { foreignKey: 'whatsapp_template_id', as: 'whatsappTemplate' });
     Campaign.belongsTo(models.Media, { foreignKey: 'media_id', as: 'media' });
     Campaign.belongsTo(models.User, { foreignKey: 'created_by', as: 'creator' });
   };

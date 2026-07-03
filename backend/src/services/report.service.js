@@ -9,6 +9,7 @@ const {
   Contact,
   Conversation,
   Course,
+  Role,
   FeeInstallment,
   Followup,
   Lead,
@@ -121,7 +122,7 @@ class ReportService {
     const [courses, batches, agents, leadStatuses, leadSources] = await Promise.all([
       safeList('courses', () => Course.findAll({ attributes: ['id', 'code', 'name', 'category'], order: [['name', 'ASC']] })),
       safeList('batches', () => Batch.findAll({ attributes: ['id', 'name', 'courseId', 'schedule'], include: [{ model: Course, as: 'course', attributes: ['id', 'code', 'name'] }], order: [['name', 'ASC']] })),
-      safeList('agents', () => User.findAll({ where: { status: 'active' }, attributes: ['id', 'firstName', 'lastName', 'email', 'department'], order: [['firstName', 'ASC']] })),
+      safeList('agents', () => User.findAll({ where: { status: 'active' }, attributes: ['id', 'firstName', 'lastName', 'email'], include: [{ model: Role, as: 'roles', attributes: ['id', 'name'], through: { attributes: [] }, required: false }], order: [['firstName', 'ASC']] })),
       safeList('leadStatuses', () => LeadStatus.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] })),
       safeList('leadSources', () => LeadSource.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }))
     ]);
@@ -136,7 +137,7 @@ class ReportService {
         courseCode: batch.course?.code || '',
         schedule: batch.schedule || ''
       })),
-      agents: agents.map((agent) => ({ id: agent.id, name: userName(agent), email: agent.email, department: agent.department })),
+      agents: agents.map((agent) => ({ id: agent.id, name: userName(agent), email: agent.email, department: agent.roles?.[0]?.name || '' })),
       leadStatuses: Array.from(new Set([...leadStatuses.map((item) => item.name), ...LEAD_STATUSES])),
       leadSources: Array.from(new Set([...leadSources.map((item) => item.name), ...LEAD_SOURCES])),
       studentStatuses: STUDENT_STATUSES,
@@ -231,7 +232,7 @@ class ReportService {
       { model: Contact, as: 'contact' },
       { model: LeadStatus, as: 'status', where: filters.leadStatus ? { name: filters.leadStatus } : undefined, required: !!filters.leadStatus },
       { model: LeadSource, as: 'source', where: filters.leadSource ? { name: filters.leadSource } : undefined, required: !!filters.leadSource },
-      { model: User, as: 'owner', attributes: ['id', 'firstName', 'lastName', 'email', 'department'] }
+      { model: User, as: 'owner', attributes: ['id', 'firstName', 'lastName', 'email'], include: [{ model: Role, as: 'roles', attributes: ['id', 'name'], through: { attributes: [] }, required: false }] }
     ];
   }
 
@@ -553,11 +554,12 @@ class ReportService {
   async agentReport(filters) {
     const agents = await User.findAll({
       where: filters.agentId ? { id: filters.agentId } : { status: 'active' },
-      attributes: ['id', 'firstName', 'lastName', 'email', 'department']
+      attributes: ['id', 'firstName', 'lastName', 'email'],
+      include: [{ model: Role, as: 'roles', attributes: ['id', 'name'], through: { attributes: [] }, required: false }]
     });
     const [leads, conversations, followups] = await Promise.all([
       Lead.findAll({ where: this.leadWhere(filters), include: [{ model: LeadStatus, as: 'status' }] }),
-      Conversation.findAll({ where: filters.agentId ? { assignedTo: filters.agentId } : {} }),
+      Conversation.findAll({ where: filters.agentId ? { assignedUserId: filters.agentId } : {} }),
       Followup.findAll({ where: filters.agentId ? { assignedTo: filters.agentId } : {} })
     ]);
     const rows = agents.map((agent) => {
@@ -565,10 +567,10 @@ class ReportService {
       const converted = agentLeads.filter((lead) => lead.status?.name === 'Converted').length;
       return {
         agent: userName(agent),
-        department: agent.department || '',
+        department: agent.roles?.[0]?.name || '',
         assignedLeads: agentLeads.length,
         convertedLeads: converted,
-        activeChats: conversations.filter((row) => String(row.assignedTo) === String(agent.id) && row.status === 'open').length,
+        activeChats: conversations.filter((row) => String(row.assignedUserId) === String(agent.id) && row.status === 'open').length,
         followUps: followups.filter((row) => String(row.assignedTo) === String(agent.id) && row.status === 'pending').length,
         conversionRate: pct(converted, agentLeads.length)
       };

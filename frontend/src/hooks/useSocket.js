@@ -11,7 +11,6 @@ export function useSocket(token) {
     if (!token) return null;
     return io(SOCKET_URL, {
       auth: { token },
-      transports: ['websocket'],
       autoConnect: false
     });
   }, [token]);
@@ -22,8 +21,18 @@ export function useSocket(token) {
     socketClient.connect();
     setSocket(socketClient);
 
-    socketClient.on('connect', () => setConnected(true));
-    socketClient.on('disconnect', () => setConnected(false));
+    socketClient.on('connect', () => {
+      setConnected(true);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('WhatsApp CRM socket connected', socketClient.id);
+      }
+    });
+    socketClient.on('disconnect', (reason) => {
+      setConnected(false);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('WhatsApp CRM socket disconnected', reason);
+      }
+    });
 
     return () => {
       socketClient.disconnect();

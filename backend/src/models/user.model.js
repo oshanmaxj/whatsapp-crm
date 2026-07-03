@@ -31,10 +31,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(50),
       allowNull: true
     },
-    department: {
-      type: DataTypes.ENUM('Management', 'Financial', 'Customer Care', 'Technical', 'Lecturer', 'Marketing'),
-      allowNull: true
-    },
     status: {
       type: DataTypes.ENUM('active', 'inactive', 'suspended', 'pending'),
       allowNull: false,
@@ -44,6 +40,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false
+    },
+    receiveAssignmentNotifications: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true
     },
     lastLogin: {
       type: DataTypes.DATE,

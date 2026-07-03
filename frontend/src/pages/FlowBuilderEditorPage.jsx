@@ -1,308 +1,268 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ReactFlow, {
-  addEdge,
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlowProvider,
-  useEdgesState,
-  useNodesState
+  addEdge, Background, Controls, Handle, MiniMap, Position, ReactFlowProvider,
+  useEdgesState, useNodesState
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
-  Alert, Box, Button, Chip, Divider, Grid, IconButton, MenuItem, Paper, Stack, TextField, Typography
+  Alert, Box, Button, Chip, Divider, IconButton, MenuItem, Paper, Stack, TextField,
+  Tooltip, Typography
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import SearchIcon from '@mui/icons-material/Search';
+import ZoomInIcon from '@mui/icons-material/ZoomIn';
+import ZoomOutIcon from '@mui/icons-material/ZoomOut';
 import ZoomOutMapIcon from '@mui/icons-material/ZoomOutMap';
 import {
-  getFlow,
-  getGoogleSheetConnections,
-  publishFlow,
-  saveFlowBuilder,
-  sendGoogleSheetTestRow,
-  testFlow,
-  updateFlow
+  getFlow, publishFlow, saveFlowBuilder, testFlow, unpublishFlow
 } from '../services/flowBuilder.service';
 
-const blockGroups = [
-  { title: 'Message Blocks', blocks: [['text_message', 'Text Message'], ['image_message', 'Image Message'], ['video_message', 'Video Message'], ['audio_message', 'Audio Message'], ['file_document', 'File / Document'], ['location', 'Location']] },
-  { title: 'AI Blocks', blocks: [['ai_reply', 'AI Reply'], ['ai_assistant', 'AI Assistant']] },
-  { title: 'Data Collection', blocks: [['user_input', 'User Input'], ['whatsapp_flow', 'WhatsApp Flow'], ['appointment_booking', 'Appointment Booking']] },
-  { title: 'Interactive', blocks: [['button_message', 'Button Message'], ['list_message', 'List Message']] },
-  { title: 'Actions', blocks: [['create_lead', 'Create Lead'], ['update_lead', 'Update Lead'], ['add_label', 'Add Label'], ['assign_agent', 'Assign Agent'], ['create_followup', 'Create Follow-up'], ['send_google_sheets', 'Send To Google Sheets']] },
-  { title: 'Logic', blocks: [['delay_wait', 'Delay / Wait'], ['condition', 'Condition / If Else'], ['jump_to_node', 'Jump To Node'], ['end_flow', 'End Flow']] }
+const GROUPS = [
+  { title: 'MESSAGES', blocks: [['text_message', 'Text', '💬'], ['image_message', 'Image', '🖼️'], ['audio_message', 'Audio', '🎧'], ['video_message', 'Video', '🎬'], ['file_document', 'File', '📄'], ['location', 'Location', '📍'], ['ai_reply', 'AI Reply', '✨']] },
+  { title: 'DATA COLLECTION', blocks: [['user_input', 'User Input Flow', '⌨️'], ['whatsapp_flow', 'WhatsApp Flows', '🧩'], ['appointment_booking', 'Appointment', '📅']] },
+  { title: 'INTERACTIVE', blocks: [['interactive_message', 'Interactive Message', '🔀'], ['button_message', 'Button', '🔘'], ['list_message', 'List Message', '📋']] },
+  { title: 'ACTIONS', blocks: [['assign', 'Assign to Department/User', '👤'], ['add_label', 'Add Tag', '🏷️'], ['remove_label', 'Remove Tag', '➖'], ['update_lead', 'Update Lead', '📝'], ['delay_wait', 'Delay', '⏱️'], ['end_flow', 'End Flow', '🏁']] }
 ];
 
-const defaultConfig = {
-  text_message: { message: 'Hello {{contact.name}}, welcome to First Of Education International.' },
+const META = Object.fromEntries(GROUPS.flatMap((group) => group.blocks).map(([type, label, icon]) => [type, { label, icon }]));
+META.start = { label: 'Flow Start', icon: '⚡' };
+
+const DEFAULTS = {
+  start: { source: 'inbound_message', keywords: ['hi'], matchType: 'contains', departmentId: '', assignedUserId: '', googleSheetConnectionId: '' },
+  text_message: { message: 'Hi {{LEAD_USER_FIRST_NAME}}, how can we help you?' },
   image_message: { mediaUrl: '', caption: '' },
-  video_message: { mediaUrl: '', caption: '' },
   audio_message: { mediaUrl: '' },
+  video_message: { mediaUrl: '', caption: '' },
   file_document: { fileUrl: '', fileName: '', caption: '' },
   location: { latitude: '', longitude: '', name: '', address: '' },
-  ai_reply: { prompt: 'Reply helpfully using the conversation context.' },
-  ai_assistant: { assistantInstructions: 'Guide the student to the right course.' },
-  user_input: { question: 'What course are you interested in?', saveAs: 'courseInterested', nextOnReply: true },
-  whatsapp_flow: { flowId: '', screen: '' },
-  appointment_booking: { title: 'Book an appointment', durationMinutes: 30 },
-  button_message: { message: 'Please choose an option', buttons: 'Forex, IT, English' },
-  list_message: { message: 'Select a course', sections: 'Popular Courses' },
-  create_lead: { source: 'WhatsApp Ads', status: 'New', notes: 'Created by WhatsApp Flow Builder' },
-  update_lead: { status: 'Interested', courseInterested: '{{courseInterested}}' },
-  add_label: { label: 'Flow Lead' },
-  assign_agent: { assignedAgentId: '' },
-  create_followup: { note: 'Follow up from WhatsApp flow', dueInHours: 24 },
-  send_google_sheets: {
-    connectionId: '',
-    spreadsheetId: '',
-    sheetName: 'Leads',
-    columns: [
-      { column: 'A', label: 'Name', value: '{{contact.name}}' },
-      { column: 'B', label: 'Phone', value: '{{contact.phone}}' },
-      { column: 'C', label: 'Course', value: '{{lead.courseInterested}}' },
-      { column: 'D', label: 'Source', value: '{{lead.source}}' },
-      { column: 'E', label: 'Created At', value: '{{createdAt}}' }
-    ]
-  },
-  delay_wait: { delayMinutes: 5 },
-  condition: { field: 'courseInterested', operator: 'equals', value: 'Forex' },
-  jump_to_node: { targetNodeKey: '' },
-  end_flow: { message: 'End flow' }
+  ai_reply: { prompt: 'Reply helpfully using the conversation history.', contextSources: ['conversation_history'], fallbackMessage: 'A team member will help you shortly.' },
+  user_input: { question: 'What would you like help with?', saveAs: 'custom.answer', timeoutMinutes: 60 },
+  whatsapp_flow: { message: 'Continue in WhatsApp', flowId: '', flowToken: '', screen: '', data: {} },
+  appointment_booking: { message: 'Choose an appointment slot', slots: [] },
+  interactive_message: { message: 'Please choose an option', footer: '', buttons: [{ id: 'option_1', title: 'Option 1' }] },
+  button_message: { message: 'Tap below to continue', buttons: [{ id: 'join_group', title: 'Join Group' }] },
+  list_message: { message: 'Select an option', sectionTitle: 'Options', buttonText: 'Choose', rows: [{ id: 'option_1', title: 'Option 1' }] },
+  assign: { departmentId: '', assignedAgentId: '' },
+  add_label: { label: '' },
+  remove_label: { label: '' },
+  update_lead: { status: '', source: '', notes: '', courseInterested: '', batchInterested: '' },
+  delay_wait: { amount: 5, unit: 'minutes' },
+  end_flow: {}
 };
 
-function blockLabel(type) {
-  return blockGroups.flatMap((group) => group.blocks).find(([key]) => key === type)?.[1] || type;
-}
-
-function makeNode(type, position) {
-  const id = `${type}_${Date.now()}`;
-  return {
-    id,
-    type: 'default',
-    position,
-    data: { label: blockLabel(type), nodeType: type, config: defaultConfig[type] || {} },
-    style: { borderRadius: 8, border: '1px solid #25d366', padding: 8, minWidth: 170 }
-  };
-}
-
-function configFields(type, config, setConfig, connections, sendTestRow) {
-  const update = (field, value) => setConfig({ ...config, [field]: value });
-  const text = (field, label, props = {}) => <TextField key={field} label={label} value={config[field] || ''} onChange={(e) => update(field, e.target.value)} fullWidth size="small" {...props} />;
-
-  if (type === 'send_google_sheets') {
-    const columns = config.columns || [];
-    return (
-      <Stack spacing={1.5}>
-        <TextField select label="Google Sheets Connection" value={config.connectionId || ''} onChange={(e) => update('connectionId', e.target.value)} fullWidth size="small">
-          <MenuItem value="">Use env credentials / manual sheet</MenuItem>
-          {connections.map((connection) => <MenuItem key={connection.id} value={connection.id}>{connection.name}</MenuItem>)}
-        </TextField>
-        {text('spreadsheetId', 'Spreadsheet ID')}
-        {text('sheetName', 'Sheet Name')}
-        <Typography fontWeight={850}>Column Mapping</Typography>
-        {columns.map((column, index) => (
-          <Grid container spacing={1} key={`${column.column}-${index}`}>
-            <Grid item xs={3}><TextField label="Col" value={column.column} onChange={(e) => { const next = [...columns]; next[index] = { ...column, column: e.target.value }; update('columns', next); }} size="small" fullWidth /></Grid>
-            <Grid item xs={4}><TextField label="Label" value={column.label} onChange={(e) => { const next = [...columns]; next[index] = { ...column, label: e.target.value }; update('columns', next); }} size="small" fullWidth /></Grid>
-            <Grid item xs={5}><TextField label="Value" value={column.value} onChange={(e) => { const next = [...columns]; next[index] = { ...column, value: e.target.value }; update('columns', next); }} size="small" fullWidth /></Grid>
-          </Grid>
-        ))}
-        <Stack direction="row" spacing={1}>
-          <Button size="small" onClick={() => update('columns', [...columns, { column: '', label: '', value: '' }])}>Add Column</Button>
-          <Button size="small" variant="outlined" onClick={() => sendTestRow(config)}>Send Test Row</Button>
-        </Stack>
-      </Stack>
-    );
+function outputs(data) {
+  const config = data.config || {};
+  if (['interactive_message', 'button_message'].includes(data.nodeType)) {
+    return [
+      ...(Array.isArray(config.buttons) ? config.buttons : []).map((item) => ({ id: item.id || item.payload || item.title, label: item.title || item.label || item.id })),
+      { id: 'fallback', label: 'Fallback' }
+    ];
   }
-
-  if (['text_message', 'button_message', 'list_message'].includes(type)) return <Stack spacing={1.5}>{text('message', 'Message', { multiline: true, minRows: 4 })}{type === 'button_message' && text('buttons', 'Buttons')}{type === 'list_message' && text('sections', 'List Sections')}</Stack>;
-  if (['image_message', 'video_message'].includes(type)) return <Stack spacing={1.5}>{text('mediaUrl', 'Media URL')}{text('caption', 'Caption')}</Stack>;
-  if (type === 'audio_message') return <Stack spacing={1.5}>{text('mediaUrl', 'Audio URL')}</Stack>;
-  if (type === 'file_document') return <Stack spacing={1.5}>{text('fileUrl', 'File URL')}{text('fileName', 'File Name')}{text('caption', 'Caption')}</Stack>;
-  if (type === 'location') return <Stack spacing={1.5}>{text('latitude', 'Latitude')}{text('longitude', 'Longitude')}{text('name', 'Name')}{text('address', 'Address')}</Stack>;
-  if (type === 'user_input') return <Stack spacing={1.5}>{text('question', 'Question')}{text('saveAs', 'Save As')}</Stack>;
-  if (type === 'condition') return <Stack spacing={1.5}>{text('field', 'Field')}{text('operator', 'Operator')}{text('value', 'Value')}<Typography variant="caption" color="text.secondary">Use edge labels "true" and "false" for branches.</Typography></Stack>;
-  if (type === 'assign_agent') return <Stack spacing={1.5}>{text('assignedAgentId', 'Agent ID (blank for round-robin)')}</Stack>;
-  if (type === 'delay_wait') return <Stack spacing={1.5}>{text('delayMinutes', 'Delay Minutes')}</Stack>;
-  return <Stack spacing={1.5}>{Object.keys(config).map((key) => text(key, key))}</Stack>;
+  if (data.nodeType === 'list_message') {
+    return [
+      ...(Array.isArray(config.rows) ? config.rows : []).map((item) => ({ id: item.id || item.payload || item.title, label: item.title || item.label || item.id })),
+      { id: 'fallback', label: 'Fallback' }
+    ];
+  }
+  if (data.nodeType === 'user_input') return [{ id: 'reply', label: 'Reply' }, { id: 'timeout', label: 'Timeout' }];
+  if (data.nodeType === 'appointment_booking') return [...(config.slots || []).map((item) => ({ id: item.id || item.title, label: item.title || item.id })), { id: 'fallback', label: 'Fallback' }];
+  if (data.nodeType === 'whatsapp_flow') return [{ id: 'next', label: 'Submitted' }, { id: 'fallback', label: 'Fallback' }];
+  return data.nodeType === 'end_flow' ? [] : [{ id: 'next', label: 'Next' }];
 }
 
-function EditorInner() {
+function preview(data) {
+  const config = data.config || {};
+  if (data.nodeType === 'image_message' && config.mediaUrl) return <Box component="img" src={config.mediaUrl} alt="" sx={{ width: '100%', height: 82, objectFit: 'cover', borderRadius: 1 }} />;
+  if (data.nodeType === 'video_message' && config.mediaUrl) return <Box component="video" src={config.mediaUrl} muted sx={{ width: '100%', height: 82, objectFit: 'cover', borderRadius: 1 }} />;
+  if (data.nodeType === 'audio_message') return <Chip size="small" label={config.mediaUrl ? 'Audio attached' : 'No audio selected'} />;
+  if (data.nodeType === 'file_document') return <Chip size="small" label={config.fileName || 'No file selected'} />;
+  const text = config.message || config.question || config.prompt || config.caption || (data.nodeType === 'start' ? (config.keywords || []).join(', ') : '');
+  return <Typography sx={{ fontSize: 11, color: 'text.secondary', whiteSpace: 'pre-wrap', maxHeight: 48, overflow: 'hidden' }}>{text || 'Configure this block'}</Typography>;
+}
+
+const FlowCard = memo(({ data, selected }) => {
+  const stats = { sent: 0, delivered: 0, subscribers: 0, errors: 0, ...(data.stats || {}) };
+  const handles = outputs(data);
+  return (
+    <Paper elevation={selected ? 6 : 1} sx={{ width: 230, border: '2px solid', borderColor: selected ? '#128c7e' : '#dce5e1', borderRadius: 2, overflow: 'visible', bgcolor: '#fff' }}>
+      {data.nodeType !== 'start' && <Handle type="target" position={Position.Left} id="input" style={{ width: 10, height: 10, background: '#128c7e' }} />}
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.25, py: 1, bgcolor: data.nodeType === 'start' ? '#e9fff7' : '#f8fbfa', borderRadius: '7px 7px 0 0' }}>
+        <Typography fontSize={18}>{META[data.nodeType]?.icon || '🔧'}</Typography>
+        <Box minWidth={0}><Typography fontSize={12} fontWeight={900} noWrap>{data.label}</Typography><Typography fontSize={9} color="text.secondary">{META[data.nodeType]?.label || data.nodeType}</Typography></Box>
+      </Stack>
+      <Box sx={{ p: 1.25 }}>{preview(data)}</Box>
+      <Stack direction="row" justifyContent="space-around" sx={{ px: 0.5, py: 0.7, borderTop: '1px solid #edf1ef', bgcolor: '#fbfcfc' }}>
+        {[['Sent', stats.sent], ['Delivered', stats.delivered], ['Entered', stats.subscribers], ['Errors', stats.errors]].map(([label, value]) => <Box key={label} textAlign="center"><Typography fontSize={10} fontWeight={900}>{value}</Typography><Typography fontSize={8} color="text.secondary">{label}</Typography></Box>)}
+      </Stack>
+      {handles.map((handle, index) => (
+        <Tooltip key={handle.id} title={handle.label} placement="right">
+          <Handle type="source" position={Position.Right} id={String(handle.id)} style={{ top: `${((index + 1) / (handles.length + 1)) * 100}%`, width: 10, height: 10, background: '#25d366' }} />
+        </Tooltip>
+      ))}
+    </Paper>
+  );
+});
+
+const nodeTypes = { flowCard: FlowCard };
+const makeNode = (type, position) => ({
+  id: `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  type: 'flowCard',
+  position,
+  data: { label: META[type]?.label || type, nodeType: type, config: structuredClone(DEFAULTS[type] || {}), stats: {} }
+});
+
+function OptionEditor({ label, value = [], onChange }) {
+  const rows = Array.isArray(value) ? value : [];
+  return <Stack spacing={1}><Typography fontSize={12} fontWeight={800}>{label}</Typography>{rows.map((row, index) => <Stack key={index} direction="row" spacing={1}><TextField size="small" label="ID / payload" value={row.id || ''} onChange={(e) => { const next = [...rows]; next[index] = { ...row, id: e.target.value }; onChange(next); }} /><TextField size="small" label="Label" value={row.title || ''} onChange={(e) => { const next = [...rows]; next[index] = { ...row, title: e.target.value }; onChange(next); }} /><Button color="error" onClick={() => onChange(rows.filter((_, itemIndex) => itemIndex !== index))}>×</Button></Stack>)}<Button size="small" onClick={() => onChange([...rows, { id: `option_${rows.length + 1}`, title: `Option ${rows.length + 1}` }])}>Add option</Button></Stack>;
+}
+
+function ConfigPanel({ node, onChange, onDelete }) {
+  if (!node) return <Typography color="text.secondary">Select a node to configure it.</Typography>;
+  const config = node.data.config || {};
+  const set = (field, value) => onChange({ ...config, [field]: value });
+  const field = (name, label, props = {}) => <TextField key={name} size="small" label={label} value={config[name] ?? ''} onChange={(e) => set(name, e.target.value)} fullWidth {...props} />;
+  let controls;
+  if (node.data.nodeType === 'start') controls = <>{field('source', 'Start flow from', { select: true, children: ['inbound_message', 'template_button_reply', 'interactive_button_reply', 'list_reply', 'campaign_response', 'manual'].map((value) => <MenuItem key={value} value={value}>{value.replaceAll('_', ' ')}</MenuItem>) })}{field('keywords', 'Trigger keywords', { value: (config.keywords || []).join(', '), onChange: (e) => set('keywords', e.target.value.split(',').map((item) => item.trim()).filter(Boolean)) })}{field('matchType', 'Keyword matching', { select: true, children: [['exact', 'Exact match'], ['contains', 'Contains'], ['starts_with', 'Starts with']].map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>) })}{field('departmentId', 'Assign department ID')}{field('assignedUserId', 'Assign user ID')}{field('googleSheetConnectionId', 'Google Sheet connection ID')}</>;
+  else if (['text_message', 'interactive_message', 'button_message', 'list_message'].includes(node.data.nodeType)) controls = <>{field('message', 'Message body', { multiline: true, minRows: 4, helperText: 'Variables: {{LEAD_USER_FIRST_NAME}}, {{contact.name}}, {{lead.course}}, {{agent.name}}, {{department.name}}' })}{node.data.nodeType !== 'text_message' && field('footer', 'Footer')}{['interactive_message', 'button_message'].includes(node.data.nodeType) && <OptionEditor label="Buttons" value={config.buttons} onChange={(value) => set('buttons', value)} />}{node.data.nodeType === 'list_message' && <><OptionEditor label="List rows" value={config.rows} onChange={(value) => set('rows', value)} />{field('sectionTitle', 'Section title')}{field('buttonText', 'Menu button text')}</>}</>;
+  else if (['image_message', 'video_message'].includes(node.data.nodeType)) controls = <>{field('mediaUrl', 'Resource URL')}{field('caption', 'Caption', { multiline: true })}</>;
+  else if (node.data.nodeType === 'audio_message') controls = field('mediaUrl', 'Audio resource URL');
+  else if (node.data.nodeType === 'file_document') controls = <>{field('fileUrl', 'File URL')}{field('fileName', 'Filename')}{field('caption', 'Caption')}</>;
+  else if (node.data.nodeType === 'location') controls = <>{field('latitude', 'Latitude')}{field('longitude', 'Longitude')}{field('name', 'Location name')}{field('address', 'Address')}</>;
+  else if (node.data.nodeType === 'ai_reply') controls = <>{field('prompt', 'Prompt / instruction', { multiline: true, minRows: 4 })}{field('fallbackMessage', 'Fallback message', { multiline: true })}</>;
+  else if (node.data.nodeType === 'user_input') controls = <>{field('question', 'Question', { multiline: true })}{field('saveAs', 'Save reply to')}{field('timeoutMinutes', 'Timeout minutes', { type: 'number' })}</>;
+  else if (node.data.nodeType === 'whatsapp_flow') controls = <>{field('message', 'Message')}{field('flowId', 'Meta Flow ID')}{field('flowToken', 'Flow token')}{field('screen', 'Initial screen')}</>;
+  else if (node.data.nodeType === 'appointment_booking') controls = <>{field('message', 'Prompt')}{<OptionEditor label="Available slots" value={config.slots} onChange={(value) => set('slots', value)} />}{field('departmentId', 'Department ID')}{field('assignedAgentId', 'User ID')}</>;
+  else if (node.data.nodeType === 'assign') controls = <>{field('departmentId', 'Department ID')}{field('assignedAgentId', 'User ID')}</>;
+  else if (['add_label', 'remove_label'].includes(node.data.nodeType)) controls = field('label', 'Contact tag');
+  else if (node.data.nodeType === 'update_lead') controls = <>{field('status', 'Lead status')}{field('source', 'Lead source')}{field('notes', 'Note', { multiline: true })}{field('courseInterested', 'Course')}{field('batchInterested', 'Batch')}</>;
+  else if (node.data.nodeType === 'delay_wait') controls = <>{field('amount', 'Wait amount', { type: 'number' })}{field('unit', 'Unit', { select: true, children: ['minutes', 'hours', 'days'].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>) })}</>;
+  else controls = <Typography variant="body2" color="text.secondary">No configuration required.</Typography>;
+  return <Stack spacing={1.4}><TextField size="small" label="Node title" value={node.data.label} onChange={(e) => node.data.setLabel(e.target.value)} fullWidth /><Chip size="small" label={META[node.data.nodeType]?.label || node.data.nodeType} sx={{ alignSelf: 'flex-start' }} />{controls}<Divider /><Button color="error" onClick={onDelete}>Delete node</Button></Stack>;
+}
+
+function Editor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const wrapperRef = useRef(null);
+  const wrapper = useRef(null);
   const [flow, setFlow] = useState(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [reactFlowInstance, setReactFlowInstance] = useState(null);
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
-  const [connections, setConnections] = useState([]);
+  const [instance, setInstance] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
-
-  const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId), [nodes, selectedNodeId]);
+  const selected = useMemo(() => nodes.find((node) => node.id === selectedId), [nodes, selectedId]);
 
   useEffect(() => {
-    Promise.all([getFlow(id), getGoogleSheetConnections()]).then(([flowRes, sheetsRes]) => {
-      const loaded = flowRes.data.data;
+    getFlow(id).then((response) => {
+      const loaded = response.data.data;
       setFlow(loaded);
-      setConnections(sheetsRes.data.data || []);
-      setNodes((loaded.nodes || []).map((node) => ({
-        id: node.nodeKey,
-        position: { x: node.positionX, y: node.positionY },
-        data: { label: node.label, nodeType: node.nodeType, config: node.configJson || {} },
-        style: { borderRadius: 8, border: '1px solid #25d366', padding: 8, minWidth: 170 }
-      })));
+      const loadedNodes = (loaded.nodes || []).map((node) => ({
+        id: node.nodeKey, type: 'flowCard', position: { x: node.positionX, y: node.positionY },
+        data: { label: node.label, nodeType: node.nodeType, config: node.configJson || {}, stats: node.stats || {} }
+      }));
+      setNodes(loadedNodes.length ? loadedNodes : [makeNode('start', { x: 80, y: 180 })]);
       setEdges((loaded.connections || []).map((edge) => ({
-        id: String(edge.id),
-        source: edge.sourceNodeKey,
-        target: edge.targetNodeKey,
-        sourceHandle: edge.sourceHandle,
-        targetHandle: edge.targetHandle,
-        label: edge.conditionLabel
+        id: String(edge.id), source: edge.sourceNodeKey, target: edge.targetNodeKey,
+        sourceHandle: edge.sourceHandle || 'next', targetHandle: edge.targetHandle || 'input',
+        label: edge.conditionLabel, type: 'smoothstep', animated: true
       })));
-    }).catch((err) => setError(err.response?.data?.message || 'Unable to load flow.'));
+    }).catch((requestError) => setError(requestError.response?.data?.message || 'Unable to load flow.'));
   }, [id, setEdges, setNodes]);
 
-  const onConnect = useCallback((params) => setEdges((eds) => addEdge({ ...params, label: '' }, eds)), [setEdges]);
-
-  const onDragStart = (event, type) => {
-    event.dataTransfer.setData('application/reactflow', type);
-    event.dataTransfer.effectAllowed = 'move';
-  };
-
+  const decoratedNodes = useMemo(() => nodes.map((node) => ({
+    ...node, data: {
+      ...node.data,
+      setLabel: (label) => setNodes((rows) => rows.map((row) => row.id === node.id ? { ...row, data: { ...row.data, label } } : row))
+    }
+  })), [nodes, setNodes]);
+  const onConnect = useCallback((params) => setEdges((rows) => addEdge({ ...params, type: 'smoothstep', animated: true }, rows)), [setEdges]);
   const onDrop = (event) => {
     event.preventDefault();
     const type = event.dataTransfer.getData('application/reactflow');
-    if (!type || !reactFlowInstance || !wrapperRef.current) return;
-    const bounds = wrapperRef.current.getBoundingClientRect();
-    const position = reactFlowInstance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
-    setNodes((current) => [...current, makeNode(type, position)]);
+    if (!type || !instance || !wrapper.current) return;
+    const bounds = wrapper.current.getBoundingClientRect();
+    setNodes((rows) => [...rows, makeNode(type, instance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top }))]);
   };
-
-  const setSelectedConfig = (config) => {
-    setNodes((current) => current.map((node) => node.id === selectedNodeId ? { ...node, data: { ...node.data, config } } : node));
+  const validationErrors = () => {
+    const problems = [];
+    if (!nodes.some((node) => node.data.nodeType === 'start')) problems.push('A Flow Start node is required.');
+    const ids = new Set(nodes.map((node) => node.id));
+    if (edges.some((edge) => !ids.has(edge.source) || !ids.has(edge.target))) problems.push('Remove broken connections.');
+    nodes.filter((node) => ['interactive_message', 'button_message', 'list_message'].includes(node.data.nodeType)).forEach((node) => {
+      outputs(node.data).filter((output) => output.id !== 'fallback').forEach((output) => {
+        if (!edges.some((edge) => edge.source === node.id && (edge.sourceHandle === output.id || ['next', 'fallback'].includes(edge.sourceHandle)))) problems.push(`${node.data.label}: connect "${output.label}" or add a fallback.`);
+      });
+    });
+    return problems;
   };
-
   const save = async () => {
-    const payload = {
-      flow,
-      nodes: nodes.map((node) => ({ id: node.id, nodeType: node.data.nodeType, label: node.data.label, position: node.position, configJson: node.data.config })),
+    const start = nodes.find((node) => node.data.nodeType === 'start');
+    const nextFlow = { ...flow, triggerType: start?.data.config?.source || flow.triggerType, triggerKeywords: start?.data.config?.keywords || [], triggerConfig: start?.data.config || {} };
+    const response = await saveFlowBuilder(id, {
+      flow: nextFlow,
+      nodes: nodes.map((node) => ({ id: node.id, nodeType: node.data.nodeType, label: node.data.label, position: node.position, configJson: node.data.config, stats: node.data.stats })),
       connections: edges.map((edge) => ({ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle, conditionLabel: edge.label }))
-    };
-    await updateFlow(id, flow);
-    await saveFlowBuilder(id, payload);
+    });
+    setFlow(response.data.data);
     setNotice('Flow saved.');
   };
-
   const publish = async () => {
+    const problems = validationErrors();
+    if (problems.length) return setError(problems.join(' '));
     await save();
-    const res = await publishFlow(id);
-    setFlow(res.data.data);
-    setNotice('Flow published.');
+    const response = flow.status === 'published' ? await unpublishFlow(id) : await publishFlow(id);
+    setFlow(response.data.data);
+    setNotice(response.data.data.status === 'published' ? 'Flow published.' : 'Flow unpublished.');
   };
-
   const test = async () => {
     await save();
-    await testFlow(id, { contact: { name: 'Test Contact', phone: '94770000000' }, phone: '94770000000', courseInterested: 'Forex' });
-    setNotice('Test flow executed. Check analytics/runs for logs.');
+    await testFlow(id, { contact: { name: 'Test Contact', firstName: 'Test', phone: '94770000000' }, phone: '94770000000' });
+    setNotice('Test run created. No WhatsApp message is sent in simulation mode.');
   };
 
-  const sendTestRow = async (config) => {
-    if (!config.connectionId && !config.spreadsheetId) {
-      setError('Select a Google Sheets connection or enter a Spreadsheet ID before sending a test row.');
-      return;
-    }
-    await sendGoogleSheetTestRow({
-      connectionId: config.connectionId || undefined,
-      spreadsheetId: config.spreadsheetId,
-      sheetName: config.sheetName,
-      values: (config.columns || []).map((column) => column.label || column.column || 'Test')
-    });
-    setNotice('Google Sheets test row sent.');
-  };
-
-  return (
-    <Stack spacing={1.5} sx={{ height: { xs: 'auto', md: 'calc(100vh - 112px)' } }}>
-      {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
-      {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
-      <Paper sx={{ p: 1.5, border: '1px solid', borderColor: 'divider' }} elevation={0}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }}>
-          <IconButton onClick={() => navigate('/flow-builder')}><ArrowBackIcon /></IconButton>
-          <TextField label="Flow Name" value={flow?.name || ''} onChange={(e) => setFlow({ ...flow, name: e.target.value })} size="small" sx={{ minWidth: { md: 260 } }} />
-          <TextField label="Trigger Keywords" value={(flow?.triggerKeywords || []).join(', ')} onChange={(e) => setFlow({ ...flow, triggerKeywords: e.target.value.split(',').map((item) => item.trim()) })} size="small" sx={{ flex: 1 }} />
-          <Chip label="WhatsApp Cloud API" color="success" variant="outlined" />
-          <Button startIcon={<ZoomOutMapIcon />} onClick={() => reactFlowInstance?.fitView()}>Fit</Button>
-          <Button startIcon={<SaveIcon />} variant="outlined" onClick={save}>Save</Button>
-          <Button startIcon={<RocketLaunchIcon />} variant="contained" onClick={publish}>Publish</Button>
-          <Button startIcon={<PlayArrowIcon />} color="success" variant="contained" onClick={test}>Test Flow</Button>
-        </Stack>
+  return <Stack spacing={1} sx={{ height: 'calc(100vh - 92px)', minHeight: 650 }}>
+    {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
+    {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+    <Paper elevation={0} sx={{ p: 1, border: '1px solid', borderColor: 'divider' }}><Stack direction="row" spacing={1} alignItems="center">
+      <IconButton onClick={() => navigate('/flow-builder')}><ArrowBackIcon /></IconButton>
+      <TextField size="small" value={flow?.name || ''} onChange={(e) => setFlow({ ...flow, name: e.target.value })} sx={{ width: 260 }} />
+      <Box flex={1} />
+      <TextField select size="small" label="WhatsApp number" value={flow?.whatsappPhoneNumberId || ''} onChange={(e) => setFlow({ ...flow, whatsappPhoneNumberId: e.target.value })} sx={{ width: 220 }}><MenuItem value="">Default connected number</MenuItem>{flow?.whatsappPhoneNumberId && <MenuItem value={flow.whatsappPhoneNumberId}>{flow.whatsappPhoneNumberId}</MenuItem>}</TextField>
+      <Tooltip title="Zoom out"><IconButton onClick={() => instance?.zoomOut()}><ZoomOutIcon /></IconButton></Tooltip>
+      <Tooltip title="Zoom in"><IconButton onClick={() => instance?.zoomIn()}><ZoomInIcon /></IconButton></Tooltip>
+      <Button startIcon={<ZoomOutMapIcon />} onClick={() => instance?.fitView()}>Fit</Button>
+      <Button startIcon={<SaveIcon />} variant="outlined" onClick={() => save().catch((e) => setError(e.response?.data?.message || e.message))}>Save</Button>
+      <Button startIcon={<RocketLaunchIcon />} variant="contained" color={flow?.status === 'published' ? 'warning' : 'primary'} onClick={() => publish().catch((e) => setError(e.response?.data?.message || e.message))}>{flow?.status === 'published' ? 'Unpublish' : 'Publish'}</Button>
+      <Button startIcon={<PlayArrowIcon />} color="success" variant="contained" onClick={() => test().catch((e) => setError(e.response?.data?.message || e.message))}>Test flow</Button>
+    </Stack></Paper>
+    <Box sx={{ display: 'grid', gridTemplateColumns: '250px minmax(500px, 1fr) 330px', gap: 1, flex: 1, minHeight: 0 }}>
+      <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', overflow: 'auto' }}>
+        <Typography variant="h6" fontWeight={900}>Flow blocks</Typography>
+        <TextField size="small" placeholder="Search blocks" value={search} onChange={(e) => setSearch(e.target.value)} fullWidth sx={{ my: 1.25 }} InputProps={{ startAdornment: <SearchIcon fontSize="small" sx={{ mr: 0.7, color: 'text.disabled' }} /> }} />
+        {GROUPS.map((group) => {
+          const blocks = group.blocks.filter(([, label]) => label.toLowerCase().includes(search.toLowerCase()));
+          return blocks.length ? <Box key={group.title} sx={{ mb: 2 }}><Typography fontSize={10} letterSpacing={1} fontWeight={900} color="text.secondary">{group.title}</Typography><Stack spacing={0.6} mt={0.7}>{blocks.map(([type, label, icon]) => <Paper key={type} draggable onDragStart={(event) => { event.dataTransfer.setData('application/reactflow', type); event.dataTransfer.effectAllowed = 'move'; }} variant="outlined" sx={{ p: 0.9, cursor: 'grab', '&:hover': { borderColor: '#25d366', bgcolor: '#f2fff9' } }}><Stack direction="row" spacing={1}><span>{icon}</span><Typography fontSize={12} fontWeight={750}>{label}</Typography></Stack></Paper>)}</Stack></Box> : null;
+        })}
       </Paper>
-
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '260px 1fr 340px' }, gap: 1.5, minHeight: 0, flex: 1 }}>
-        <Paper sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', overflow: 'auto' }} elevation={0}>
-          <Typography fontWeight={850} sx={{ mb: 1 }}>Blocks</Typography>
-          {blockGroups.map((group) => (
-            <Box key={group.title} sx={{ mb: 2 }}>
-              <Typography variant="caption" color="text.secondary" fontWeight={850}>{group.title}</Typography>
-              <Stack spacing={0.75} sx={{ mt: 0.75 }}>
-                {group.blocks.map(([type, label]) => (
-                  <Paper key={type} draggable onDragStart={(event) => onDragStart(event, type)} variant="outlined" sx={{ p: 1, cursor: 'grab', bgcolor: 'background.default' }}>
-                    <Typography variant="body2" fontWeight={750}>{label}</Typography>
-                  </Paper>
-                ))}
-              </Stack>
-            </Box>
-          ))}
-        </Paper>
-
-        <Paper ref={wrapperRef} sx={{ border: '1px solid', borderColor: 'divider', minHeight: { xs: 520, lg: 0 }, overflow: 'hidden' }} elevation={0}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onInit={setReactFlowInstance}
-            onDrop={onDrop}
-            onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            fitView
-          >
-            <MiniMap />
-            <Controls />
-            <Background gap={18} />
-          </ReactFlow>
-        </Paper>
-
-        <Paper sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', overflow: 'auto' }} elevation={0}>
-          <Typography fontWeight={850}>Node Settings</Typography>
-          <Divider sx={{ my: 1.5 }} />
-          {!selectedNode && <Typography color="text.secondary">Select a node to configure it.</Typography>}
-          {selectedNode && (
-            <Stack spacing={1.5}>
-              <TextField label="Label" value={selectedNode.data.label} onChange={(e) => setNodes((current) => current.map((node) => node.id === selectedNode.id ? { ...node, data: { ...node.data, label: e.target.value } } : node))} size="small" fullWidth />
-              <Chip label={blockLabel(selectedNode.data.nodeType)} sx={{ alignSelf: 'flex-start' }} />
-              {configFields(selectedNode.data.nodeType, selectedNode.data.config || {}, setSelectedConfig, connections, sendTestRow)}
-              <Button color="error" onClick={() => { setNodes((current) => current.filter((node) => node.id !== selectedNode.id)); setEdges((current) => current.filter((edge) => edge.source !== selectedNode.id && edge.target !== selectedNode.id)); setSelectedNodeId(null); }}>Delete Node</Button>
-            </Stack>
-          )}
-        </Paper>
-      </Box>
-    </Stack>
-  );
+      <Paper ref={wrapper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
+        <ReactFlow nodeTypes={nodeTypes} nodes={decoratedNodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onInit={setInstance} onDrop={onDrop} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }} onNodeClick={(_, node) => setSelectedId(node.id)} fitView>
+          <MiniMap nodeColor={(node) => node.data.nodeType === 'start' ? '#25d366' : '#128c7e'} /><Controls /><Background gap={20} color="#d9e5df" />
+        </ReactFlow>
+      </Paper>
+      <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', overflow: 'auto' }}>
+        <Typography fontWeight={900}>Block settings</Typography><Divider sx={{ my: 1.2 }} />
+        <ConfigPanel node={selected} onChange={(config) => setNodes((rows) => rows.map((node) => node.id === selected.id ? { ...node, data: { ...node.data, config } } : node))} onDelete={() => { setNodes((rows) => rows.filter((node) => node.id !== selected.id)); setEdges((rows) => rows.filter((edge) => edge.source !== selected.id && edge.target !== selected.id)); setSelectedId(null); }} />
+      </Paper>
+    </Box>
+  </Stack>;
 }
 
-function FlowBuilderEditorPage() {
-  return (
-    <ReactFlowProvider>
-      <EditorInner />
-    </ReactFlowProvider>
-  );
+export default function FlowBuilderEditorPage() {
+  return <ReactFlowProvider><Editor /></ReactFlowProvider>;
 }
-
-export default FlowBuilderEditorPage;

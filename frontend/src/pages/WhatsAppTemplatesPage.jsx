@@ -21,6 +21,7 @@ import {
   listWhatsAppTemplates,
   submitWhatsAppTemplate,
   syncWhatsAppTemplates,
+  uploadWhatsAppTemplateSample,
   updateWhatsAppTemplate
 } from '../services/whatsappTemplate.service';
 
@@ -266,6 +267,13 @@ function WhatsAppTemplatesPage() {
 
   const save = async () => {
     try {
+      if (!/^[a-z][a-z0-9_]*$/.test(form.name.trim())) {
+        return setError('Template name must use lowercase snake_case.');
+      }
+      if (!form.body.trim()) return setError('Template body is required.');
+      if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.headerType) && !form.headerContent.trim()) {
+        return setError(`${form.headerType} header requires a sample media handle or URL.`);
+      }
       const buttonError = validateButtons(form.buttons);
       if (buttonError) return setError(buttonError);
       const payload = {
@@ -285,21 +293,69 @@ function WhatsAppTemplatesPage() {
 
   const remove = async (row) => {
     if (!window.confirm('Delete this WhatsApp template?')) return;
-    await deleteWhatsAppTemplate(row.id);
-    setSuccess('Template deleted.');
-    await load();
+    try {
+      setError('');
+      await deleteWhatsAppTemplate(row.id);
+      setSuccess('Template deleted.');
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to delete template.');
+    }
   };
 
   const submit = async (row) => {
-    const response = await submitWhatsAppTemplate(row.id);
-    setSuccess(response.data.data?.simulated ? 'Template submission simulated.' : 'Template submitted to Meta.');
-    await load();
+    try {
+      setLoading(true);
+      setError('');
+      const response = await submitWhatsAppTemplate(row.id);
+      setSuccess(response.data.data?.simulated ? response.data.data.message : 'Template submitted to Meta.');
+      await load();
+    } catch (err) {
+      const detail = err.response?.data?.details?.[0]?.message;
+      setError(detail || err.response?.data?.message || 'Unable to submit template to Meta.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const sync = async () => {
-    const response = await syncWhatsAppTemplates();
-    setSuccess(response.data.data?.simulated ? response.data.data.message : `Synced ${response.data.data.synced} templates from Meta.`);
-    await load();
+    try {
+      setLoading(true);
+      setError('');
+      const response = await syncWhatsAppTemplates();
+      setSuccess(response.data.data?.simulated ? response.data.data.message : `Synced ${response.data.data.synced} templates from Meta.`);
+      await load();
+    } catch (err) {
+      const detail = err.response?.data?.details?.[0]?.message;
+      setError(detail || err.response?.data?.message || 'Unable to sync templates from Meta.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const uploadSample = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        setLoading(true);
+        setError('');
+        const response = await uploadWhatsAppTemplateSample({
+          fileName: file.name,
+          mimeType: file.type,
+          dataBase64: String(reader.result || '').split(',')[1] || ''
+        });
+        setForm((current) => ({ ...current, headerContent: response.data.data.handle }));
+        setSuccess(response.data.data.simulated ? response.data.data.message : 'Sample media uploaded to Meta.');
+      } catch (err) {
+        setError(err.response?.data?.details?.[0]?.message || err.response?.data?.message || 'Unable to upload sample media.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    reader.onerror = () => setError('Unable to read the selected sample media.');
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -330,7 +386,7 @@ function WhatsAppTemplatesPage() {
 
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
         <TableContainer><Table><TableHead><TableRow>{['Name', 'Category', 'Language', 'Status', 'Quality', 'Last Sync', 'Actions'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>
-          {filteredRows.map((row) => <TableRow key={row.id} hover><TableCell>{row.name}</TableCell><TableCell>{row.category}</TableCell><TableCell>{row.language}</TableCell><TableCell><Chip size="small" label={row.status} color={row.status === 'APPROVED' ? 'success' : row.status === 'REJECTED' ? 'error' : 'default'} /></TableCell><TableCell><Chip size="small" label={row.qualityRating} /></TableCell><TableCell>{row.lastSyncedAt ? new Date(row.lastSyncedAt).toLocaleString() : '-'}</TableCell><TableCell><Stack direction="row" spacing={0.5}><Button size="small" startIcon={<SendIcon />} onClick={() => submit(row)}>Submit</Button><Button size="small" startIcon={<EditIcon />} onClick={() => openEdit(row)}>Edit</Button><Button size="small" color="error" startIcon={<DeleteOutlineIcon />} onClick={() => remove(row)}>Delete</Button></Stack></TableCell></TableRow>)}
+          {filteredRows.map((row) => <TableRow key={row.id} hover><TableCell>{row.name}</TableCell><TableCell>{row.category}</TableCell><TableCell>{row.language}</TableCell><TableCell><Chip size="small" label={row.status} color={row.status === 'APPROVED' ? 'success' : row.status === 'REJECTED' ? 'error' : 'default'} /></TableCell><TableCell><Chip size="small" label={row.qualityRating} /></TableCell><TableCell>{row.lastSyncedAt ? new Date(row.lastSyncedAt).toLocaleString() : '-'}</TableCell><TableCell><Stack direction="row" spacing={0.5}><Button size="small" startIcon={<SendIcon />} onClick={() => submit(row)} disabled={!['DRAFT', 'REJECTED'].includes(row.status)}>Submit</Button><Button size="small" startIcon={<EditIcon />} onClick={() => openEdit(row)} disabled={!['DRAFT', 'REJECTED'].includes(row.status)}>Edit</Button><Button size="small" color="error" startIcon={<DeleteOutlineIcon />} onClick={() => remove(row)}>Delete</Button></Stack></TableCell></TableRow>)}
           {filteredRows.length === 0 && <TableRow><TableCell colSpan={7}><Box sx={{ py: 5, textAlign: 'center' }}><Typography fontWeight={800}>No templates found</Typography><Typography color="text.secondary">Create or sync templates to begin.</Typography></Box></TableCell></TableRow>}
         </TableBody></Table></TableContainer>
       </Paper>
@@ -344,7 +400,8 @@ function WhatsAppTemplatesPage() {
               <Grid item xs={12} md={3}><TextField select label="Category" value={form.category} onChange={(e) => setForm((current) => ({ ...current, category: e.target.value }))} fullWidth>{['UTILITY', 'MARKETING', 'AUTHENTICATION'].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
               <Grid item xs={12} md={3}><TextField label="Language" value={form.language} onChange={(e) => setForm((current) => ({ ...current, language: e.target.value }))} fullWidth /></Grid>
               <Grid item xs={12} md={4}><TextField select label="Header Type" value={form.headerType} onChange={(e) => setForm((current) => ({ ...current, headerType: e.target.value }))} fullWidth>{['NONE', 'TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
-              <Grid item xs={12} md={8}><TextField label="Header Content" value={form.headerContent} onChange={(e) => setForm((current) => ({ ...current, headerContent: e.target.value }))} fullWidth /></Grid>
+              <Grid item xs={12} md={8}><TextField label={['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.headerType) ? 'Sample Media Handle / URL' : 'Header Content'} helperText={['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.headerType) ? 'Required by Meta for media-header template review.' : ''} value={form.headerContent} onChange={(e) => setForm((current) => ({ ...current, headerContent: e.target.value }))} fullWidth /></Grid>
+              {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.headerType) && <Grid item xs={12}><Stack direction="row" spacing={1} alignItems="center"><Button component="label" variant="outlined" disabled={loading}>Upload Sample Media<input hidden type="file" accept={form.headerType === 'IMAGE' ? 'image/*' : form.headerType === 'VIDEO' ? 'video/*' : 'application/pdf' } onChange={uploadSample} /></Button>{form.headerContent && <Chip size="small" color="success" label="Sample attached" />}</Stack></Grid>}
               <Grid item xs={12}><TextField label="Body" value={form.body} onChange={(e) => setForm((current) => ({ ...current, body: e.target.value }))} multiline minRows={5} fullWidth /></Grid>
               <Grid item xs={12}><TextField label="Footer" value={form.footer} onChange={(e) => setForm((current) => ({ ...current, footer: e.target.value }))} fullWidth /></Grid>
               <Grid item xs={12}><Typography fontWeight={850} sx={{ mb: 1 }}>Template Buttons</Typography><ButtonBuilder buttons={form.buttons} onChange={(buttons) => setForm((current) => ({ ...current, buttons }))} /></Grid>

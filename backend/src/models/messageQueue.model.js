@@ -14,6 +14,8 @@ module.exports = (sequelize, DataTypes) => {
     nextAttemptAt: { type: DataTypes.DATE, allowNull: true },
     lastError: { type: DataTypes.TEXT, allowNull: true },
     externalMessageId: { type: DataTypes.STRING(255), allowNull: true },
+    campaignId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    campaignRecipientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     createdBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
   }, {
     tableName: 'message_queue',
@@ -30,6 +32,8 @@ module.exports = (sequelize, DataTypes) => {
 
   MessageQueue.associate = (models) => {
     MessageQueue.belongsTo(models.User, { foreignKey: 'created_by', as: 'creator' });
+    MessageQueue.belongsTo(models.Campaign, { foreignKey: 'campaign_id', as: 'campaign' });
+    MessageQueue.belongsTo(models.CampaignRecipient, { foreignKey: 'campaign_recipient_id', as: 'campaignRecipient' });
   };
 
   return MessageQueue;

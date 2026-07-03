@@ -8,6 +8,7 @@ exports.authenticate = (req, res, next) => {
     if (!authorization || !authorization.startsWith('Bearer ')) {
       const err = new Error('Authorization header is missing or invalid');
       err.status = 401;
+      err.code = 'AUTH_REQUIRED';
       throw err;
     }
 
@@ -18,6 +19,7 @@ exports.authenticate = (req, res, next) => {
     sessionTimeout(req, res, next);
   } catch (err) {
     err.status = err.status || 401;
+    err.code = err.code || (err.name === 'TokenExpiredError' ? 'AUTH_EXPIRED' : 'AUTH_INVALID');
     next(err);
   }
 };

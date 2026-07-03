@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControl, Grid,
   IconButton, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack, Table, TableBody, TableCell,
@@ -49,7 +49,10 @@ const modules = {
     create: createStudent,
     update: updateStudent,
     remove: deleteStudent,
-    initial: { name: '', phone: '', email: '', dateOfBirth: '', courseId: '', batchId: '', status: 'enrolled', notes: '' },
+    initial: {
+      name: '', phone: '', email: '', contactId: '', leadId: '', dateOfBirth: '',
+      courseId: '', batchId: '', status: 'enrolled', notes: ''
+    },
     fields: ['name', 'phone', 'email', 'dateOfBirth', 'courseId', 'batchId', 'status', 'notes'],
     columns: ['studentNo', 'name', 'phone', 'dateOfBirth', 'course.name', 'batch.name', 'status']
   },
@@ -122,6 +125,37 @@ function batchLabel(batch) {
 
 function studentLabel(student) {
   return [student.studentNo, student.name, student.course?.name, student.batch?.name].filter(Boolean).join(' - ');
+}
+
+function contactName(contact) {
+  return contact?.name
+    || contact?.fullName
+    || contact?.profileName
+    || [contact?.firstName, contact?.lastName].filter(Boolean).join(' ')
+    || '';
+}
+
+function studentFormFromNavigation(initial, state) {
+  const conversation = state?.selectedConversation || state?.conversation || {};
+  const contact = state?.selectedContact || state?.contact || conversation.contact || {};
+  const lead = state?.lead || conversation.lead || {};
+  const conversationId = conversation.id || state?.conversationId;
+  const sourceNote = conversationId
+    ? `Converted from chat conversation #${conversationId}`
+    : 'Converted from chat conversation';
+
+  return {
+    ...initial,
+    name: contactName(contact),
+    phone: contact.phone || contact.phoneNumber || contact.whatsappNumber || contact.whatsappId || '',
+    email: contact.email || '',
+    contactId: contact.id || conversation.contactId || '',
+    leadId: lead.id || conversation.leadId || '',
+    courseId: state?.courseId || lead.courseId || contact.courseId || '',
+    batchId: state?.batchId || lead.batchId || contact.batchId || '',
+    status: 'enrolled',
+    notes: sourceNote
+  };
 }
 
 function discountPreview(form) {
@@ -201,6 +235,9 @@ function FeeFields({ form, setForm, lookups }) {
 
 function EducationModulePage({ moduleKey }) {
   const config = modules[moduleKey];
+  const location = useLocation();
+  const navigate = useNavigate();
+  const consumedNavigationStateRef = useRef(false);
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState(config.initial);
   const [editing, setEditing] = useState(null);
@@ -238,6 +275,17 @@ function EducationModulePage({ moduleKey }) {
   };
 
   useEffect(() => { load(); }, [moduleKey]);
+
+  useEffect(() => {
+    const state = location.state || {};
+    if (moduleKey !== 'students' || !state.openCreate || consumedNavigationStateRef.current) return;
+
+    consumedNavigationStateRef.current = true;
+    setEditing(null);
+    setForm(studentFormFromNavigation(config.initial, state));
+    setDialogOpen(true);
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [config.initial, location.pathname, location.search, location.state, moduleKey, navigate]);
 
   const openCreate = () => { setEditing(null); setForm(config.initial); setDialogOpen(true); };
   const openEdit = (row) => {

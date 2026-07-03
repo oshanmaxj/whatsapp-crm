@@ -3,9 +3,11 @@ module.exports = (sequelize, DataTypes) => {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     name: { type: DataTypes.STRING(180), allowNull: false },
     description: { type: DataTypes.TEXT, allowNull: true },
-    status: { type: DataTypes.ENUM('draft', 'published', 'paused'), allowNull: false, defaultValue: 'draft' },
+    status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'draft', validate: { isIn: [['draft', 'published', 'inactive']] } },
     triggerType: { type: DataTypes.STRING(80), allowNull: false, defaultValue: 'keyword' },
     triggerKeywords: { type: DataTypes.JSON, allowNull: false, defaultValue: [] },
+    triggerConfig: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
+    whatsappPhoneNumberId: { type: DataTypes.STRING(100), allowNull: true },
     createdBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
   }, {
     tableName: 'flows',

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -56,6 +57,9 @@ const initialForm = {
   customerName: '',
   customerPhone: '',
   customerEmail: '',
+  contactId: '',
+  leadId: '',
+  conversationId: '',
   assignedAgentId: '',
   reminderAt: '',
   confirmationMessage: 'Hi {{customerName}}, your appointment is confirmed for {{date}}.',
@@ -87,6 +91,9 @@ function toForm(appointment) {
     customerName: appointment.customerName || '',
     customerPhone: appointment.customerPhone || '',
     customerEmail: appointment.customerEmail || '',
+    contactId: appointment.contactId || '',
+    leadId: appointment.leadId || '',
+    conversationId: '',
     assignedAgentId: appointment.assignedAgentId || '',
     reminderAt: toInputDate(appointment.reminderAt),
     confirmationMessage: appointment.confirmationMessage || initialForm.confirmationMessage,
@@ -97,12 +104,43 @@ function toForm(appointment) {
 }
 
 function toPayload(form) {
+  const { conversationId, ...payload } = form;
   return {
-    ...form,
+    ...payload,
     assignedAgentId: form.assignedAgentId || null,
+    contactId: form.contactId || null,
+    leadId: form.leadId || null,
     appointmentAt: form.appointmentAt ? new Date(form.appointmentAt).toISOString() : null,
     reminderAt: form.reminderAt ? new Date(form.reminderAt).toISOString() : null,
     durationMinutes: Number(form.durationMinutes) || 30
+  };
+}
+
+function contactDisplayName(contact = {}) {
+  return contact.name
+    || [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+    || contact.fullName
+    || contact.phone
+    || contact.whatsappId
+    || '';
+}
+
+function formFromNavigationState(state = {}) {
+  const conversation = state.selectedConversation || state.conversation || {};
+  const contact = state.selectedContact || state.contact || conversation.contact || {};
+  const name = contactDisplayName(contact);
+  const conversationId = conversation.id || state.conversationId || '';
+  return {
+    ...initialForm,
+    title: name ? `Appointment with ${name}` : initialForm.title,
+    customerName: name,
+    customerPhone: contact.phone || contact.whatsappId || '',
+    customerEmail: contact.email || '',
+    contactId: contact.id || conversation.contactId || '',
+    leadId: conversation.leadId || conversation.lead?.id || '',
+    conversationId,
+    assignedAgentId: conversation.assignedTo || conversation.assignee?.id || '',
+    notes: conversationId ? `Created from chat conversation #${conversationId}` : initialForm.notes
   };
 }
 
@@ -113,6 +151,9 @@ function formatDate(value) {
 }
 
 function AppointmentsPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const consumedNavigationStateRef = useRef(false);
   const [appointments, setAppointments] = useState([]);
   const [agents, setAgents] = useState([]);
   const [filters, setFilters] = useState({ status: '', assignedAgentId: '', visibility: '' });
@@ -148,6 +189,16 @@ function AppointmentsPage() {
 
   useEffect(() => { getAgents().then((response) => setAgents(response.data.data || [])).catch(() => {}); }, []);
   useEffect(() => { load(); }, [filters]);
+
+  useEffect(() => {
+    const state = location.state || {};
+    if (!state.openCreate || consumedNavigationStateRef.current) return;
+    consumedNavigationStateRef.current = true;
+    setEditing(null);
+    setForm(formFromNavigationState(state));
+    setDialogOpen(true);
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location.pathname, location.search, location.state, navigate]);
 
   const openCreate = () => {
     setEditing(null);

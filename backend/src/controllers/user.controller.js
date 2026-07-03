@@ -77,7 +77,9 @@ class UserController {
 
   async getRoles(req, res, next) {
     try {
-      const roles = await userService.getRoles();
+      const roles = await userService.getRoles({
+        includeInactive: ['true', '1'].includes(String(req.query.includeInactive).toLowerCase())
+      });
       return res.status(200).json({ success: true, data: roles });
     } catch (err) {
       next(err);
@@ -124,6 +126,15 @@ class UserController {
     try {
       const role = await userService.updateRole(req.params.id, req.body);
       return res.status(200).json({ success: true, data: role });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async deactivateRole(req, res, next) {
+    try {
+      const role = await userService.deactivateRole(req.params.id);
+      return res.status(200).json({ success: true, data: role, message: role.warning });
     } catch (err) {
       next(err);
     }

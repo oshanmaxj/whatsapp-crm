@@ -14,6 +14,24 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(255),
       allowNull: true
     },
+    chatVisibilityScope: {
+      type: DataTypes.STRING(30),
+      allowNull: false,
+      defaultValue: 'assigned_only',
+      validate: {
+        isIn: [['all', 'assigned_only', 'role_only', 'role_and_assigned']]
+      }
+    },
+    isActive: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true
+    },
+    receiveDepartmentAssignmentNotifications: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
+    },
     deletedAt: {
       type: DataTypes.DATE,
       allowNull: true

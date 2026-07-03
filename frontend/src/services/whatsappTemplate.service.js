@@ -7,5 +7,6 @@ export const updateWhatsAppTemplate = (id, payload) => api.patch(`/whatsapp-temp
 export const deleteWhatsAppTemplate = (id) => api.delete(`/whatsapp-templates/${id}`);
 export const submitWhatsAppTemplate = (id) => api.post(`/whatsapp-templates/${id}/submit`);
 export const syncWhatsAppTemplates = () => api.post('/whatsapp-templates/sync');
+export const uploadWhatsAppTemplateSample = (payload) => api.post('/whatsapp-templates/sample-media', payload);
 export const getWhatsAppComplianceStatus = () => api.get('/compliance/whatsapp-status');
 export const checkWhatsAppMessage = (payload) => api.post('/compliance/message-check', payload);

@@ -1,5 +1,6 @@
 const whatsappService = require('../services/whatsapp.service');
 const whatsappSettingsService = require('../services/whatsappSettings.service');
+const logger = require('../config/logger');
 
 class WebhookController {
   async verifyWebhook(req, res, next) {
@@ -29,7 +30,18 @@ class WebhookController {
       await whatsappService.processWebhook(req.body);
       return res.status(200).json({ success: true, message: 'Webhook processed' });
     } catch (error) {
-      next(error);
+      logger.error('whatsapp_webhook_processing_failed', {
+        message: error.message,
+        stack: error.stack,
+        validationErrors: Array.isArray(error.errors)
+          ? error.errors.map((item) => item.message || String(item))
+          : []
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Webhook received; processing encountered an internal error'
+      });
     }
   }
 }

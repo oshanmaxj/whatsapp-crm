@@ -10,7 +10,11 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
-import { createFlow, deleteFlow, getFlowAnalytics, getFlowRuns, getFlows, publishFlow } from '../services/flowBuilder.service';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import {
+  createFlow, deleteFlow, duplicateFlow, getFlowAnalytics, getFlowRuns, getFlows,
+  publishFlow, unpublishFlow
+} from '../services/flowBuilder.service';
 
 function FlowAnalyticsDialog({ flow, onClose }) {
   const [analytics, setAnalytics] = useState(null);
@@ -81,8 +85,15 @@ function FlowBuilderListPage() {
   };
 
   const publish = async (flow) => {
-    await publishFlow(flow.id);
-    setNotice('Flow published.');
+    if (flow.status === 'published') await unpublishFlow(flow.id);
+    else await publishFlow(flow.id);
+    setNotice(flow.status === 'published' ? 'Flow unpublished.' : 'Flow published.');
+    await load();
+  };
+
+  const duplicate = async (flow) => {
+    await duplicateFlow(flow.id);
+    setNotice('Flow duplicated.');
     await load();
   };
 
@@ -109,23 +120,26 @@ function FlowBuilderListPage() {
       <Paper sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }} elevation={0}>
         <TableContainer sx={{ overflowX: 'auto' }}>
           <Table>
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Trigger</TableCell><TableCell>Status</TableCell><TableCell>Runs</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Trigger</TableCell><TableCell>WhatsApp number</TableCell><TableCell>Status</TableCell><TableCell>Updated</TableCell><TableCell>Runs</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {flows.map((flow) => (
                 <TableRow key={flow.id} hover>
                   <TableCell><Typography fontWeight={850}>{flow.name}</Typography><Typography variant="body2" color="text.secondary">{flow.description || '-'}</Typography></TableCell>
                   <TableCell>{(flow.triggerKeywords || []).join(', ') || '-'}</TableCell>
+                  <TableCell>{flow.whatsappPhoneNumberId || 'Default'}</TableCell>
                   <TableCell><Chip size="small" label={flow.status} color={flow.status === 'published' ? 'success' : 'default'} /></TableCell>
+                  <TableCell>{flow.updatedAt ? new Date(flow.updatedAt).toLocaleString() : '-'}</TableCell>
                   <TableCell>{flow.executions || 0}</TableCell>
                   <TableCell align="right">
                     <Button size="small" startIcon={<EditIcon />} component={Link} to={`/flow-builder/${flow.id}`}>Edit</Button>
-                    <Button size="small" startIcon={<RocketLaunchIcon />} onClick={() => publish(flow)}>Publish</Button>
+                    <Button size="small" startIcon={<ContentCopyIcon />} onClick={() => duplicate(flow)}>Duplicate</Button>
+                    <Button size="small" startIcon={<RocketLaunchIcon />} onClick={() => publish(flow)}>{flow.status === 'published' ? 'Unpublish' : 'Publish'}</Button>
                     <Button size="small" startIcon={<AnalyticsIcon />} onClick={() => setAnalyticsFlow(flow)}>Analytics</Button>
                     <Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => remove(flow)}>Delete</Button>
                   </TableCell>
                 </TableRow>
               ))}
-              {flows.length === 0 && <TableRow><TableCell colSpan={5}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">No flows yet. Create your first WhatsApp automation.</Typography></TableCell></TableRow>}
+              {flows.length === 0 && <TableRow><TableCell colSpan={7}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">No flows yet. Create your first WhatsApp automation.</Typography></TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>

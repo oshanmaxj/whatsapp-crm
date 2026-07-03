@@ -48,7 +48,7 @@ npm install
 
 ## Run migrations
 
-A small migration runner is provided to add the AI fields to existing tables. It is safe to run multiple times; the runner checks for column existence before applying changes.
+The migration runner creates required feature tables and adds fields/indexes to existing tables. It is safe to run multiple times because it checks for existing schema objects before applying changes.
 
 ```bash
 npm run migrate

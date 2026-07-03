@@ -10,7 +10,7 @@ function serializeAgent(agent, assignedLeadCount = 0) {
     name: [agent.firstName, agent.lastName].filter(Boolean).join(' ') || agent.email,
     email: agent.email,
     phone: agent.phone,
-    department: agent.department,
+    department: agent.roles?.[0]?.name || null,
     status: agent.status,
     roles: agent.roles || [],
     assignedLeadCount: Number(assignedLeadCount || 0)

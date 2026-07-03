@@ -17,6 +17,9 @@ const DEFAULTS = [
   ['smtp', 'settings', { host: '', port: 587, secure: false, username: '' }],
   ['branding', 'theme', { primaryColor: '#25d366', logoUrl: '' }],
   ['security', 'session', { timeoutMinutes: Number(process.env.SESSION_TIMEOUT_MINUTES || 120) }],
+  ['notifications', 'assignments', {
+    assignmentNotificationsEnabled: true
+  }],
   ['class_reminders', 'automation', {
     class_reminder_auto_send_enabled: false,
     class_reminder_day_before_enabled: true,

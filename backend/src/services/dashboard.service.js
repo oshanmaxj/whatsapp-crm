@@ -24,6 +24,8 @@ const {
   AutomationLog,
   WhatsAppTemplate
 } = require('../models');
+const logger = require('../config/logger');
+const { isMissingTableError } = require('../utils/databaseError');
 
 const RECENT_LIMIT = 5;
 const ACTIVITY_DAYS = 7;
@@ -284,7 +286,7 @@ class DashboardService {
 
   async getBirthdayWidgets(todayStart = startOfDay()) {
     const monthDay = formatDateKey(todayStart).slice(5);
-    const [students, guardians, sent, pending, failed] = await Promise.all([
+    const [students, guardians] = await Promise.all([
       Student.findAll({
         where: { status: { [Op.in]: ['enrolled', 'active'] }, dateOfBirth: { [Op.ne]: null } },
         attributes: ['dateOfBirth']
@@ -293,13 +295,24 @@ class DashboardService {
         where: { dateOfBirth: { [Op.ne]: null } },
         attributes: ['dateOfBirth'],
         include: [{ model: Student, as: 'student', where: { status: { [Op.in]: ['enrolled', 'active'] } }, attributes: [], required: true }]
-      }),
-      BirthdayWish.count({ where: { status: 'sent', sentDate: { [Op.gte]: todayStart } } }),
-      BirthdayWish.count({ where: { status: 'pending' } }),
-      BirthdayWish.count({ where: { status: 'failed', updatedAt: { [Op.gte]: todayStart } } })
+      })
     ]);
     const today = [...students, ...guardians].filter((row) => String(row.dateOfBirth || '').slice(5) === monthDay).length;
-    return { today, sent, pending, failed };
+
+    try {
+      const [sent, pending, failed] = await Promise.all([
+        BirthdayWish.count({ where: { status: 'sent', sentDate: { [Op.gte]: todayStart } } }),
+        BirthdayWish.count({ where: { status: 'pending' } }),
+        BirthdayWish.count({ where: { status: 'failed', updatedAt: { [Op.gte]: todayStart } } })
+      ]);
+      return { today, sent, pending, failed };
+    } catch (error) {
+      if (!isMissingTableError(error, 'birthday_wishes')) throw error;
+      logger.warn('birthday_wishes_table_missing', {
+        context: 'dashboard_widgets'
+      });
+      return { today, sent: 0, pending: 0, failed: 0 };
+    }
   }
 
   async getClassReminderWidgets(todayStart = startOfDay()) {

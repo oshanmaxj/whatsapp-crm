@@ -12,6 +12,9 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'pending'
     },
     errorMessage: { type: DataTypes.STRING(255), allowNull: true },
+    queueId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    externalMessageId: { type: DataTypes.STRING(255), allowNull: true },
+    variableData: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
     sentAt: { type: DataTypes.DATE, allowNull: true },
     deliveredAt: { type: DataTypes.DATE, allowNull: true },
     readAt: { type: DataTypes.DATE, allowNull: true },
@@ -27,6 +30,7 @@ module.exports = (sequelize, DataTypes) => {
     CampaignRecipient.belongsTo(models.Campaign, { foreignKey: 'campaign_id', as: 'campaign' });
     CampaignRecipient.belongsTo(models.Contact, { foreignKey: 'contact_id', as: 'contact' });
     CampaignRecipient.belongsTo(models.Lead, { foreignKey: 'lead_id', as: 'lead' });
+    CampaignRecipient.belongsTo(models.MessageQueue, { foreignKey: 'queue_id', as: 'queueItem' });
   };
 
   return CampaignRecipient;

@@ -1,9 +1,18 @@
 const { Op } = require('sequelize');
-const { MessageQueue } = require('../models');
+const { Campaign, CampaignEvent, CampaignRecipient, MessageQueue } = require('../models');
 const whatsappService = require('./whatsapp.service');
+const outboundHistoryService = require('./outboundHistory.service');
 const logger = require('../config/logger');
 
 const RATE_LIMIT_PER_TICK = Number(process.env.QUEUE_RATE_LIMIT_PER_TICK || 5);
+
+function templatePreview(body, components = []) {
+  const parameters = components.find((component) => component.type === 'body')?.parameters || [];
+  return String(body || '').replace(/\{\{\s*(\d+)\s*\}\}/g, (match, index) => {
+    const parameter = parameters[Number(index) - 1];
+    return parameter?.text == null ? match : String(parameter.text);
+  });
+}
 
 class MessageQueueService {
   async enqueue(payload, createdBy = null) {
@@ -15,6 +24,8 @@ class MessageQueueService {
       priority: payload.priority || 5,
       scheduledAt: payload.scheduledAt || new Date(),
       maxAttempts: payload.maxAttempts || 3,
+      campaignId: payload.campaignId || null,
+      campaignRecipientId: payload.campaignRecipientId || null,
       createdBy
     });
   }
@@ -49,14 +60,68 @@ class MessageQueueService {
 
   async processOne(row) {
     await row.update({ status: 'processing', attempts: row.attempts + 1 });
+    if (row.campaignId) await Campaign.update({ status: 'Processing' }, { where: { id: row.campaignId, status: 'Scheduled' } });
     try {
       const response = await this.dispatch(row);
+      const externalMessageId = response?.id || response?.messages?.[0]?.id || null;
       await row.update({
         status: 'sent',
         processedAt: new Date(),
-        externalMessageId: response?.id || response?.messages?.[0]?.id || null,
+        externalMessageId,
         lastError: null
       });
+      if (row.campaignRecipientId) {
+        await CampaignRecipient.update({
+          status: 'sent',
+          sentAt: new Date(),
+          externalMessageId,
+          errorMessage: null
+        }, { where: { id: row.campaignRecipientId } });
+        await CampaignEvent.create({
+          campaignId: row.campaignId,
+          recipientId: row.campaignRecipientId,
+          eventType: 'sent',
+          payload: { queueId: row.id, externalMessageId }
+        });
+        try {
+          const [campaign, recipient] = await Promise.all([
+            Campaign.findByPk(row.campaignId),
+            CampaignRecipient.findByPk(row.campaignRecipientId)
+          ]);
+          const queuePayload = row.payload || {};
+          await outboundHistoryService.record({
+            phone: recipient?.phone || row.toNumber,
+            name: recipient?.name || null,
+            contactId: recipient?.contactId || null,
+            leadId: recipient?.leadId || null,
+            sentByUserId: row.createdBy || campaign?.createdBy || null,
+            whatsappMessageId: externalMessageId,
+            type: row.messageType === 'template' ? 'template' : 'text',
+            messageType: 'broadcast',
+            text: row.messageType === 'template'
+              ? templatePreview(campaign?.messageBody, queuePayload.components)
+              : queuePayload.text || queuePayload.message || campaign?.messageBody || null,
+            templateName: queuePayload.templateName || campaign?.templateName || null,
+            campaignId: row.campaignId,
+            campaignRecipientId: row.campaignRecipientId,
+            status: 'sent',
+            rawPayload: {
+              source: 'broadcast',
+              queueId: row.id,
+              whatsapp: response,
+              template: row.messageType === 'template' ? queuePayload : null
+            }
+          });
+        } catch (historyError) {
+          logger.warn('broadcast_chat_history_processing_failed', {
+            queueId: row.id,
+            campaignId: row.campaignId,
+            campaignRecipientId: row.campaignRecipientId,
+            message: historyError.message
+          });
+        }
+        await this.refreshCampaignStatus(row.campaignId);
+      }
       return row;
     } catch (error) {
       const hasAttempts = row.attempts < row.maxAttempts;
@@ -66,6 +131,19 @@ class MessageQueueService {
         nextAttemptAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : null,
         scheduledAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : row.scheduledAt
       });
+      if (row.campaignRecipientId && !hasAttempts) {
+        await CampaignRecipient.update({
+          status: 'failed',
+          errorMessage: error.message
+        }, { where: { id: row.campaignRecipientId } });
+        await CampaignEvent.create({
+          campaignId: row.campaignId,
+          recipientId: row.campaignRecipientId,
+          eventType: 'failed',
+          payload: { queueId: row.id, error: error.message }
+        });
+        await this.refreshCampaignStatus(row.campaignId);
+      }
       return row;
     }
   }
@@ -73,9 +151,23 @@ class MessageQueueService {
   async dispatch(row) {
     const payload = row.payload || {};
     if (row.channel !== 'whatsapp') return { id: `system-${row.id}` };
-    if (row.messageType === 'template') return whatsappService.sendTemplateMessage(payload);
-    if (['image', 'document', 'audio', 'video'].includes(row.messageType)) return whatsappService.sendMediaMessage({ ...payload, mediaType: row.messageType });
-    return whatsappService.sendTextMessage({ to: row.toNumber, text: payload.text || payload.message || '' });
+    if (row.messageType === 'template') return whatsappService.sendTemplateMessage({ ...payload, log: false });
+    if (['image', 'document', 'audio', 'video'].includes(row.messageType)) return whatsappService.sendMediaMessage({ ...payload, mediaType: row.messageType, log: false });
+    return whatsappService.sendTextMessage({ to: row.toNumber, text: payload.text || payload.message || '', log: false });
+  }
+
+  async refreshCampaignStatus(campaignId) {
+    if (!campaignId) return;
+    const [remaining, sent, failed] = await Promise.all([
+      CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['pending', 'queued'] } } }),
+      CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['sent', 'delivered', 'read', 'replied', 'converted'] } } }),
+      CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['failed', 'unreachable'] } } })
+    ]);
+    if (remaining > 0) return;
+    await Campaign.update({
+      status: sent > 0 ? 'Completed' : (failed > 0 ? 'Failed' : 'Completed'),
+      sentAt: new Date()
+    }, { where: { id: campaignId } });
   }
 
   start(intervalMs = Number(process.env.QUEUE_WORKER_INTERVAL_MS || 15000)) {

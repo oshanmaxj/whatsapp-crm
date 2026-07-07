@@ -1,0 +1,20 @@
+const express = require('express');
+const controller = require('../controllers/studentPortal.controller');
+const portal = require('../middleware/studentPortal.middleware');
+
+const router = express.Router();
+router.post('/login', controller.login);
+router.post('/verify-otp', controller.verifyOtp);
+router.use(portal.authenticate);
+router.get('/me', controller.me);
+router.get('/dashboard', controller.dashboard);
+router.get('/my-courses', controller.myCourses);
+router.get('/upcoming-classes', controller.upcomingClasses);
+router.get('/payments', controller.payments);
+router.get('/lessons', controller.lessons);
+router.get('/materials', controller.materials);
+router.get('/lessons/:id', controller.lesson);
+router.post('/lessons/:id/comments', controller.comment);
+router.post('/lessons/:id/progress', portal.requirePaymentAccess, controller.progress);
+router.post('/lessons/:id/join-live-class', controller.join);
+module.exports = router;

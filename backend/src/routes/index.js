@@ -32,8 +32,19 @@ const automationRoutes = require('./automation.routes');
 const attendanceAlertRoutes = require('./attendanceAlert.routes');
 const birthdayWishRoutes = require('./birthdayWish.routes');
 const messageRoutes = require('./message.routes');
+const whatsappAccountRoutes = require('./whatsappAccount.routes');
+const accountingRoutes = require('./accounting.routes');
+const notificationTemplateRoutes = require('./notificationTemplate.routes');
+const lmsRoutes = require('./lms.routes');
+const studentPortalRoutes = require('./studentPortal.routes');
+const studentMessageTemplateRoutes = require('./studentMessageTemplate.routes');
+const courseSchedulerRoutes = require('./courseScheduler.routes');
 
 const router = express.Router();
+
+router.get('/health', (req, res) => {
+  return res.status(200).json({ success: true, message: 'API is healthy' });
+});
 
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
@@ -58,6 +69,13 @@ router.use('/flows', flowRoutes);
 router.use('/google-sheets', googleSheetsRoutes);
 router.use('/appointments', appointmentRoutes);
 router.use('/whatsapp', whatsappRoutes);
+router.use('/whatsapp-accounts', whatsappAccountRoutes);
+router.use('/accounting', accountingRoutes);
+router.use('/notification-templates', notificationTemplateRoutes);
+router.use('/lms', lmsRoutes);
+router.use('/student-portal', studentPortalRoutes);
+router.use('/student-message-templates', studentMessageTemplateRoutes);
+router.use('/', courseSchedulerRoutes);
 router.use('/fee-reminders', feeReminderRoutes);
 router.use('/class-reminders', classReminderRoutes);
 router.use('/whatsapp-templates', whatsappTemplateRoutes);
@@ -68,9 +86,5 @@ router.use('/birthday-wishes', birthdayWishRoutes);
 router.use('/messages', messageRoutes);
 router.use('/', productionRoutes);
 router.use('/', educationRoutes);
-
-router.get('/health', (req, res) => {
-  return res.status(200).json({ success: true, message: 'API is healthy' });
-});
 
 module.exports = router;

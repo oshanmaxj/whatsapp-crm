@@ -24,6 +24,7 @@ import {
   uploadWhatsAppTemplateSample,
   updateWhatsAppTemplate
 } from '../services/whatsappTemplate.service';
+import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const initialForm = {
   name: '',
@@ -36,7 +37,8 @@ const initialForm = {
   buttons: [],
   variablesText: '',
   status: 'DRAFT',
-  qualityRating: 'UNKNOWN'
+  qualityRating: 'UNKNOWN',
+  whatsappAccountId: ''
 };
 
 const buttonTypes = ['QUICK_REPLY', 'URL', 'PHONE_NUMBER', 'COPY_CODE'];
@@ -213,7 +215,7 @@ function WhatsAppPreview({ form }) {
 
 function WhatsAppTemplatesPage() {
   const [rows, setRows] = useState([]);
-  const [filters, setFilters] = useState({ status: '', language: '', category: '' });
+  const [filters, setFilters] = useState({ status: '', language: '', category: '', whatsappAccountId: '' });
   const [form, setForm] = useState(initialForm);
   const [editing, setEditing] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -239,11 +241,11 @@ function WhatsAppTemplatesPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [filters.whatsappAccountId]);
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ ...initialForm, buttons: [] });
+    setForm({ ...initialForm, buttons: [], whatsappAccountId: filters.whatsappAccountId });
     setDialogOpen(true);
   };
 
@@ -261,6 +263,7 @@ function WhatsAppTemplatesPage() {
       variablesText: JSON.stringify(row.variables || [], null, 2),
       status: row.status || 'DRAFT',
       qualityRating: row.qualityRating || 'UNKNOWN'
+      , whatsappAccountId: row.whatsappAccountId || filters.whatsappAccountId
     });
     setDialogOpen(true);
   };
@@ -322,7 +325,7 @@ function WhatsAppTemplatesPage() {
     try {
       setLoading(true);
       setError('');
-      const response = await syncWhatsAppTemplates();
+      const response = await syncWhatsAppTemplates(filters.whatsappAccountId);
       setSuccess(response.data.data?.simulated ? response.data.data.message : `Synced ${response.data.data.synced} templates from Meta.`);
       await load();
     } catch (err) {
@@ -345,6 +348,7 @@ function WhatsAppTemplatesPage() {
           fileName: file.name,
           mimeType: file.type,
           dataBase64: String(reader.result || '').split(',')[1] || ''
+          , whatsappAccountId: form.whatsappAccountId
         });
         setForm((current) => ({ ...current, headerContent: response.data.data.handle }));
         setSuccess(response.data.data.simulated ? response.data.data.message : 'Sample media uploaded to Meta.');
@@ -370,6 +374,7 @@ function WhatsAppTemplatesPage() {
             <Typography variant="h5" fontWeight={850}>WhatsApp Template Manager</Typography>
             <Typography color="text.secondary">Create, submit, sync, and monitor approved Meta WhatsApp templates.</Typography>
           </Box>
+          <WhatsAppAccountSelect value={filters.whatsappAccountId} onChange={(value) => setFilters((current) => ({ ...current, whatsappAccountId: value }))} sx={{ minWidth: 260 }} />
           <Button variant="outlined" startIcon={<CloudSyncIcon />} onClick={sync}>Sync From Meta</Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>Create Template</Button>
         </Stack>
@@ -396,6 +401,7 @@ function WhatsAppTemplatesPage() {
         <DialogContent><Grid container spacing={2} sx={{ mt: 0.5 }}>
           <Grid item xs={12} md={8}>
             <Grid container spacing={2}>
+              <Grid item xs={12}><WhatsAppAccountSelect value={form.whatsappAccountId} onChange={(value) => setForm((current) => ({ ...current, whatsappAccountId: value }))} fullWidth required /></Grid>
               <Grid item xs={12} md={6}><TextField label="Name" value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} fullWidth /></Grid>
               <Grid item xs={12} md={3}><TextField select label="Category" value={form.category} onChange={(e) => setForm((current) => ({ ...current, category: e.target.value }))} fullWidth>{['UTILITY', 'MARKETING', 'AUTHENTICATION'].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
               <Grid item xs={12} md={3}><TextField label="Language" value={form.language} onChange={(e) => setForm((current) => ({ ...current, language: e.target.value }))} fullWidth /></Grid>

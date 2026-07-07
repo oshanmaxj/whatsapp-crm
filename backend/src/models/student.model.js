@@ -1,3 +1,5 @@
+const bcrypt = require('bcrypt');
+
 module.exports = (sequelize, DataTypes) => {
   const Student = sequelize.define('Student', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
@@ -12,13 +14,25 @@ module.exports = (sequelize, DataTypes) => {
     dateOfBirth: { type: DataTypes.DATEONLY, allowNull: true },
     status: { type: DataTypes.ENUM('enrolled', 'active', 'completed', 'dropped', 'suspended'), allowNull: false, defaultValue: 'enrolled' },
     enrolledAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
-    notes: { type: DataTypes.TEXT, allowNull: true }
+    notes: { type: DataTypes.TEXT, allowNull: true },
+    portalPasswordHash: { type: DataTypes.STRING(255), allowNull: true }
   }, {
     tableName: 'students',
+    defaultScope: { attributes: { exclude: ['portalPasswordHash'] } },
+    scopes: { withPortalPassword: { attributes: { include: ['portalPasswordHash'] } } },
     timestamps: true,
     paranoid: true,
     underscored: true,
-    indexes: [{ fields: ['contact_id'] }, { fields: ['lead_id'] }, { fields: ['course_id'] }, { fields: ['batch_id'] }, { fields: ['status'] }]
+    indexes: [{ fields: ['contact_id'] }, { fields: ['lead_id'] }, { fields: ['course_id'] }, { fields: ['batch_id'] }, { fields: ['status'] }],
+    hooks: {
+      beforeSave: async (student) => {
+        if (student.changed('portalPasswordHash') && student.portalPasswordHash) {
+          if (!String(student.portalPasswordHash).startsWith('$2')) {
+            student.portalPasswordHash = await bcrypt.hash(student.portalPasswordHash, 10);
+          }
+        }
+      }
+    }
   });
 
   Student.associate = (models) => {
@@ -26,6 +40,10 @@ module.exports = (sequelize, DataTypes) => {
     Student.belongsTo(models.Lead, { foreignKey: 'lead_id', as: 'lead' });
     Student.belongsTo(models.Course, { foreignKey: 'course_id', as: 'course' });
     Student.belongsTo(models.Batch, { foreignKey: 'batch_id', as: 'batch' });
+  };
+
+  Student.prototype.verifyPortalPassword = function (password) {
+    return this.portalPasswordHash ? bcrypt.compare(password, this.portalPasswordHash) : false;
   };
 
   return Student;

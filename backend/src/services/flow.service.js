@@ -1,3 +1,6 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { Op, fn, col } = require('sequelize');
 const {
   Contact,
@@ -10,7 +13,8 @@ const {
   FlowRunLog,
   Lead,
   Role,
-  User
+  User,
+  sequelize
 } = require('../models');
 const assignmentService = require('./assignment.service');
 const googleSheetsService = require('./googleSheets.service');
@@ -19,6 +23,8 @@ const whatsappService = require('./whatsapp.service');
 const outboundHistoryService = require('./outboundHistory.service');
 const assignmentNotificationService = require('./assignmentNotification.service');
 const aiService = require('./ai.service');
+const whatsappAccountService = require('./whatsappAccount.service');
+const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
 
 const MESSAGE_TYPES = new Set([
   'text_message', 'image_message', 'video_message', 'audio_message', 'file_document', 'location',
@@ -45,9 +51,68 @@ function contactName(contact) {
   return [contact.firstName, contact.lastName].filter(Boolean).join(' ') || contact.phone || '';
 }
 
+function normalizeTriggerKeywords(value) {
+  const list = Array.isArray(value)
+    ? value.flatMap((item) => String(item).split(','))
+    : String(value || '').split(',');
+  return list
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((item, index, rows) => rows.indexOf(item) === index);
+}
+
 function normalizeKeywords(value) {
-  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
-  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  return normalizeTriggerKeywords(value);
+}
+
+function matchesTriggerKeyword(messageText, keywords, mode = 'contains') {
+  const text = String(messageText || '').trim().toLowerCase();
+  const list = normalizeTriggerKeywords(keywords);
+  if (!text || list.length === 0) return false;
+  return list.some((keyword) => {
+    if (mode === 'exact') return text === keyword;
+    if (mode === 'starts_with') return text.startsWith(keyword);
+    return text.includes(keyword);
+  });
+}
+
+function isLocalhostUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['localhost', '127.0.0.1', '::1'].includes(url.hostname) || url.hostname.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
+function requireHttpsUrl(value, label = 'Media URL') {
+  let url;
+  try {
+    url = new URL(String(value || ''));
+  } catch {
+    throw Object.assign(new Error(`${label} must be a valid HTTPS URL`), { status: 422 });
+  }
+  if (url.protocol !== 'https:' || isLocalhostUrl(value)) {
+    throw Object.assign(new Error(`${label} must be a public HTTPS URL. Localhost and HTTP URLs cannot be sent by WhatsApp.`), { status: 422 });
+  }
+  return url.toString();
+}
+
+function stableButtonId(button, index) {
+  const source = button.id || button.payload || button.title || `option_${index + 1}`;
+  return String(source).trim().replace(/\s+/g, '_').toLowerCase();
+}
+
+function normalizeButtons(buttons = []) {
+  const rows = Array.isArray(buttons)
+    ? buttons
+    : String(buttons || '').split(',').map((title) => ({ title: title.trim() })).filter((item) => item.title);
+  return rows.map((button, index) => ({
+    ...button,
+    id: stableButtonId(button, index),
+    payload: button.payload || stableButtonId(button, index),
+    title: String(button.title || button.label || button.id || `Option ${index + 1}`).trim().slice(0, 20)
+  })).filter((button) => button.id && button.title);
 }
 
 function serializeFlow(flow) {
@@ -66,16 +131,30 @@ class FlowService {
     ];
   }
 
-  async list() {
+  async list(userId = null) {
+    const accessWhere = userId ? await whatsappAccountAccessService.whereForUser(userId) : {};
+    const context = userId ? await whatsappAccountAccessService.userContext(userId) : null;
+    const departmentWhere = context && !context.isAdmin
+      ? { [Op.or]: [{ departmentId: null }, { departmentId: { [Op.in]: (context.user.roles || []).map((role) => role.id) } }] }
+      : {};
     const flows = await Flow.findAll({
+      where: Object.keys(departmentWhere).length ? { [Op.and]: [accessWhere, departmentWhere] } : accessWhere,
       include: [{ model: FlowRun, as: 'runs', attributes: ['id', 'status'], required: false }],
       order: [['updated_at', 'DESC']]
     });
     return flows.map(serializeFlow);
   }
 
-  async get(id) {
-    const flow = await Flow.findByPk(id, {
+  async get(id, userId = null) {
+    const accessWhere = userId ? await whatsappAccountAccessService.whereForUser(userId) : {};
+    const context = userId ? await whatsappAccountAccessService.userContext(userId) : null;
+    const departmentWhere = context && !context.isAdmin
+      ? { [Op.or]: [{ departmentId: null }, { departmentId: { [Op.in]: (context.user.roles || []).map((role) => role.id) } }] }
+      : {};
+    const flow = await Flow.findOne({
+      where: Object.keys(departmentWhere).length
+        ? { [Op.and]: [{ id, ...accessWhere }, departmentWhere] }
+        : { id, ...accessWhere },
       include: this.includeBuilder(),
       order: [[{ model: FlowNode, as: 'nodes' }, 'id', 'ASC'], [{ model: FlowConnection, as: 'connections' }, 'id', 'ASC']]
     });
@@ -84,6 +163,9 @@ class FlowService {
   }
 
   async create(payload, createdBy) {
+    const selectedAccountId = await whatsappAccountAccessService.resolveSelection(payload.whatsappAccountId, createdBy);
+    await whatsappAccountAccessService.assertDepartmentAccess(payload.departmentId, createdBy);
+    const defaultAccount = selectedAccountId ? null : await whatsappAccountService.runtimeConfig().catch(() => null);
     const flow = await Flow.create({
       name: payload.name || 'Untitled Flow',
       description: payload.description || null,
@@ -96,6 +178,8 @@ class FlowService {
         keywords: normalizeKeywords(payload.triggerKeywords)
       },
       whatsappPhoneNumberId: payload.whatsappPhoneNumberId || null,
+      whatsappAccountId: selectedAccountId || defaultAccount?.whatsappAccountId || null,
+      departmentId: payload.departmentId || null,
       createdBy
     });
     return this.get(flow.id);
@@ -111,6 +195,8 @@ class FlowService {
       triggerKeywords: payload.triggerKeywords !== undefined ? normalizeKeywords(payload.triggerKeywords) : flow.triggerKeywords,
       triggerConfig: payload.triggerConfig ?? flow.triggerConfig,
       whatsappPhoneNumberId: payload.whatsappPhoneNumberId ?? flow.whatsappPhoneNumberId
+      , whatsappAccountId: payload.whatsappAccountId ?? flow.whatsappAccountId
+      , departmentId: payload.departmentId !== undefined ? (payload.departmentId || null) : flow.departmentId
     });
     return this.get(id);
   }
@@ -180,12 +266,57 @@ class FlowService {
     });
     for (const node of nodes) {
       const config = node.configJson || {};
-      if (node.nodeType === 'text_message' && !String(config.message || '').trim()) errors.push({ nodeKey: node.nodeKey, message: 'Text message body is required.' });
+      const missing = (value) => !String(value ?? '').trim();
+      const addRequired = (condition, message) => {
+        if (condition) errors.push({ nodeKey: node.nodeKey, message });
+      };
+      if (['text_message', 'interactive_message', 'button_message', 'list_message'].includes(node.nodeType)) {
+        addRequired(missing(config.message), 'Message body is required.');
+      }
+      if (node.nodeType === 'interactive_message') {
+        addRequired(config.headerType === 'text' && missing(config.headerText), 'Header text is required.');
+        addRequired(config.headerType === 'media' && missing(config.headerMediaUrl), 'Header media is required.');
+      }
+      if (node.nodeType === 'image_message' || node.nodeType === 'video_message' || node.nodeType === 'audio_message') {
+        if (node.nodeType === 'image_message') {
+          const sourceType = config.sourceType || (config.whatsappMediaId ? 'media_id' : 'url');
+          addRequired(sourceType === 'media_id' && missing(config.whatsappMediaId), 'WhatsApp media ID is required.');
+          addRequired(sourceType === 'url' && missing(config.imageUrl || config.mediaUrl), 'A public HTTPS image URL is required.');
+          addRequired(sourceType === 'upload' && missing(config.whatsappMediaId), 'Upload the image before publishing.');
+          if (sourceType === 'url' && !missing(config.imageUrl || config.mediaUrl)) {
+            try { requireHttpsUrl(config.imageUrl || config.mediaUrl, 'Image URL'); } catch (error) { errors.push({ nodeKey: node.nodeKey, message: error.message }); }
+          }
+        } else {
+          addRequired(missing(config.mediaUrl), 'Media is required.');
+        }
+      }
+      if (node.nodeType === 'file_document') {
+        addRequired(missing(config.fileUrl), 'Document is required.');
+        addRequired(missing(config.fileName), 'Document filename is required.');
+      }
+      if (node.nodeType === 'ai_reply') {
+        addRequired(missing(config.prompt), 'AI prompt is required.');
+        addRequired(missing(config.fallbackMessage), 'AI fallback message is required.');
+      }
+      if (node.nodeType === 'assign') {
+        addRequired(missing(config.departmentId) && missing(config.assignedAgentId), 'A department or user assignment is required.');
+      }
+      if (node.nodeType === 'delay_wait') {
+        addRequired(!Number(config.amount) || Number(config.amount) < 1, 'Delay must be at least 1.');
+        addRequired(missing(config.unit), 'Delay unit is required.');
+      }
+      if (node.nodeType === 'user_input') {
+        addRequired(missing(config.question), 'User input question is required.');
+        addRequired(missing(config.saveAs), 'User input answer field is required.');
+        addRequired(!Number(config.timeoutMinutes) || Number(config.timeoutMinutes) < 1, 'User input timeout must be at least 1 minute.');
+      }
       if (['interactive_message', 'button_message', 'list_message'].includes(node.nodeType)) {
-        const options = config.buttons || config.rows || [];
+        const options = config.buttons || config.rows || config.sections?.flatMap((section) => section.rows || []) || [];
         const normalized = Array.isArray(options) ? options : String(options || '').split(',').filter(Boolean);
+        addRequired(!normalized.length, 'At least one button or option is required.');
         for (const option of normalized) {
           const handle = typeof option === 'string' ? option.trim() : option.id || option.payload || option.title;
+          addRequired(typeof option !== 'string' && missing(option.title || option.label), 'Every button or option needs a label.');
           if (handle && !edges.some((edge) => edge.sourceNodeKey === node.nodeKey && edge.sourceHandle === handle)
             && !edges.some((edge) => edge.sourceNodeKey === node.nodeKey && ['next', 'fallback'].includes(edge.sourceHandle))) {
             errors.push({ nodeKey: node.nodeKey, message: `Option "${handle}" needs a branch or fallback.` });
@@ -206,6 +337,8 @@ class FlowService {
       triggerKeywords: source.triggerKeywords,
       triggerConfig: source.triggerConfig,
       whatsappPhoneNumberId: source.whatsappPhoneNumberId,
+      whatsappAccountId: source.whatsappAccountId,
+      departmentId: source.departmentId,
       createdBy
     });
     await this.saveBuilder(copy.id, {
@@ -258,10 +391,16 @@ class FlowService {
   }
 
   async deleteNode(flowId, nodeKey) {
-    await FlowConnection.destroy({ where: { flowId, [Op.or]: [{ sourceNodeKey: nodeKey }, { targetNodeKey: nodeKey }] } });
-    const deleted = await FlowNode.destroy({ where: { flowId, nodeKey } });
-    if (!deleted) throw Object.assign(new Error('Flow node not found'), { status: 404 });
-    return { deleted: true, nodeKey };
+    return sequelize.transaction(async (transaction) => {
+      const node = await FlowNode.findOne({ where: { flowId, nodeKey }, transaction });
+      if (!node) throw Object.assign(new Error('Flow node not found'), { status: 404 });
+      const connectionsDeleted = await FlowConnection.destroy({
+        where: { flowId, [Op.or]: [{ sourceNodeKey: nodeKey }, { targetNodeKey: nodeKey }] },
+        transaction
+      });
+      await node.destroy({ transaction });
+      return { deleted: true, nodeKey, connectionsDeleted };
+    });
   }
 
   async createConnection(flowId, payload) {
@@ -319,6 +458,32 @@ class FlowService {
     });
   }
 
+  async uploadFlowMedia(flowId, payload = {}) {
+    const flow = await this.get(flowId);
+    const mimeType = String(payload.mimeType || '').toLowerCase();
+    const allowed = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+    if (!allowed.has(mimeType)) {
+      throw Object.assign(new Error('Flow images must be JPG, PNG, or WebP.'), { status: 422 });
+    }
+    const rawBase64 = String(payload.dataBase64 || '').replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(rawBase64, 'base64');
+    if (!buffer.length) throw Object.assign(new Error('Uploaded image is empty.'), { status: 422 });
+    const safeName = String(payload.fileName || `flow-image-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const tempPath = path.join(os.tmpdir(), `${Date.now()}-${safeName}`);
+    try {
+      fs.writeFileSync(tempPath, buffer);
+      const response = await whatsappService.uploadMedia({
+        filePath: tempPath,
+        mimeType,
+        whatsappAccountId: flow.whatsappAccountId || payload.whatsappAccountId || null
+      });
+      if (!response?.id) throw Object.assign(new Error('WhatsApp media upload did not return a media ID.'), { status: 502 });
+      return { whatsappMediaId: response.id, meta: response };
+    } finally {
+      fs.unlink(tempPath, () => {});
+    }
+  }
+
   firstNode(flow) {
     const incoming = new Set((flow.connections || []).map((edge) => edge.targetNodeKey));
     return (flow.nodes || []).find((node) => node.nodeType === 'start') || (flow.nodes || []).find((node) => !incoming.has(node.nodeKey)) || flow.nodes?.[0];
@@ -366,6 +531,7 @@ class FlowService {
       leadId: lead?.id || context.leadId || null,
       currentNodeKey: null,
       status: 'running',
+      whatsappAccountId: flow.whatsappAccountId || context.whatsappAccountId || null,
       contextJson: context,
       lastWhatsappMessageId: context.whatsappMessageId || null
     });
@@ -380,6 +546,7 @@ class FlowService {
       department: conversation?.assignedRole?.toJSON ? conversation.assignedRole.toJSON() : context.department || {},
       createdAt: new Date().toISOString(),
       flowId: flow.id
+      , whatsappAccountId: flow.whatsappAccountId || context.whatsappAccountId || conversation?.whatsappAccountId || contact?.whatsappAccountId || context.contact?.whatsappAccountId || null
     };
 
     let node = options.startNode || this.firstNode(flow);
@@ -414,7 +581,16 @@ class FlowService {
       return this.getRun(run.id);
     } catch (error) {
       if (node) await this.incrementNodeStats(node, { errors: 1 });
-      await run.update({ status: 'failed', completedAt: new Date(), contextJson: runContext });
+      await run.update({
+        status: 'failed',
+        completedAt: new Date(),
+        contextJson: runContext,
+        errorMessage: error.message || 'Flow execution failed',
+        failedNodeId: node?.nodeKey || null,
+        failedNodeType: node?.nodeType || null,
+        whatsappApiResponse: error.whatsappApiResponse || error.metaError || error.response?.data || null,
+        payloadSent: error.payloadSent || null
+      });
       throw error;
     }
   }
@@ -600,7 +776,10 @@ class FlowService {
       await this.log(run, node, 'completed', context, { skipped: false });
       return {};
     } catch (error) {
-      await this.log(run, node, 'failed', context, {}, error.message);
+      await this.log(run, node, 'failed', context, {
+        whatsappApiResponse: error.whatsappApiResponse || error.metaError || error.response?.data || null,
+        payloadSent: error.payloadSent || null
+      }, error.message);
       throw error;
     }
   }
@@ -618,13 +797,23 @@ class FlowService {
     if (!realSendEnabled) return { status: 'simulated', to, text, nodeType: node.nodeType };
     let response;
     let storedType = 'text';
+    let sentMediaId = null;
+    let sentMediaUrl = null;
+    let sentInteractiveType = null;
     if (node.nodeType === 'text_message' || node.nodeType.startsWith('ai_')) {
-      response = await whatsappService.sendTextMessage({ to, text, log: false });
+      response = await whatsappService.sendTextMessage({ to, text, log: false, whatsappAccountId: context.whatsappAccountId });
     } else if (['button_message', 'interactive_message'].includes(node.nodeType)) {
-      const buttons = Array.isArray(config.buttons)
-        ? config.buttons
-        : String(config.buttons || '').split(',').map((title) => ({ id: title.trim(), title: title.trim() })).filter((item) => item.id);
-      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, header: config.header, buttons });
+      const buttons = normalizeButtons(config.buttons).slice(0, 3);
+      if (!buttons.length) throw Object.assign(new Error('Interactive button node requires at least one button.'), { status: 422 });
+      const header = config.header || (
+        config.headerType === 'text'
+          ? { type: 'text', text: config.headerText }
+          : config.headerType === 'media'
+            ? { type: config.headerMediaType || 'image', url: config.headerMediaUrl }
+            : null
+      );
+      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, header, buttons, log: false, whatsappAccountId: context.whatsappAccountId });
+      sentInteractiveType = 'button';
     } else if (node.nodeType === 'list_message' || node.nodeType === 'appointment_booking') {
       const rows = node.nodeType === 'appointment_booking'
         ? (config.slots || []).map((slot) => ({ id: slot.id || slot.value || slot, title: slot.title || slot.label || slot }))
@@ -632,27 +821,38 @@ class FlowService {
       const sections = config.sections?.length
         ? config.sections
         : [{ title: config.sectionTitle || 'Options', rows }];
-      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, sections, buttonText: config.buttonText || 'Choose' });
+      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, sections, buttonText: String(config.buttonText || 'Choose').slice(0, 20), log: false, whatsappAccountId: context.whatsappAccountId });
+      sentInteractiveType = 'list';
     } else if (node.nodeType === 'whatsapp_flow') {
       response = await whatsappService.sendWhatsAppFlowMessage({
         to, body: text, flowId: config.flowId, flowToken: config.flowToken,
-        screen: config.screen, data: config.data || {}
+        screen: config.screen, data: config.data || {}, whatsappAccountId: context.whatsappAccountId
       });
     } else if (node.nodeType === 'image_message') {
       storedType = 'image';
-      response = await whatsappService.sendMediaMessage({ to, mediaType: 'image', url: config.mediaUrl, caption: text, log: false });
+      const sourceType = config.sourceType || (config.whatsappMediaId ? 'media_id' : 'url');
+      const mediaId = config.whatsappMediaId || config.mediaId || null;
+      const imageUrl = config.imageUrl || config.mediaUrl || null;
+      if (sourceType === 'media_id' || mediaId) {
+        if (!mediaId) throw Object.assign(new Error('WhatsApp media ID is required for this image node.'), { status: 422 });
+        response = await whatsappService.sendMediaMessage({ to, mediaType: 'image', mediaId, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
+        sentMediaId = mediaId;
+      } else {
+        sentMediaUrl = requireHttpsUrl(imageUrl, 'Image URL');
+        response = await whatsappService.sendMediaMessage({ to, mediaType: 'image', url: sentMediaUrl, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
+      }
     } else if (node.nodeType === 'video_message') {
       storedType = 'video';
-      response = await whatsappService.sendMediaMessage({ to, mediaType: 'video', url: config.mediaUrl, caption: text, log: false });
+      response = await whatsappService.sendMediaMessage({ to, mediaType: 'video', url: config.mediaUrl, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
     } else if (node.nodeType === 'audio_message') {
       storedType = 'audio';
-      response = await whatsappService.sendMediaMessage({ to, mediaType: 'audio', url: config.mediaUrl, log: false });
+      response = await whatsappService.sendMediaMessage({ to, mediaType: 'audio', url: config.mediaUrl, log: false, whatsappAccountId: context.whatsappAccountId });
     } else if (node.nodeType === 'file_document') {
       storedType = 'document';
-      response = await whatsappService.sendMediaMessage({ to, mediaType: 'document', url: config.fileUrl, filename: config.fileName, caption: text, log: false });
+      response = await whatsappService.sendMediaMessage({ to, mediaType: 'document', url: config.fileUrl, filename: config.fileName, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
     } else if (node.nodeType === 'location') {
       storedType = 'location';
-      response = await whatsappService.sendLocationMessage({ to, ...config, log: false });
+      response = await whatsappService.sendLocationMessage({ to, ...config, log: false, whatsappAccountId: context.whatsappAccountId });
     }
     await outboundHistoryService.record({
       conversationId: context.conversationId || context.conversation?.id || null,
@@ -663,7 +863,11 @@ class FlowService {
       type: storedType,
       messageType: 'flow_automation',
       text,
+      mediaId: sentMediaId,
+      mediaUrl: sentMediaUrl,
+      interactiveType: sentInteractiveType,
       status: 'sent',
+      whatsappAccountId: context.whatsappAccountId || null,
       rawPayload: { source: 'flow', flowId: context.flowId || null, nodeKey: node.nodeKey, whatsapp: response }
     });
     return { status: 'completed', response, to, text, nodeType: node.nodeType };
@@ -672,7 +876,7 @@ class FlowService {
   async handleInboundMessage({
     text, contact, lead, conversation = null, messageType = 'text',
     interactiveType = null, buttonPayload = null, whatsappMessageId = null,
-    replyToWhatsappMessageId = null, rawPayload = null
+    replyToWhatsappMessageId = null, rawPayload = null, whatsappAccountId = null
   }) {
     if (!text) return null;
     if (whatsappMessageId) {
@@ -682,7 +886,7 @@ class FlowService {
 
     const waitingRun = contact?.id
       ? await FlowRun.findOne({
-          where: { contactId: contact.id, status: 'waiting', waitingForReply: true },
+          where: { contactId: contact.id, whatsappAccountId, status: 'waiting', waitingForReply: true },
           order: [['updated_at', 'DESC']]
         })
       : null;
@@ -702,6 +906,7 @@ class FlowService {
         replyToWhatsappMessageId,
         rawPayload,
         __replyingToNode: waitingNode.nodeKey
+        , whatsappAccountId
       };
       if (waitingNode.nodeType === 'appointment_booking') {
         const appointmentAt = new Date(buttonPayload || text);
@@ -747,8 +952,16 @@ class FlowService {
       return this.executeFlow(flow, context, { run: waitingRun, startNode });
     }
 
-    const flows = await Flow.findAll({ where: { status: 'published' }, include: this.includeBuilder() });
-    const normalized = String(text).trim().toLowerCase();
+    const flows = await Flow.findAll({
+      where: {
+        status: 'published',
+        [Op.and]: [
+          { [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null }] },
+          { [Op.or]: [{ departmentId: null }, { departmentId: conversation?.assignedRoleId || null }] }
+        ]
+      },
+      include: this.includeBuilder()
+    });
     const flow = flows.find((candidate) => {
       const config = candidate.triggerConfig || {};
       const source = config.source || candidate.triggerType || 'inbound_message';
@@ -757,15 +970,10 @@ class FlowService {
       if (source === 'interactive_button_reply' && interactiveType !== 'button_reply' && messageType !== 'button_reply') return false;
       if (source === 'list_reply' && interactiveType !== 'list_reply') return false;
       if (source === 'campaign_response' && !replyToWhatsappMessageId) return false;
-      const keywords = normalizeKeywords(config.keywords?.length ? config.keywords : candidate.triggerKeywords);
+      const keywords = normalizeTriggerKeywords(config.keywords?.length ? config.keywords : candidate.triggerKeywords);
       if (!keywords.length) return ['inbound_message', 'manual'].includes(source);
-      const matchType = config.matchType || 'contains';
-      return keywords.some((keyword) => {
-        const expected = String(keyword).trim().toLowerCase();
-        if (matchType === 'exact') return normalized === expected;
-        if (matchType === 'starts_with') return normalized.startsWith(expected);
-        return normalized.includes(expected);
-      });
+      const matchType = config.matchType || config.keywordMatchMode || 'contains';
+      return matchesTriggerKeyword(text, keywords, matchType);
     });
     if (!flow) return null;
     return this.executeFlow(flow, {
@@ -782,6 +990,7 @@ class FlowService {
       rawPayload,
       contact: contact ? { ...contact.toJSON(), name: contactName(contact) } : null,
       lead: lead ? lead.toJSON() : null
+      , whatsappAccountId
     });
   }
 

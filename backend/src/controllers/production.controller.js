@@ -21,8 +21,8 @@ class ProductionController {
   async listSettings(req, res, next) { try { return ok(res, await settingsService.list()); } catch (err) { next(err); } }
   async saveSetting(req, res, next) { try { return ok(res, await settingsService.upsert(req.params.namespace, req.params.key, req.body.value || req.body, req.user?.id || null)); } catch (err) { next(err); } }
   async reports(req, res, next) { try { return ok(res, await reportService.summary(req.query)); } catch (err) { next(err); } }
-  async reportOptions(req, res, next) { try { return ok(res, await reportService.options()); } catch (err) { next(err); } }
-  async reportByType(req, res, next) { try { return ok(res, await reportService.report(req.params.type, req.query)); } catch (err) { next(err); } }
+  async reportOptions(req, res, next) { try { return ok(res, await reportService.options(req.user?.id)); } catch (err) { next(err); } }
+  async reportByType(req, res, next) { try { return ok(res, await reportService.report(req.params.type, req.query, req.user?.id)); } catch (err) { next(err); } }
   async listBackups(req, res, next) { try { return ok(res, await backupService.list()); } catch (err) { next(err); } }
   async exportBackup(req, res, next) { try { return ok(res, await backupService.export(req.user?.id || null), 201); } catch (err) { next(err); } }
   async downloadBackup(req, res, next) {

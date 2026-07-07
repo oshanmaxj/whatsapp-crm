@@ -5,13 +5,14 @@ class ConversationService {
     return Conversation.findOne({ where: { whatsappThreadId: threadId } });
   }
 
-  async createConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt }) {
+  async createConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId = null }) {
     return Conversation.create({
       contactId,
       leadId,
       whatsappThreadId,
       assignedUserId: assignedTo,
-      lastMessageAt
+      lastMessageAt,
+      whatsappAccountId
     });
   }
 
@@ -25,11 +26,11 @@ class ConversationService {
     return conversation.update({ summary, suggestedAgent });
   }
 
-  async upsertConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt }) {
+  async upsertConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId = null }) {
     let conversation = await this.findByThreadId(whatsappThreadId);
     if (!conversation && contactId) {
       conversation = await Conversation.findOne({
-        where: { contactId },
+        where: { contactId, whatsappAccountId },
         order: [['last_message_at', 'DESC'], ['updated_at', 'DESC']]
       });
     }
@@ -40,10 +41,11 @@ class ConversationService {
         whatsappThreadId,
         assignedUserId: assignedTo ?? conversation.assignedUserId,
         lastMessageAt
+        , whatsappAccountId: whatsappAccountId ?? conversation.whatsappAccountId
       });
     }
 
-    return this.createConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt });
+    return this.createConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId });
   }
 }
 

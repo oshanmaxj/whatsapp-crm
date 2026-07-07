@@ -1,4 +1,8 @@
-const { Permission, Role, RolePermission, sequelize, User, UserPermissionOverride, UserRole } = require('../models');
+const { Op } = require('sequelize');
+const {
+  Permission, Role, RolePermission, sequelize, User, UserPermissionOverride,
+  UserRole, WhatsAppAccount
+} = require('../models');
 const logger = require('../config/logger');
 
 const ROLE_NAMES = ['Admin', 'Manager', 'Agent', 'Marketing', 'Accountant', 'Lecturer'];
@@ -21,15 +25,18 @@ const PERMISSION_GROUPS = [
   'Settings',
   'Connect WhatsApp',
   'Flow Builder',
-  'User Manager'
+  'User Manager',
+  'Accounting'
 ];
 const PERMISSION_ACTIONS = ['View', 'Create', 'Edit', 'Delete', 'Export', 'Send'];
 const EXTRA_PERMISSION_ACTIONS = {
-  'Flow Builder': ['Publish', 'Test']
+  'Flow Builder': ['Publish', 'Test'],
+  Fees: ['Confirm Payment'],
+  Accounting: ['Confirm Income']
 };
 
 function permissionCode(group, action) {
-  return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase()}`;
+  return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase().replace(/\s+/g, '_')}`;
 }
 
 function serializeUser(user) {
@@ -194,6 +201,16 @@ class UserService {
           error
         });
       });
+    }
+
+    const confirmationCodes = new Set(['fees.confirm_payment', 'accounting.confirm_income']);
+    for (const roleName of ['Manager', 'Accountant']) {
+      for (const permission of permissions.filter((item) => confirmationCodes.has(item.code))) {
+        await RolePermission.findOrCreate({
+          where: { roleId: roles[roleName].id, permissionId: permission.id },
+          defaults: { roleId: roles[roleName].id, permissionId: permission.id }
+        });
+      }
     }
 
     return { roles, permissions };
@@ -405,7 +422,10 @@ class UserService {
   async getRoles({ includeInactive = false } = {}) {
     return Role.findAll({
       where: includeInactive ? {} : { isActive: true },
-      include: [{ model: Permission, as: 'permissions' }],
+      include: [
+        { model: Permission, as: 'permissions' },
+        { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false }
+      ],
       order: [['name', 'ASC']]
     });
   }
@@ -414,39 +434,76 @@ class UserService {
     const chatVisibilityScope = ['all', 'assigned_only', 'role_only', 'role_and_assigned'].includes(payload.chatVisibilityScope)
       ? payload.chatVisibilityScope
       : 'assigned_only';
-    const [role] = await Role.findOrCreate({
-      where: { name: String(payload.name).trim().toLowerCase() },
-      defaults: { description: payload.description || null, chatVisibilityScope }
+    return sequelize.transaction(async (transaction) => {
+      const [role] = await Role.findOrCreate({
+        where: { name: String(payload.name).trim().toLowerCase() },
+        defaults: { description: payload.description || null, chatVisibilityScope },
+        transaction
+      });
+      if (payload.description !== undefined) await role.update({ description: payload.description }, { transaction });
+      if (payload.whatsappAccountIds !== undefined) {
+        const accounts = await this.resolveWhatsAppAccounts(payload.whatsappAccountIds, transaction);
+        await role.setWhatsappAccounts(accounts, { transaction });
+      }
+      return role.reload({
+        include: [
+          { model: Permission, as: 'permissions' },
+          { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false }
+        ],
+        transaction
+      });
     });
-    if (payload.description !== undefined) await role.update({ description: payload.description });
-    return role.reload({ include: [{ model: Permission, as: 'permissions' }] });
   }
 
   async updateRole(id, payload) {
-    const role = await Role.findByPk(id);
-    if (!role) {
-      const error = new Error('Role not found');
-      error.status = 404;
-      throw error;
-    }
-    if (payload.chatVisibilityScope !== undefined && !['all', 'assigned_only', 'role_only', 'role_and_assigned'].includes(payload.chatVisibilityScope)) {
-      throw Object.assign(new Error('Invalid chat visibility scope'), { status: 422 });
-    }
-    if (
-      String(role.name).trim().toLowerCase() === 'admin'
-      && payload.isActive === false
-    ) {
-      throw Object.assign(new Error('The ADMIN department cannot be deactivated because it protects administrator access'), { status: 409 });
-    }
-    await role.update({
-      name: payload.name ? String(payload.name).trim().toLowerCase() : role.name,
-      description: payload.description !== undefined ? payload.description : role.description,
-      chatVisibilityScope: payload.chatVisibilityScope ?? role.chatVisibilityScope,
-      receiveDepartmentAssignmentNotifications: payload.receiveDepartmentAssignmentNotifications
-        ?? role.receiveDepartmentAssignmentNotifications,
-      isActive: payload.isActive ?? role.isActive
+    return sequelize.transaction(async (transaction) => {
+      const role = await Role.findByPk(id, { transaction });
+      if (!role) {
+        const error = new Error('Role not found');
+        error.status = 404;
+        throw error;
+      }
+      if (payload.chatVisibilityScope !== undefined && !['all', 'assigned_only', 'role_only', 'role_and_assigned'].includes(payload.chatVisibilityScope)) {
+        throw Object.assign(new Error('Invalid chat visibility scope'), { status: 422 });
+      }
+      if (String(role.name).trim().toLowerCase() === 'admin' && payload.isActive === false) {
+        throw Object.assign(new Error('The ADMIN department cannot be deactivated because it protects administrator access'), { status: 409 });
+      }
+      await role.update({
+        name: payload.name ? String(payload.name).trim().toLowerCase() : role.name,
+        description: payload.description !== undefined ? payload.description : role.description,
+        chatVisibilityScope: payload.chatVisibilityScope ?? role.chatVisibilityScope,
+        receiveDepartmentAssignmentNotifications: payload.receiveDepartmentAssignmentNotifications
+          ?? role.receiveDepartmentAssignmentNotifications,
+        isActive: payload.isActive ?? role.isActive
+      }, { transaction });
+      if (payload.whatsappAccountIds !== undefined) {
+        const accounts = await this.resolveWhatsAppAccounts(payload.whatsappAccountIds, transaction);
+        await role.setWhatsappAccounts(accounts, { transaction });
+      }
+      return role.reload({
+        include: [
+          { model: Permission, as: 'permissions' },
+          { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false }
+        ],
+        transaction
+      });
     });
-    return role.reload({ include: [{ model: Permission, as: 'permissions' }] });
+  }
+
+  async resolveWhatsAppAccounts(ids, transaction = null) {
+    const normalized = [...new Set((Array.isArray(ids) ? ids : [ids])
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0))];
+    if (!normalized.length) return [];
+    const accounts = await WhatsAppAccount.findAll({
+      where: { id: { [Op.in]: normalized }, status: 'active' },
+      transaction
+    });
+    if (accounts.length !== normalized.length) {
+      throw Object.assign(new Error('One or more WhatsApp accounts are invalid or inactive'), { status: 422 });
+    }
+    return accounts;
   }
 
   async deactivateRole(id) {

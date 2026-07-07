@@ -14,6 +14,16 @@ const broadcastQueueTrackingMigration = require('../../migrations/009_add_broadc
 const messageContextFieldsMigration = require('../../migrations/010_add_message_context_fields');
 const interactiveMessageFieldsMigration = require('../../migrations/011_add_interactive_message_fields');
 const flowBuilderUpgradeMigration = require('../../migrations/012_upgrade_flow_builder');
+const multiWhatsAppAccountsMigration = require('../../migrations/013_add_multi_whatsapp_accounts');
+const departmentWhatsAppAccountsMigration = require('../../migrations/014_add_department_whatsapp_accounts');
+const repairDepartmentWhatsAppMappingMigration = require('../../migrations/015_repair_department_whatsapp_mapping');
+const accountingMigration = require('../../migrations/016_add_accounting');
+const paymentApprovalMigration = require('../../migrations/017_add_payment_approval_and_notification_templates');
+const studentLmsPortalMigration = require('../../migrations/018_add_student_lms_portal');
+const studentAutomationSecureLmsMigration = require('../../migrations/019_add_student_message_automation_and_secure_live_classes');
+const studentEnrollmentsMigration = require('../../migrations/020_add_student_enrollments');
+const courseSchedulerMigration = require('../../migrations/021_add_course_scheduler_and_zoom_recordings');
+const flowRunErrorDetailsMigration = require('../../migrations/022_add_flow_run_error_details');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -101,6 +111,36 @@ async function run() {
 
     await flowBuilderUpgradeMigration.up(queryInterface, Sequelize);
     console.log('Applied: flow builder runtime upgrade');
+
+    await multiWhatsAppAccountsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: multi WhatsApp account support');
+
+    await departmentWhatsAppAccountsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: department WhatsApp account mapping');
+
+    await repairDepartmentWhatsAppMappingMigration.up(queryInterface, Sequelize);
+    console.log('Applied: department WhatsApp account mapping repair');
+
+    await accountingMigration.up(queryInterface, Sequelize);
+    console.log('Applied: accounting income and expenses');
+
+    await paymentApprovalMigration.up(queryInterface, Sequelize);
+    console.log('Applied: payment approval and notification templates');
+
+    await studentLmsPortalMigration.up(queryInterface, Sequelize);
+    console.log('Applied: student LMS portal');
+
+    await studentAutomationSecureLmsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: student message automation and secure live classes');
+
+    await studentEnrollmentsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: multi-course student enrollments');
+
+    await courseSchedulerMigration.up(queryInterface, Sequelize);
+    console.log('Applied: course scheduler and Zoom recording imports');
+
+    await flowRunErrorDetailsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: flow run error details');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

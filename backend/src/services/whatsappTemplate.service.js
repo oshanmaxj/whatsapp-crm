@@ -4,6 +4,7 @@ const path = require('path');
 const { Op } = require('sequelize');
 const { WhatsAppTemplate } = require('../models');
 const whatsappSettingsService = require('./whatsappSettings.service');
+const whatsappAccountService = require('./whatsappAccount.service');
 
 function componentsFromTemplate(template) {
   const components = [];
@@ -82,7 +83,7 @@ function normalizeQuality(value) {
 }
 
 class WhatsAppTemplateService {
-  async uploadSample({ fileName, mimeType, dataBase64 } = {}) {
+  async uploadSample({ fileName, mimeType, dataBase64, whatsappAccountId } = {}) {
     if (!fileName || !mimeType || !dataBase64) {
       throw Object.assign(new Error('Sample file name, MIME type, and data are required'), { status: 422 });
     }
@@ -99,7 +100,7 @@ class WhatsAppTemplateService {
     fs.writeFileSync(path.join(directory, safeName), buffer);
     const localUrl = `/uploads/template-samples/${safeName}`;
 
-    const settings = await whatsappSettingsService.runtimeConfig();
+    const settings = await whatsappAccountService.runtimeConfig(whatsappAccountId) || await whatsappSettingsService.runtimeConfig();
     if (process.env.WHATSAPP_SEND_ENABLED !== 'true' || !settings.accessToken || !settings.appId) {
       return {
         handle: localUrl,
@@ -148,6 +149,7 @@ class WhatsAppTemplateService {
     if (query.language) where.language = query.language;
     if (query.category) where.category = query.category;
     if (query.search) where.name = { [Op.iLike]: `%${query.search}%` };
+    if (query.whatsappAccountId) where.whatsappAccountId = query.whatsappAccountId;
     return WhatsAppTemplate.findAll({ where, order: [['updated_at', 'DESC']] });
   }
 
@@ -159,6 +161,7 @@ class WhatsAppTemplateService {
 
   async create(payload) {
     validateTemplatePayload(payload);
+    const defaultAccount = payload.whatsappAccountId ? null : await whatsappAccountService.runtimeConfig().catch(() => null);
     return WhatsAppTemplate.create({
       name: String(payload.name).trim(),
       metaTemplateId: payload.metaTemplateId || null,
@@ -172,6 +175,7 @@ class WhatsAppTemplateService {
       variables: Array.isArray(payload.variables) ? payload.variables : [],
       status: 'DRAFT',
       qualityRating: 'UNKNOWN'
+      , whatsappAccountId: payload.whatsappAccountId || defaultAccount?.whatsappAccountId || null
     });
   }
 
@@ -197,7 +201,7 @@ class WhatsAppTemplateService {
   async submit(id) {
     const template = await this.get(id);
     validateTemplatePayload(template.toJSON());
-    const settings = await whatsappSettingsService.runtimeConfig();
+    const settings = await whatsappAccountService.runtimeConfig(template.whatsappAccountId) || await whatsappSettingsService.runtimeConfig();
     if (process.env.WHATSAPP_SEND_ENABLED !== 'true' || !settings.accessToken || !settings.businessAccountId) {
       await template.update({ status: 'PENDING', lastSyncedAt: new Date() });
       return { template: await this.get(id), simulated: true, message: 'Template submission simulated. Configure Meta credentials and enable WhatsApp sending for live submission.' };
@@ -233,8 +237,8 @@ class WhatsAppTemplateService {
     return { template: await this.get(id), meta: response.data, simulated: false };
   }
 
-  async sync() {
-    const settings = await whatsappSettingsService.runtimeConfig();
+  async sync(whatsappAccountId = null) {
+    const settings = await whatsappAccountService.runtimeConfig(whatsappAccountId) || await whatsappSettingsService.runtimeConfig();
     if (!settings.accessToken || !settings.businessAccountId) {
       return { synced: 0, simulated: true, message: 'Business account ID and access token are required to sync Meta templates.' };
     }
@@ -258,7 +262,7 @@ class WhatsAppTemplateService {
       const footer = item.components?.find((component) => component.type === 'FOOTER');
       const buttons = item.components?.find((component) => component.type === 'BUTTONS')?.buttons || [];
       await WhatsAppTemplate.findOrCreate({
-        where: { metaTemplateId: item.id },
+        where: { metaTemplateId: item.id, whatsappAccountId: settings.whatsappAccountId || null },
         defaults: {
           name: item.name,
           metaTemplateId: item.id,
@@ -273,6 +277,7 @@ class WhatsAppTemplateService {
           status: normalizeMetaStatus(item.status),
           qualityRating: normalizeQuality(item.quality_score?.score || item.quality_rating),
           lastSyncedAt: new Date()
+          , whatsappAccountId: settings.whatsappAccountId || null
         }
       }).then(async ([template, created]) => {
         if (!created) {
@@ -295,12 +300,13 @@ class WhatsAppTemplateService {
     return { synced: rows.length, simulated: false };
   }
 
-  async approvedTemplateByName(name, language = null) {
+  async approvedTemplateByName(name, language = null, whatsappAccountId = null) {
     if (!name) return null;
     return WhatsAppTemplate.findOne({
       where: {
         name,
         status: 'APPROVED',
+        ...(whatsappAccountId ? { whatsappAccountId } : {}),
         ...(language ? { language } : {})
       }
     });

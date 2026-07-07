@@ -67,6 +67,7 @@ function serializeLead(lead) {
     stage: lead.stage,
     createdAt: lead.createdAt,
     updatedAt: lead.updatedAt,
+    whatsappAccountId: lead.whatsappAccountId || null,
     assignmentHistory: lead.assignments
       ? lead.assignments.map((assignment) => ({
           id: assignment.id,
@@ -158,21 +159,23 @@ class LeadService {
       notes: options.notes || null,
       stage: String(status.name).toLowerCase(),
       nextFollowupAt: options.nextFollowupAt || options.followUpDate || null
+      , whatsappAccountId: options.whatsappAccountId || null
     });
   }
 
-  buildLeadWhere({ status, source, assignedAgentId, courseInterested } = {}) {
+  buildLeadWhere({ status, source, assignedAgentId, courseInterested, whatsappAccountId } = {}) {
     const where = {};
     if (assignedAgentId) where.ownerId = assignedAgentId;
     if (courseInterested) where.courseInterested = courseInterested;
+    if (whatsappAccountId) where.whatsappAccountId = whatsappAccountId;
     return where;
   }
 
-  async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested } = {}) {
+  async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested, whatsappAccountId } = {}) {
     await this.ensureDefaultLookups();
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const where = this.buildLeadWhere({ assignedAgentId, courseInterested });
+    const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId });
     const include = this.buildLeadIncludes({ search, status, source });
 
     const { count, rows } = await Lead.findAndCountAll({
@@ -369,9 +372,9 @@ class LeadService {
     };
   }
 
-  async getOpenLeadForContact(contactId) {
+  async getOpenLeadForContact(contactId, whatsappAccountId = null) {
     return Lead.findOne({
-      where: { contactId },
+      where: { contactId, ...(whatsappAccountId ? { whatsappAccountId } : {}) },
       order: [['created_at', 'DESC']]
     });
   }

@@ -3,7 +3,7 @@ const autoReplyService = require('../services/autoReply.service');
 class AutoReplyController {
   async list(req, res, next) {
     try {
-      const replies = await autoReplyService.listReplies();
+      const replies = await autoReplyService.listReplies(req.query.whatsappAccountId);
       return res.status(200).json({ success: true, data: replies });
     } catch (err) {
       next(err);

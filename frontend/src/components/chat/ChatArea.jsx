@@ -224,6 +224,7 @@ export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, on
           <Stack direction="row" alignItems="center" gap={0.6}>
             <WhatsAppIcon sx={{ fontSize: 14, color: '#25d366' }} />
             <Typography variant="caption" color="text.secondary" noWrap>{contact?.phone || contact?.whatsappId || 'No phone number'}</Typography>
+            {conversation?.whatsappAccount?.name && <Typography variant="caption" color="primary.main" fontWeight={700} noWrap>• {conversation.whatsappAccount.name}{conversation.whatsappAccount.phoneNumber ? ` (${conversation.whatsappAccount.phoneNumber})` : ''}</Typography>}
             <Typography variant="caption" color="text.disabled">•</Typography>
             <Typography variant="caption" color="text.secondary" noWrap>
               {[

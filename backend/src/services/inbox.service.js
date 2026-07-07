@@ -19,7 +19,8 @@ const {
   Message,
   MessageTemplate,
   Role,
-  User
+  User,
+  WhatsAppAccount
 } = require('../models');
 
 const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'media');
@@ -167,6 +168,7 @@ class InboxService {
       { model: User, as: 'assignee', attributes: ['id', 'firstName', 'lastName', 'email'], required: false },
       { model: User, as: 'assignedUser', attributes: ['id', 'firstName', 'lastName', 'email'], required: false },
       { model: Role, as: 'assignedRole', attributes: ['id', 'name', 'description'], required: false },
+      { model: WhatsAppAccount, as: 'whatsappAccount', attributes: ['id', 'name', 'phoneNumber', 'phoneNumberId'], required: false },
       { model: Label, as: 'labels', through: { attributes: [] }, required: false }
     ];
   }
@@ -181,7 +183,8 @@ class InboxService {
     assigned_role_id,
     mine,
     status,
-    unread
+    unread,
+    whatsappAccountId
   } = {}, userId) {
     const filters = {};
     const requestedAssignee = assignedUserId || assigned_user_id || assignedTo || assigned_to;
@@ -198,6 +201,7 @@ class InboxService {
       else filters.id = null;
     }
     if (status) filters.status = status;
+    if (whatsappAccountId) filters.whatsappAccountId = whatsappAccountId;
     const where = await conversationAccessService.scopedWhere(userId, filters);
 
     const contactWhere = {};
@@ -462,7 +466,8 @@ class InboxService {
     const replyContext = await resolveReplyContext(conversationId, replyToMessageId);
     const uploadResponse = await whatsappService.uploadMedia({
       filePath: storagePath,
-      mimeType
+      mimeType,
+      whatsappAccountId: conversation.whatsappAccountId
     });
     const metaMediaId = uploadResponse?.id;
     if (!metaMediaId) {
@@ -481,6 +486,7 @@ class InboxService {
       contextMessageId: replyContext.replyToWhatsappMessageId,
       log: false,
       returnMetaResponse: true
+      , whatsappAccountId: conversation.whatsappAccountId
     });
     const whatsappMessageId = sendResult.message?.id;
     if (!whatsappMessageId) {
@@ -488,7 +494,7 @@ class InboxService {
       error.status = 502;
       throw error;
     }
-    const runtimeConfig = await whatsappService.getRuntimeConfig();
+    const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
 
     return sequelize.transaction(async (transaction) => {
       const message = await Message.create({
@@ -504,6 +510,7 @@ class InboxService {
         fromNumber: runtimeConfig.phoneNumberId || null,
         toNumber,
         status: 'sent',
+        whatsappAccountId: conversation.whatsappAccountId || null,
         replyToMessageId: replyContext.replyToMessageId,
         replyToWhatsappMessageId: replyContext.replyToWhatsappMessageId,
         isRead: true,

@@ -31,6 +31,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(150),
       allowNull: true
     },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     notes: {
       type: DataTypes.TEXT,
       allowNull: true

@@ -45,20 +45,21 @@ class OutboundHistoryService {
         whatsappId: normalized,
         firstName: parts.shift() || 'WhatsApp',
         lastName: parts.join(' ') || null,
-        status: 'active'
+        status: 'active',
+        whatsappAccountId: null
       }
     });
     return contact;
   }
 
-  async resolveConversation({ conversationId, contact, leadId }) {
+  async resolveConversation({ conversationId, contact, leadId, whatsappAccountId = null }) {
     if (conversationId) {
       const byId = await Conversation.findByPk(conversationId);
       if (byId) return byId;
     }
 
     let conversation = await Conversation.findOne({
-      where: { contactId: contact.id },
+      where: { contactId: contact.id, whatsappAccountId },
       order: [['last_message_at', 'DESC'], ['updated_at', 'DESC']]
     });
     if (conversation) {
@@ -69,7 +70,8 @@ class OutboundHistoryService {
     conversation = await Conversation.create({
       contactId: contact.id,
       leadId: leadId || null,
-      whatsappThreadId: contact.whatsappId || normalizePhone(contact.phone),
+      whatsappThreadId: [whatsappAccountId || 'default', contact.whatsappId || normalizePhone(contact.phone)].join(':'),
+      whatsappAccountId,
       status: 'open',
       lastMessageAt: new Date()
     });
@@ -91,6 +93,10 @@ class OutboundHistoryService {
         type: payload.type || 'text',
         messageType: payload.messageType || payload.type || 'text',
         text: payload.text || null,
+        mediaId: payload.mediaId || null,
+        mediaUrl: payload.mediaUrl || null,
+        interactiveType: payload.interactiveType || null,
+        buttonPayload: payload.buttonPayload || null,
         templateName: payload.templateName || null,
         campaignId: payload.campaignId || null,
         campaignRecipientId: payload.campaignRecipientId || null,
@@ -103,6 +109,7 @@ class OutboundHistoryService {
         statusUpdatedAt: now,
         isRead: true,
         rawPayload: payload.rawPayload || {}
+        , whatsappAccountId: payload.whatsappAccountId || conversation.whatsappAccountId || null
       };
 
       let message = values.whatsappMessageId

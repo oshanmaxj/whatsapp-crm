@@ -5,7 +5,6 @@ import {
   Avatar,
   Badge,
   Box,
-  Collapse,
   Divider,
   Drawer,
   IconButton,
@@ -21,159 +20,34 @@ import {
   useMediaQuery
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import CampaignIcon from '@mui/icons-material/Campaign';
-import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
-import ContactsIcon from '@mui/icons-material/Contacts';
-import DashboardIcon from '@mui/icons-material/Dashboard';
-import EventAvailableIcon from '@mui/icons-material/EventAvailable';
-import GroupsIcon from '@mui/icons-material/Groups';
-import MenuBookIcon from '@mui/icons-material/MenuBook';
 import MenuIcon from '@mui/icons-material/Menu';
-import SchoolIcon from '@mui/icons-material/School';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import SettingsIcon from '@mui/icons-material/Settings';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
-import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
-import PaymentsIcon from '@mui/icons-material/Payments';
-import FactCheckIcon from '@mui/icons-material/FactCheck';
-import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
-import QueueIcon from '@mui/icons-material/Queue';
-import NotificationsIcon from '@mui/icons-material/Notifications';
-import AssessmentIcon from '@mui/icons-material/Assessment';
-import WhatsAppIcon from '@mui/icons-material/WhatsApp';
-import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
-import BusinessIcon from '@mui/icons-material/Business';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import EmailIcon from '@mui/icons-material/Email';
-import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import LockIcon from '@mui/icons-material/Lock';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsIconBell from '@mui/icons-material/Notifications';
-import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
-import CakeOutlinedIcon from '@mui/icons-material/CakeOutlined';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { getAccessPayload } from '../utils/access';
 import { useSocket } from '../hooks/useSocket';
 import { getNotifications, getSettings } from '../services/production.service';
+import { ModuleTabs } from './ModuleNavigationView';
+import {
+  canAccessItem,
+  canAccessModule,
+  itemIsActive,
+  modules,
+  pathBelongsToModule
+} from './moduleNavigationConfig';
 
 const drawerWidth = 260;
 const collapsedDrawerWidth = 76;
 const appBarHeight = 72;
-const sidebarGroupsStorageKey = 'sidebarExpandedGroups';
 const chatSoundMutedStorageKey = 'crmChatSoundMuted';
 const selectedConversationStorageKey = 'crmSelectedConversationId';
-
-const navigationGroups = [
-  {
-    id: 'main',
-    label: 'Main',
-    icon: <HomeOutlinedIcon />,
-    items: [
-      { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, permission: 'dashboard.view' },
-      { label: 'Inbox / Chat', path: '/chat', aliases: ['/inbox'], icon: <ChatBubbleOutlineIcon />, permission: 'inbox.view' },
-      { label: 'Contacts', path: '/contacts', icon: <ContactsIcon />, permission: 'contacts.view' },
-      { label: 'Leads', path: '/leads', icon: <TrendingUpIcon />, permission: 'leads.view' },
-      { label: 'Agents', path: '/agents', icon: <GroupsIcon />, permission: 'agents.view' }
-    ]
-  },
-  {
-    id: 'whatsapp',
-    label: 'WhatsApp',
-    icon: <WhatsAppIcon />,
-    items: [
-      { label: 'Connect WhatsApp', path: '/connect-whatsapp', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
-      { label: 'WA Templates', path: '/whatsapp-templates', icon: <ChatBubbleOutlineIcon />, permission: 'connect-whatsapp.view' },
-      { label: 'Broadcasting / Campaigns', path: '/campaigns', icon: <CampaignIcon />, permission: 'campaigns.view' },
-      { label: 'Compliance', path: '/compliance', icon: <FactCheckIcon />, permission: 'connect-whatsapp.view' },
-      { label: 'Auto Replies', path: '/auto-replies', icon: <SmartToyIcon />, permission: 'settings.view' },
-      { label: 'Flow Builder', path: '/flow-builder', matchChildren: true, icon: <AccountTreeOutlinedIcon />, permission: 'flow-builder.view' }
-    ]
-  },
-  {
-    id: 'education',
-    label: 'Education',
-    icon: <SchoolIcon />,
-    items: [
-      { label: 'Courses', path: '/courses', icon: <MenuBookIcon />, permission: 'courses.view' },
-      { label: 'Batches', path: '/batches', icon: <SchoolIcon />, permission: 'batches.view' },
-      { label: 'Students', childLabel: 'Student 360', path: '/students', matchChildren: true, icon: <GroupsIcon />, permission: 'students.view' },
-      { label: 'Fees', path: '/fees', icon: <PaymentsIcon />, permission: 'fees.view' },
-      { label: 'Attendance', path: '/attendance', icon: <FactCheckIcon />, permission: 'attendance.view' },
-      { label: 'Certificates', path: '/certificates', icon: <WorkspacePremiumIcon />, permission: 'certificates.view' }
-    ]
-  },
-  {
-    id: 'automations',
-    label: 'Automations',
-    icon: <SettingsSuggestIcon />,
-    items: [
-      { label: 'Automation Center', path: '/automations', icon: <SettingsSuggestIcon />, permission: 'settings.view' },
-      { label: 'Fee Reminders', path: '/fee-reminders', icon: <NotificationsIcon />, permission: 'fees.view' },
-      { label: 'Class Reminders', path: '/class-reminders', icon: <EventAvailableIcon />, permission: 'attendance.view' },
-      { label: 'Attendance Alerts', path: '/attendance-alerts', icon: <NotificationsIcon />, permission: 'attendance.view' },
-      { label: 'Birthday Wishes', path: '/birthday-wishes', icon: <CakeOutlinedIcon />, permission: 'students.view' },
-      { label: 'Workflows', path: '/workflows', icon: <AccountTreeIcon />, permission: 'workflows.view' },
-      { label: 'Appointments', path: '/appointments', icon: <CalendarMonthIcon />, permission: 'appointments.view' }
-    ]
-  },
-  {
-    id: 'reports',
-    label: 'Reports',
-    icon: <AssessmentIcon />,
-    items: [
-      { label: 'Reports', path: '/reports', icon: <AssessmentIcon />, permission: 'reports.view' },
-      { label: 'Queue', path: '/queue', icon: <QueueIcon />, permission: 'settings.view' },
-      { label: 'Notifications', path: '/notifications', icon: <NotificationsIcon />, permission: 'settings.view' }
-    ]
-  },
-  {
-    id: 'settings',
-    label: 'Settings',
-    icon: <SettingsIcon />,
-    items: [
-      { label: 'User Manager', path: '/users', icon: <ManageAccountsIcon />, permission: 'user-manager.view' },
-      { label: 'Departments & Permissions', path: '/permissions', icon: <AdminPanelSettingsIcon />, permission: 'user-manager.edit' },
-      { label: 'Company Profile', path: '/company-profile', icon: <BusinessIcon />, permission: 'settings.view' },
-      { label: 'SMTP Settings', path: '/smtp-settings', icon: <EmailIcon />, permission: 'settings.view' },
-      { label: 'Settings', path: '/settings', icon: <SettingsIcon />, permission: 'settings.view' },
-      { label: 'Profile', path: '/profile', icon: <AccountCircleIcon /> },
-      { label: 'Change Password', path: '/change-password', icon: <LockIcon /> }
-    ]
-  }
-];
-
-const menuItems = navigationGroups.flatMap((group) => group.items);
-
-function itemMatchesPath(item, pathname) {
-  if (pathname === item.path || item.aliases?.includes(pathname)) return true;
-  return item.matchChildren && pathname.startsWith(`${item.path}/`);
-}
-
-function itemDisplayLabel(item, pathname) {
-  return item.childLabel && pathname !== item.path && pathname.startsWith(`${item.path}/`)
-    ? item.childLabel
-    : item.label;
-}
-
-function initialExpandedGroups() {
-  const defaults = Object.fromEntries(navigationGroups.map((group) => [group.id, group.id === 'main']));
-  try {
-    const saved = JSON.parse(localStorage.getItem(sidebarGroupsStorageKey) || '{}');
-    return { ...defaults, ...saved };
-  } catch (error) {
-    return defaults;
-  }
-}
 
 const sidebarItemSx = (theme, collapsed = false) => ({
   alignItems: 'center',
@@ -218,31 +92,13 @@ function Sidebar({ collapsed, onNavigate }) {
   const theme = useTheme();
   const location = useLocation();
   const [branding, setBranding] = useState({ name: 'WhatsApp CRM', logoUrl: '' });
-  const [expandedGroups, setExpandedGroups] = useState(initialExpandedGroups);
   const access = getAccessPayload();
-  const visibleGroups = navigationGroups
-    .map((group) => ({
-      ...group,
-      items: access.isSystemAdmin
-        ? group.items
-        : group.items.filter((item) => !item.permission || access.permissions?.includes(item.permission))
-    }))
-    .filter((group) => group.items.length > 0);
-  const activeGroupId = visibleGroups.find((group) => group.items.some((item) => itemMatchesPath(item, location.pathname)))?.id;
-
-  const setGroupExpanded = (groupId, expanded) => {
-    setExpandedGroups((current) => {
-      const next = { ...current, [groupId]: expanded };
-      localStorage.setItem(sidebarGroupsStorageKey, JSON.stringify(next));
-      return next;
-    });
+  const visibleModules = modules.filter((module) => canAccessModule(module, access));
+  const moduleDestination = (module) => {
+    if (['whatsapp', 'education'].includes(module.id) || !module.items) return module.path;
+    const landingItem = module.items.find((item) => item.path.split('?')[0] === module.path && canAccessItem(item, access));
+    return landingItem?.path || module.items.find((item) => canAccessItem(item, access))?.path || module.path;
   };
-
-  useEffect(() => {
-    if (activeGroupId && !expandedGroups[activeGroupId]) {
-      setGroupExpanded(activeGroupId, true);
-    }
-  }, [activeGroupId, expandedGroups]);
 
   useEffect(() => {
     getSettings()
@@ -277,68 +133,20 @@ function Sidebar({ collapsed, onNavigate }) {
       </Box>
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
       <List sx={{ px: collapsed ? 1 : 1.25, py: 1, flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-        {visibleGroups.map((group, index) => {
-          const expanded = Boolean(expandedGroups[group.id]);
-          const groupActive = activeGroupId === group.id;
-          return (
-            <Box key={group.id}>
-              {index > 0 && <Divider sx={{ my: 0.5, borderColor: 'rgba(255,255,255,0.07)' }} />}
-              <Tooltip title={collapsed ? group.label : ''} placement="right">
-                <ListItemButton
-                  onClick={() => setGroupExpanded(group.id, !expanded)}
-                  aria-expanded={expanded}
-                  aria-controls={`sidebar-group-${group.id}`}
-                  sx={{
-                    minHeight: 36,
-                    borderRadius: 1.5,
-                    px: collapsed ? 1 : 1.25,
-                    justifyContent: collapsed ? 'center' : 'flex-start',
-                    color: groupActive ? '#7ee2aa' : 'rgba(255,255,255,0.58)',
-                    '&:hover': { bgcolor: 'rgba(255,255,255,0.07)', color: '#fff' },
-                    '& .MuiListItemIcon-root': {
-                      minWidth: collapsed ? 36 : 34,
-                      width: collapsed ? 36 : 34,
-                      justifyContent: 'center',
-                      color: 'inherit'
-                    }
-                  }}
-                >
-                  <ListItemIcon>{group.icon}</ListItemIcon>
-                  {!collapsed && (
-                    <>
-                      <ListItemText
-                        primary={group.label}
-                        primaryTypographyProps={{ fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}
-                      />
-                      {expanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
-                    </>
-                  )}
-                </ListItemButton>
-              </Tooltip>
-              <Collapse in={expanded} timeout="auto" unmountOnExit>
-                <List id={`sidebar-group-${group.id}`} disablePadding sx={{ mt: 0.25 }}>
-                  {group.items.map((item) => {
-                    const selected = itemMatchesPath(item, location.pathname);
-                    return (
-                      <Tooltip key={item.path} title={collapsed ? itemDisplayLabel(item, location.pathname) : ''} placement="right">
-                        <ListItemButton
-                          component={Link}
-                          to={item.path}
-                          onClick={onNavigate}
-                          selected={selected}
-                          sx={sidebarItemSx(theme, collapsed)}
-                        >
-                          <ListItemIcon>{item.icon}</ListItemIcon>
-                          {!collapsed && <ListItemText primary={itemDisplayLabel(item, location.pathname)} />}
-                        </ListItemButton>
-                      </Tooltip>
-                    );
-                  })}
-                </List>
-              </Collapse>
-            </Box>
-          );
-        })}
+        {visibleModules.map((module) => (
+          <Tooltip key={module.id} title={collapsed ? module.label : ''} placement="right">
+            <ListItemButton
+              component={Link}
+              to={moduleDestination(module)}
+              onClick={onNavigate}
+              selected={pathBelongsToModule(module, location.pathname)}
+              sx={sidebarItemSx(theme, collapsed)}
+            >
+              <ListItemIcon>{module.icon}</ListItemIcon>
+              {!collapsed && <ListItemText primary={module.label} />}
+            </ListItemButton>
+          </Tooltip>
+        ))}
       </List>
     </Box>
   );
@@ -363,9 +171,10 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
   const currentDrawerWidth = isDesktop && sidebarCollapsed ? collapsedDrawerWidth : drawerWidth;
 
   const pageTitle = useMemo(() => {
-    const item = menuItems.find((entry) => itemMatchesPath(entry, location.pathname));
-    return item ? itemDisplayLabel(item, location.pathname) : 'Dashboard';
-  }, [location.pathname]);
+    const module = modules.find((entry) => pathBelongsToModule(entry, location.pathname));
+    const item = module?.items?.find((entry) => itemIsActive(entry, location.pathname, location.search));
+    return item?.label || module?.label || 'Dashboard';
+  }, [location.pathname, location.search]);
 
   const toggleSidebar = () => {
     setSidebarCollapsed((current) => {
@@ -588,6 +397,7 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
       >
         <Toolbar sx={{ minHeight: appBarHeight }} />
         <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: '100%', overflowX: 'hidden' }}>
+          <ModuleTabs />
           <Outlet context={{ socket, connected }} />
         </Box>
       </Box>

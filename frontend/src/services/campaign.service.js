@@ -1,6 +1,6 @@
 import api from './api';
 
-export const getCampaigns = () => api.get('/campaigns');
+export const getCampaigns = (params = {}) => api.get('/campaigns', { params });
 export const getCampaign = (id) => api.get(`/campaigns/${id}`);
 export const createCampaign = (payload) => api.post('/campaigns', payload);
 export const updateCampaign = (id, payload) => api.patch(`/campaigns/${id}`, payload);

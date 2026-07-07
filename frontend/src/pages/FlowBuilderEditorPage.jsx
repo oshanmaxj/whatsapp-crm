@@ -17,9 +17,16 @@ import SearchIcon from '@mui/icons-material/Search';
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import ZoomOutIcon from '@mui/icons-material/ZoomOut';
 import ZoomOutMapIcon from '@mui/icons-material/ZoomOutMap';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import {
   getFlow, publishFlow, saveFlowBuilder, testFlow, unpublishFlow
 } from '../services/flowBuilder.service';
+import { getRoles, getUsers } from '../services/userManagement.service';
+import FlowNodeConfigDialog from '../components/flow-builder/FlowNodeConfigDialog';
+import { nodeConfigErrors, normalizeKeywords } from '../components/flow-builder/flowBuilderConfig';
+import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const GROUPS = [
   { title: 'MESSAGES', blocks: [['text_message', 'Text', '💬'], ['image_message', 'Image', '🖼️'], ['audio_message', 'Audio', '🎧'], ['video_message', 'Video', '🎬'], ['file_document', 'File', '📄'], ['location', 'Location', '📍'], ['ai_reply', 'AI Reply', '✨']] },
@@ -34,7 +41,7 @@ META.start = { label: 'Flow Start', icon: '⚡' };
 const DEFAULTS = {
   start: { source: 'inbound_message', keywords: ['hi'], matchType: 'contains', departmentId: '', assignedUserId: '', googleSheetConnectionId: '' },
   text_message: { message: 'Hi {{LEAD_USER_FIRST_NAME}}, how can we help you?' },
-  image_message: { mediaUrl: '', caption: '' },
+  image_message: { sourceType: 'url', imageUrl: '', mediaUrl: '', whatsappMediaId: '', caption: '' },
   audio_message: { mediaUrl: '' },
   video_message: { mediaUrl: '', caption: '' },
   file_document: { fileUrl: '', fileName: '', caption: '' },
@@ -43,10 +50,10 @@ const DEFAULTS = {
   user_input: { question: 'What would you like help with?', saveAs: 'custom.answer', timeoutMinutes: 60 },
   whatsapp_flow: { message: 'Continue in WhatsApp', flowId: '', flowToken: '', screen: '', data: {} },
   appointment_booking: { message: 'Choose an appointment slot', slots: [] },
-  interactive_message: { message: 'Please choose an option', footer: '', buttons: [{ id: 'option_1', title: 'Option 1' }] },
+  interactive_message: { headerType: 'none', headerText: '', headerMediaUrl: '', message: 'Please choose an option', footer: '', buttons: [{ id: 'option_1', payload: 'option_1', title: 'Option 1', actionType: 'reply' }] },
   button_message: { message: 'Tap below to continue', buttons: [{ id: 'join_group', title: 'Join Group' }] },
   list_message: { message: 'Select an option', sectionTitle: 'Options', buttonText: 'Choose', rows: [{ id: 'option_1', title: 'Option 1' }] },
-  assign: { departmentId: '', assignedAgentId: '' },
+  assign: { departmentId: '', assignedAgentId: '', notifyAssignee: true },
   add_label: { label: '' },
   remove_label: { label: '' },
   update_lead: { status: '', source: '', notes: '', courseInterested: '', batchInterested: '' },
@@ -76,23 +83,34 @@ function outputs(data) {
 
 function preview(data) {
   const config = data.config || {};
-  if (data.nodeType === 'image_message' && config.mediaUrl) return <Box component="img" src={config.mediaUrl} alt="" sx={{ width: '100%', height: 82, objectFit: 'cover', borderRadius: 1 }} />;
-  if (data.nodeType === 'video_message' && config.mediaUrl) return <Box component="video" src={config.mediaUrl} muted sx={{ width: '100%', height: 82, objectFit: 'cover', borderRadius: 1 }} />;
-  if (data.nodeType === 'audio_message') return <Chip size="small" label={config.mediaUrl ? 'Audio attached' : 'No audio selected'} />;
-  if (data.nodeType === 'file_document') return <Chip size="small" label={config.fileName || 'No file selected'} />;
-  const text = config.message || config.question || config.prompt || config.caption || (data.nodeType === 'start' ? (config.keywords || []).join(', ') : '');
-  return <Typography sx={{ fontSize: 11, color: 'text.secondary', whiteSpace: 'pre-wrap', maxHeight: 48, overflow: 'hidden' }}>{text || 'Configure this block'}</Typography>;
+  if (data.nodeType === 'image_message') return <Chip size="small" label={(config.whatsappMediaId || config.imageUrl || config.mediaUrl) ? 'Image attached' : 'Image not selected'} />;
+  if (data.nodeType === 'video_message') return <Chip size="small" label={config.mediaUrl ? 'Video attached' : 'Video not selected'} />;
+  if (data.nodeType === 'audio_message') return <Chip size="small" label={config.mediaUrl ? 'Audio attached' : 'Audio not selected'} />;
+  if (data.nodeType === 'file_document') return <Chip size="small" label={config.fileName || 'File not selected'} />;
+  if (['interactive_message', 'button_message'].includes(data.nodeType)) {
+    return <Typography sx={{ fontSize: 11, color: 'text.secondary' }}>{(config.message || 'No message').slice(0, 72)}{(config.message || '').length > 72 ? '…' : ''}<br />{(config.buttons || []).length} button(s)</Typography>;
+  }
+  if (data.nodeType === 'list_message') {
+    return <Typography sx={{ fontSize: 11, color: 'text.secondary' }}>{(config.message || 'No message').slice(0, 72)}<br />{(config.rows || []).length} option(s)</Typography>;
+  }
+  const text = config.message || config.question || config.prompt || config.caption || (data.nodeType === 'start' ? normalizeKeywords(config.keywords).join(', ') : '');
+  const summary = String(text || 'Configure this block');
+  return <Typography sx={{ fontSize: 11, color: 'text.secondary', whiteSpace: 'pre-wrap', maxHeight: 34, overflow: 'hidden' }}>{summary.slice(0, 92)}{summary.length > 92 ? '…' : ''}</Typography>;
 }
 
 const FlowCard = memo(({ data, selected }) => {
   const stats = { sent: 0, delivered: 0, subscribers: 0, errors: 0, ...(data.stats || {}) };
   const handles = outputs(data);
+  const incomplete = Object.keys(nodeConfigErrors(data.nodeType, data.config)).length > 0;
   return (
     <Paper elevation={selected ? 6 : 1} sx={{ width: 230, border: '2px solid', borderColor: selected ? '#128c7e' : '#dce5e1', borderRadius: 2, overflow: 'visible', bgcolor: '#fff' }}>
       {data.nodeType !== 'start' && <Handle type="target" position={Position.Left} id="input" style={{ width: 10, height: 10, background: '#128c7e' }} />}
       <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.25, py: 1, bgcolor: data.nodeType === 'start' ? '#e9fff7' : '#f8fbfa', borderRadius: '7px 7px 0 0' }}>
         <Typography fontSize={18}>{META[data.nodeType]?.icon || '🔧'}</Typography>
-        <Box minWidth={0}><Typography fontSize={12} fontWeight={900} noWrap>{data.label}</Typography><Typography fontSize={9} color="text.secondary">{META[data.nodeType]?.label || data.nodeType}</Typography></Box>
+        <Box minWidth={0} flex={1}><Typography fontSize={12} fontWeight={900} noWrap>{data.label}</Typography><Typography fontSize={9} color="text.secondary">{META[data.nodeType]?.label || data.nodeType}</Typography></Box>
+        {incomplete && <Tooltip title="Required settings are missing"><WarningAmberRoundedIcon color="warning" sx={{ fontSize: 17 }} /></Tooltip>}
+        <Tooltip title="Edit block"><IconButton className="nodrag" size="small" onClick={(event) => { event.stopPropagation(); data.openEditor(); }} aria-label={`Edit ${data.label}`}><EditOutlinedIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>
+        <Tooltip title="Delete block"><IconButton className="nodrag" size="small" color="error" onClick={(event) => { event.stopPropagation(); data.deleteNode(); }} aria-label={`Delete ${data.label}`}><DeleteOutlineIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>
       </Stack>
       <Box sx={{ p: 1.25 }}>{preview(data)}</Box>
       <Stack direction="row" justifyContent="space-around" sx={{ px: 0.5, py: 0.7, borderTop: '1px solid #edf1ef', bgcolor: '#fbfcfc' }}>
@@ -126,9 +144,10 @@ function ConfigPanel({ node, onChange, onDelete }) {
   const set = (field, value) => onChange({ ...config, [field]: value });
   const field = (name, label, props = {}) => <TextField key={name} size="small" label={label} value={config[name] ?? ''} onChange={(e) => set(name, e.target.value)} fullWidth {...props} />;
   let controls;
-  if (node.data.nodeType === 'start') controls = <>{field('source', 'Start flow from', { select: true, children: ['inbound_message', 'template_button_reply', 'interactive_button_reply', 'list_reply', 'campaign_response', 'manual'].map((value) => <MenuItem key={value} value={value}>{value.replaceAll('_', ' ')}</MenuItem>) })}{field('keywords', 'Trigger keywords', { value: (config.keywords || []).join(', '), onChange: (e) => set('keywords', e.target.value.split(',').map((item) => item.trim()).filter(Boolean)) })}{field('matchType', 'Keyword matching', { select: true, children: [['exact', 'Exact match'], ['contains', 'Contains'], ['starts_with', 'Starts with']].map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>) })}{field('departmentId', 'Assign department ID')}{field('assignedUserId', 'Assign user ID')}{field('googleSheetConnectionId', 'Google Sheet connection ID')}</>;
+  if (node.data.nodeType === 'start') controls = <>{field('source', 'Start flow from', { select: true, children: ['inbound_message', 'template_button_reply', 'interactive_button_reply', 'list_reply', 'campaign_response', 'manual'].map((value) => <MenuItem key={value} value={value}>{value.replaceAll('_', ' ')}</MenuItem>) })}{field('keywords', 'Trigger keywords', { value: normalizeKeywords(config.keywords).join(', '), onChange: (e) => set('keywords', normalizeKeywords(e.target.value)) })}{field('matchType', 'Keyword matching', { select: true, children: [['exact', 'Exact match'], ['contains', 'Contains'], ['starts_with', 'Starts with']].map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>) })}{field('departmentId', 'Assign department ID')}{field('assignedUserId', 'Assign user ID')}{field('googleSheetConnectionId', 'Google Sheet connection ID')}</>;
   else if (['text_message', 'interactive_message', 'button_message', 'list_message'].includes(node.data.nodeType)) controls = <>{field('message', 'Message body', { multiline: true, minRows: 4, helperText: 'Variables: {{LEAD_USER_FIRST_NAME}}, {{contact.name}}, {{lead.course}}, {{agent.name}}, {{department.name}}' })}{node.data.nodeType !== 'text_message' && field('footer', 'Footer')}{['interactive_message', 'button_message'].includes(node.data.nodeType) && <OptionEditor label="Buttons" value={config.buttons} onChange={(value) => set('buttons', value)} />}{node.data.nodeType === 'list_message' && <><OptionEditor label="List rows" value={config.rows} onChange={(value) => set('rows', value)} />{field('sectionTitle', 'Section title')}{field('buttonText', 'Menu button text')}</>}</>;
-  else if (['image_message', 'video_message'].includes(node.data.nodeType)) controls = <>{field('mediaUrl', 'Resource URL')}{field('caption', 'Caption', { multiline: true })}</>;
+  else if (node.data.nodeType === 'image_message') controls = <>{field('sourceType', 'Source type', { select: true, children: ['url', 'upload', 'media_id'].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>) })}{field('imageUrl', 'HTTPS image URL')}{field('whatsappMediaId', 'WhatsApp media ID')}{field('caption', 'Caption', { multiline: true })}</>;
+  else if (node.data.nodeType === 'video_message') controls = <>{field('mediaUrl', 'Resource URL')}{field('caption', 'Caption', { multiline: true })}</>;
   else if (node.data.nodeType === 'audio_message') controls = field('mediaUrl', 'Audio resource URL');
   else if (node.data.nodeType === 'file_document') controls = <>{field('fileUrl', 'File URL')}{field('fileName', 'Filename')}{field('caption', 'Caption')}</>;
   else if (node.data.nodeType === 'location') controls = <>{field('latitude', 'Latitude')}{field('longitude', 'Longitude')}{field('name', 'Location name')}{field('address', 'Address')}</>;
@@ -153,10 +172,31 @@ function Editor() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [instance, setInstance] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [departments, setDepartments] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [isDirty, setIsDirty] = useState(false);
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const selected = useMemo(() => nodes.find((node) => node.id === selectedId), [nodes, selectedId]);
+
+  const deleteNode = useCallback((nodeId) => {
+    const target = nodes.find((node) => node.id === nodeId);
+    if (!target) return;
+    if (!window.confirm('Delete this block and all its connections?')) return;
+    const startCount = nodes.filter((node) => node.data.nodeType === 'start').length;
+    if (
+      target.data.nodeType === 'start'
+      && startCount <= 1
+      && !window.confirm('This is the only Start block. Deleting it will make the flow invalid until another Start block is added. Delete it anyway?')
+    ) return;
+    setNodes((rows) => rows.filter((node) => node.id !== nodeId));
+    setEdges((rows) => rows.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+    setSelectedId((current) => current === nodeId ? null : current);
+    setEditorOpen(false);
+    setIsDirty(true);
+  }, [nodes, setEdges, setNodes]);
 
   useEffect(() => {
     getFlow(id).then((response) => {
@@ -172,53 +212,105 @@ function Editor() {
         sourceHandle: edge.sourceHandle || 'next', targetHandle: edge.targetHandle || 'input',
         label: edge.conditionLabel, type: 'smoothstep', animated: true
       })));
+      setIsDirty(false);
     }).catch((requestError) => setError(requestError.response?.data?.message || 'Unable to load flow.'));
   }, [id, setEdges, setNodes]);
+
+  useEffect(() => {
+    Promise.all([getRoles(), getUsers()]).then(([rolesResponse, usersResponse]) => {
+      setDepartments(rolesResponse.data.data || []);
+      setUsers(usersResponse.data.data || []);
+    }).catch(() => {});
+  }, []);
 
   const decoratedNodes = useMemo(() => nodes.map((node) => ({
     ...node, data: {
       ...node.data,
-      setLabel: (label) => setNodes((rows) => rows.map((row) => row.id === node.id ? { ...row, data: { ...row.data, label } } : row))
+      setLabel: (label) => setNodes((rows) => rows.map((row) => row.id === node.id ? { ...row, data: { ...row.data, label } } : row)),
+      openEditor: () => { setSelectedId(node.id); setEditorOpen(true); },
+      deleteNode: () => deleteNode(node.id)
     }
-  })), [nodes, setNodes]);
-  const onConnect = useCallback((params) => setEdges((rows) => addEdge({ ...params, type: 'smoothstep', animated: true }, rows)), [setEdges]);
+  })), [deleteNode, nodes, setNodes]);
+  useEffect(() => {
+    const handleDeleteKey = (event) => {
+      if (!selectedId || editorOpen || !['Delete', 'Backspace'].includes(event.key)) return;
+      const element = event.target;
+      if (element?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(element?.tagName)) return;
+      event.preventDefault();
+      deleteNode(selectedId);
+    };
+    window.addEventListener('keydown', handleDeleteKey);
+    return () => window.removeEventListener('keydown', handleDeleteKey);
+  }, [deleteNode, editorOpen, selectedId]);
+  const handleNodesChange = useCallback((changes) => {
+    onNodesChange(changes);
+    if (changes.some((change) => !['select', 'dimensions'].includes(change.type))) setIsDirty(true);
+  }, [onNodesChange]);
+  const handleEdgesChange = useCallback((changes) => {
+    onEdgesChange(changes);
+    if (changes.some((change) => change.type !== 'select')) setIsDirty(true);
+  }, [onEdgesChange]);
+  const onConnect = useCallback((params) => {
+    setEdges((rows) => addEdge({ ...params, type: 'smoothstep', animated: true }, rows));
+    setIsDirty(true);
+  }, [setEdges]);
   const onDrop = (event) => {
     event.preventDefault();
     const type = event.dataTransfer.getData('application/reactflow');
     if (!type || !instance || !wrapper.current) return;
     const bounds = wrapper.current.getBoundingClientRect();
     setNodes((rows) => [...rows, makeNode(type, instance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top }))]);
+    setIsDirty(true);
   };
   const validationErrors = () => {
     const problems = [];
     if (!nodes.some((node) => node.data.nodeType === 'start')) problems.push('A Flow Start node is required.');
     const ids = new Set(nodes.map((node) => node.id));
     if (edges.some((edge) => !ids.has(edge.source) || !ids.has(edge.target))) problems.push('Remove broken connections.');
+    nodes.forEach((node) => {
+      const configProblems = Object.values(nodeConfigErrors(node.data.nodeType, node.data.config));
+      if (configProblems.length) problems.push(`${node.data.label}: ${configProblems[0]}`);
+    });
     nodes.filter((node) => ['interactive_message', 'button_message', 'list_message'].includes(node.data.nodeType)).forEach((node) => {
       outputs(node.data).filter((output) => output.id !== 'fallback').forEach((output) => {
         if (!edges.some((edge) => edge.source === node.id && (edge.sourceHandle === output.id || ['next', 'fallback'].includes(edge.sourceHandle)))) problems.push(`${node.data.label}: connect "${output.label}" or add a fallback.`);
       });
     });
-    return problems;
+    return [...new Set(problems)];
   };
   const save = async () => {
     const start = nodes.find((node) => node.data.nodeType === 'start');
-    const nextFlow = { ...flow, triggerType: start?.data.config?.source || flow.triggerType, triggerKeywords: start?.data.config?.keywords || [], triggerConfig: start?.data.config || {} };
+    const startConfig = start?.data.config || {};
+    const keywords = normalizeKeywords(startConfig.keywords || flow.triggerKeywords);
+    const nextFlow = {
+      ...flow,
+      triggerType: startConfig.source || flow.triggerType,
+      triggerKeywords: keywords,
+      keywordMatchMode: startConfig.matchType || startConfig.keywordMatchMode || 'contains',
+      triggerConfig: { ...startConfig, keywords, keywordMatchMode: startConfig.matchType || startConfig.keywordMatchMode || 'contains' }
+    };
     const response = await saveFlowBuilder(id, {
       flow: nextFlow,
       nodes: nodes.map((node) => ({ id: node.id, nodeType: node.data.nodeType, label: node.data.label, position: node.position, configJson: node.data.config, stats: node.data.stats })),
       connections: edges.map((edge) => ({ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle, conditionLabel: edge.label }))
     });
     setFlow(response.data.data);
+    setIsDirty(false);
     setNotice('Flow saved.');
   };
   const publish = async () => {
+    if (flow.status === 'published') {
+      const response = await unpublishFlow(id);
+      setFlow(response.data.data);
+      setNotice('Flow unpublished.');
+      return;
+    }
     const problems = validationErrors();
     if (problems.length) return setError(problems.join(' '));
     await save();
-    const response = flow.status === 'published' ? await unpublishFlow(id) : await publishFlow(id);
+    const response = await publishFlow(id);
     setFlow(response.data.data);
-    setNotice(response.data.data.status === 'published' ? 'Flow published.' : 'Flow unpublished.');
+    setNotice('Flow published.');
   };
   const test = async () => {
     await save();
@@ -233,15 +325,20 @@ function Editor() {
       <IconButton onClick={() => navigate('/flow-builder')}><ArrowBackIcon /></IconButton>
       <TextField size="small" value={flow?.name || ''} onChange={(e) => setFlow({ ...flow, name: e.target.value })} sx={{ width: 260 }} />
       <Box flex={1} />
-      <TextField select size="small" label="WhatsApp number" value={flow?.whatsappPhoneNumberId || ''} onChange={(e) => setFlow({ ...flow, whatsappPhoneNumberId: e.target.value })} sx={{ width: 220 }}><MenuItem value="">Default connected number</MenuItem>{flow?.whatsappPhoneNumberId && <MenuItem value={flow.whatsappPhoneNumberId}>{flow.whatsappPhoneNumberId}</MenuItem>}</TextField>
+      <WhatsAppAccountSelect value={flow?.whatsappAccountId || ''} onChange={(value) => { setFlow({ ...flow, whatsappAccountId: value || null }); setIsDirty(true); }} sx={{ width: 260 }} />
+      <TextField select size="small" label="Department" value={flow?.departmentId || ''} onChange={(event) => { setFlow({ ...flow, departmentId: event.target.value || null }); setIsDirty(true); }} sx={{ width: 210 }}>
+        <MenuItem value="">All assigned departments</MenuItem>
+        {departments.map((department) => <MenuItem key={department.id} value={department.id}>{department.name}</MenuItem>)}
+      </TextField>
       <Tooltip title="Zoom out"><IconButton onClick={() => instance?.zoomOut()}><ZoomOutIcon /></IconButton></Tooltip>
       <Tooltip title="Zoom in"><IconButton onClick={() => instance?.zoomIn()}><ZoomInIcon /></IconButton></Tooltip>
       <Button startIcon={<ZoomOutMapIcon />} onClick={() => instance?.fitView()}>Fit</Button>
+      {isDirty && <Chip size="small" color="warning" label="Unsaved" />}
       <Button startIcon={<SaveIcon />} variant="outlined" onClick={() => save().catch((e) => setError(e.response?.data?.message || e.message))}>Save</Button>
       <Button startIcon={<RocketLaunchIcon />} variant="contained" color={flow?.status === 'published' ? 'warning' : 'primary'} onClick={() => publish().catch((e) => setError(e.response?.data?.message || e.message))}>{flow?.status === 'published' ? 'Unpublish' : 'Publish'}</Button>
       <Button startIcon={<PlayArrowIcon />} color="success" variant="contained" onClick={() => test().catch((e) => setError(e.response?.data?.message || e.message))}>Test flow</Button>
     </Stack></Paper>
-    <Box sx={{ display: 'grid', gridTemplateColumns: '250px minmax(500px, 1fr) 330px', gap: 1, flex: 1, minHeight: 0 }}>
+    <Box sx={{ display: 'grid', gridTemplateColumns: '250px minmax(500px, 1fr)', gap: 1, flex: 1, minHeight: 0 }}>
       <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', overflow: 'auto' }}>
         <Typography variant="h6" fontWeight={900}>Flow blocks</Typography>
         <TextField size="small" placeholder="Search blocks" value={search} onChange={(e) => setSearch(e.target.value)} fullWidth sx={{ my: 1.25 }} InputProps={{ startAdornment: <SearchIcon fontSize="small" sx={{ mr: 0.7, color: 'text.disabled' }} /> }} />
@@ -251,15 +348,27 @@ function Editor() {
         })}
       </Paper>
       <Paper ref={wrapper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
-        <ReactFlow nodeTypes={nodeTypes} nodes={decoratedNodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onInit={setInstance} onDrop={onDrop} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }} onNodeClick={(_, node) => setSelectedId(node.id)} fitView>
+        <ReactFlow deleteKeyCode={null} nodeTypes={nodeTypes} nodes={decoratedNodes} edges={edges} onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange} onConnect={onConnect} onInit={setInstance} onDrop={onDrop} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }} onNodeClick={(_, node) => setSelectedId(node.id)} onNodeDoubleClick={(_, node) => { setSelectedId(node.id); setEditorOpen(true); }} fitView>
           <MiniMap nodeColor={(node) => node.data.nodeType === 'start' ? '#25d366' : '#128c7e'} /><Controls /><Background gap={20} color="#d9e5df" />
         </ReactFlow>
       </Paper>
-      <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', overflow: 'auto' }}>
-        <Typography fontWeight={900}>Block settings</Typography><Divider sx={{ my: 1.2 }} />
-        <ConfigPanel node={selected} onChange={(config) => setNodes((rows) => rows.map((node) => node.id === selected.id ? { ...node, data: { ...node.data, config } } : node))} onDelete={() => { setNodes((rows) => rows.filter((node) => node.id !== selected.id)); setEdges((rows) => rows.filter((edge) => edge.source !== selected.id && edge.target !== selected.id)); setSelectedId(null); }} />
-      </Paper>
     </Box>
+    <FlowNodeConfigDialog
+      node={selected}
+      flowId={id}
+      open={editorOpen}
+      departments={departments}
+      users={users}
+      onDelete={() => selected && deleteNode(selected.id)}
+      onClose={() => setEditorOpen(false)}
+      onSave={({ label, config }) => {
+        const validHandleIds = new Set(outputs({ ...selected.data, config }).map((item) => String(item.id)));
+        setNodes((rows) => rows.map((node) => node.id === selected.id ? { ...node, data: { ...node.data, label, config } } : node));
+        setEdges((rows) => rows.filter((edge) => edge.source !== selected.id || validHandleIds.has(String(edge.sourceHandle))));
+        setIsDirty(true);
+        setEditorOpen(false);
+      }}
+    />
   </Stack>;
 }
 

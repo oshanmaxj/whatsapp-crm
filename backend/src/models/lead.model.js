@@ -30,6 +30,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(15, 2),
       allowNull: true
     },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     courseInterested: {
       type: DataTypes.STRING(100),
       allowNull: true

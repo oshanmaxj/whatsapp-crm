@@ -5,10 +5,11 @@ module.exports = (sequelize, DataTypes) => {
       autoIncrement: true,
       primaryKey: true
     },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     trigger: {
       type: DataTypes.STRING(255),
       allowNull: false,
-      unique: true
+      unique: false
     },
     matchType: {
       type: DataTypes.ENUM('exact', 'contains', 'regex'),

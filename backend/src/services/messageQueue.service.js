@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { Campaign, CampaignEvent, CampaignRecipient, MessageQueue } = require('../models');
+const { Campaign, CampaignEvent, CampaignRecipient, MessageQueue, Notification, StudentAutomationDispatch } = require('../models');
 const whatsappService = require('./whatsapp.service');
 const outboundHistoryService = require('./outboundHistory.service');
 const logger = require('../config/logger');
@@ -26,6 +26,7 @@ class MessageQueueService {
       maxAttempts: payload.maxAttempts || 3,
       campaignId: payload.campaignId || null,
       campaignRecipientId: payload.campaignRecipientId || null,
+      whatsappAccountId: payload.whatsappAccountId || payload.payload?.whatsappAccountId || null,
       createdBy
     });
   }
@@ -33,6 +34,7 @@ class MessageQueueService {
   async list(query = {}) {
     const where = {};
     if (query.status) where.status = query.status;
+    if (query.whatsappAccountId) where.whatsappAccountId = query.whatsappAccountId;
     return MessageQueue.findAll({ where, order: [['priority', 'ASC'], ['scheduled_at', 'ASC']], limit: 200 });
   }
 
@@ -70,6 +72,46 @@ class MessageQueueService {
         externalMessageId,
         lastError: null
       });
+      const queuePayload = row.payload || {};
+      if (queuePayload.automationDispatchId) {
+        await StudentAutomationDispatch.update(
+          { status: 'sent' },
+          { where: { id: queuePayload.automationDispatchId } }
+        );
+        await outboundHistoryService.record({
+          phone: row.toNumber,
+          name: queuePayload.studentName || null,
+          contactId: queuePayload.contactId || null,
+          leadId: queuePayload.leadId || null,
+          sentByUserId: row.createdBy || null,
+          whatsappMessageId: externalMessageId,
+          type: 'text',
+          messageType: 'automation',
+          text: queuePayload.text || queuePayload.message || null,
+          status: 'sent',
+          whatsappAccountId: row.whatsappAccountId || null,
+          rawPayload: {
+            source: 'student_automation',
+            queueId: row.id,
+            templateKey: queuePayload.automationTemplateKey,
+            whatsapp: response
+          }
+        });
+      } else if (queuePayload.isAutomationTest) {
+        await outboundHistoryService.record({
+          phone: row.toNumber,
+          name: queuePayload.studentName || null,
+          contactId: queuePayload.contactId || null,
+          sentByUserId: row.createdBy || null,
+          whatsappMessageId: externalMessageId,
+          type: 'text',
+          messageType: 'automation_test',
+          text: queuePayload.text || null,
+          status: 'sent',
+          whatsappAccountId: row.whatsappAccountId || null,
+          rawPayload: { source: 'student_automation_test', queueId: row.id }
+        });
+      }
       if (row.campaignRecipientId) {
         await CampaignRecipient.update({
           status: 'sent',
@@ -105,6 +147,7 @@ class MessageQueueService {
             campaignId: row.campaignId,
             campaignRecipientId: row.campaignRecipientId,
             status: 'sent',
+            whatsappAccountId: row.whatsappAccountId || campaign?.whatsappAccountId || null,
             rawPayload: {
               source: 'broadcast',
               queueId: row.id,
@@ -131,6 +174,19 @@ class MessageQueueService {
         nextAttemptAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : null,
         scheduledAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : row.scheduledAt
       });
+      const queuePayload = row.payload || {};
+      if (queuePayload.automationDispatchId) {
+        await StudentAutomationDispatch.update(
+          { status: hasAttempts ? 'retrying' : 'failed' },
+          { where: { id: queuePayload.automationDispatchId } }
+        );
+        await Notification.create({
+          type: 'student_automation_failed',
+          title: `Student message ${hasAttempts ? 'will retry' : 'failed'}`,
+          message: `${queuePayload.automationTemplateKey || 'Automation'} to ${row.toNumber}: ${error.message}`,
+          data: { queueId: row.id, dispatchId: queuePayload.automationDispatchId, attempt: row.attempts, willRetry: hasAttempts }
+        });
+      }
       if (row.campaignRecipientId && !hasAttempts) {
         await CampaignRecipient.update({
           status: 'failed',
@@ -151,9 +207,9 @@ class MessageQueueService {
   async dispatch(row) {
     const payload = row.payload || {};
     if (row.channel !== 'whatsapp') return { id: `system-${row.id}` };
-    if (row.messageType === 'template') return whatsappService.sendTemplateMessage({ ...payload, log: false });
-    if (['image', 'document', 'audio', 'video'].includes(row.messageType)) return whatsappService.sendMediaMessage({ ...payload, mediaType: row.messageType, log: false });
-    return whatsappService.sendTextMessage({ to: row.toNumber, text: payload.text || payload.message || '', log: false });
+    if (row.messageType === 'template') return whatsappService.sendTemplateMessage({ ...payload, whatsappAccountId: row.whatsappAccountId, log: false });
+    if (['image', 'document', 'audio', 'video'].includes(row.messageType)) return whatsappService.sendMediaMessage({ ...payload, whatsappAccountId: row.whatsappAccountId, mediaType: row.messageType, log: false });
+    return whatsappService.sendTextMessage({ to: row.toNumber, text: payload.text || payload.message || '', whatsappAccountId: row.whatsappAccountId, log: false });
   }
 
   async refreshCampaignStatus(campaignId) {

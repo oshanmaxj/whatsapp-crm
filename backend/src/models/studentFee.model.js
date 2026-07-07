@@ -2,6 +2,7 @@ module.exports = (sequelize, DataTypes) => {
   const StudentFee = sequelize.define('StudentFee', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     studentId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+    enrollmentId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     courseId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     batchId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     originalAmount: { type: DataTypes.DECIMAL(15, 2), allowNull: false, defaultValue: 0 },
@@ -28,11 +29,12 @@ module.exports = (sequelize, DataTypes) => {
     timestamps: true,
     paranoid: true,
     underscored: true,
-    indexes: [{ fields: ['student_id'] }, { fields: ['status'] }, { fields: ['due_date'] }]
+    indexes: [{ fields: ['student_id'] }, { fields: ['enrollment_id'] }, { fields: ['status'] }, { fields: ['due_date'] }]
   });
 
   StudentFee.associate = (models) => {
     StudentFee.belongsTo(models.Student, { foreignKey: 'student_id', as: 'student' });
+    StudentFee.belongsTo(models.StudentEnrollment, { foreignKey: 'enrollment_id', as: 'enrollment' });
     StudentFee.belongsTo(models.Course, { foreignKey: 'course_id', as: 'course' });
     StudentFee.belongsTo(models.Batch, { foreignKey: 'batch_id', as: 'batch' });
   };

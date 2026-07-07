@@ -119,6 +119,8 @@ function StudentProfilePage() {
   const certificates = profile?.certificates || [];
   const installments = profile?.installments || [];
   const guardians = profile?.guardians || [];
+  const enrollments = profile?.enrollments || [];
+  const activeEnrollments = enrollments.filter((item) => item.enrollmentStatus === 'active');
 
   const paymentColor = useMemo(() => {
     const status = profile?.fees?.paymentStatus;
@@ -205,8 +207,6 @@ function StudentProfilePage() {
   if (error && !profile) return <Alert severity="error">{error}</Alert>;
 
   const student = profile?.student || {};
-  const course = profile?.course || {};
-  const batch = profile?.batch || {};
   const fees = profile?.fees || {};
   const attendance = profile?.attendance || {};
   const whatsapp = profile?.whatsapp || {};
@@ -227,7 +227,7 @@ function StudentProfilePage() {
             <Chip label={student.status || 'unknown'} size="small" />
             {fees.paymentStatus && <Chip label={fees.paymentStatus} size="small" color={paymentColor} />}
           </Stack>
-          <Typography color="text.secondary">{student.studentId || '-'} · {course.name || 'No course'} · {batch.name || 'No batch'}</Typography>
+          <Typography color="text.secondary">{student.studentId || '-'} · {activeEnrollments.length} active enrollment{activeEnrollments.length === 1 ? '' : 's'}</Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           {quickActions.map(([label, icon, path]) => <Button key={label} variant="outlined" startIcon={icon} onClick={() => navigate(path)}>{label}</Button>)}
@@ -246,10 +246,18 @@ function StudentProfilePage() {
         ['Full Name', student.fullName], ['Student ID', student.studentId], ['NIC', student.nic], ['Phone', student.phone],
         ['WhatsApp Number', student.whatsappNumber], ['Email', student.email], ['Date of Birth', dateText(student.dateOfBirth)], ['Address', student.address], ['Registration Date', dateText(student.registrationDate)]
       ]} /></InfoCard></Grid>
-      <Grid item xs={12} md={6}><InfoCard title="Course Information" icon={<SchoolIcon color="primary" />}><DetailGrid rows={[
-        ['Course Name', course.name], ['Course Fee', course.fee ? money(course.fee) : '-'], ['Batch Name', batch.name], ['Start Date', dateText(batch.startDate)],
-        ['End Date', dateText(batch.endDate)], ['Lecturer', batch.lecturer], ['Schedule', batch.schedule], ['Batch Status', batch.status]
-      ]} /></InfoCard></Grid>
+      <Grid item xs={12} md={6}><InfoCard title="Current Courses" icon={<SchoolIcon color="primary" />}><Stack spacing={1}>
+        {activeEnrollments.map((item) => <Paper key={item.id} variant="outlined" sx={{ p: 1.5 }}><Typography fontWeight={800}>{item.course?.name || 'Course'}</Typography><Typography variant="body2" color="text.secondary">{item.course?.code || ''}</Typography></Paper>)}
+        {!activeEnrollments.length && <Typography color="text.secondary">No active courses.</Typography>}
+      </Stack></InfoCard></Grid>
+      <Grid item xs={12} md={6}><InfoCard title="Current Batches" icon={<SchoolIcon color="primary" />}><Stack spacing={1}>
+        {activeEnrollments.filter((item) => item.batch).map((item) => <Paper key={item.id} variant="outlined" sx={{ p: 1.5 }}><Typography fontWeight={800}>{item.batch?.name}</Typography><Typography variant="body2" color="text.secondary">{item.course?.name} · {item.batch?.schedule || 'Schedule not set'}</Typography></Paper>)}
+        {!activeEnrollments.some((item) => item.batch) && <Typography color="text.secondary">No active batches.</Typography>}
+      </Stack></InfoCard></Grid>
+      <Grid item xs={12}><InfoCard title="Enrollment History" icon={<SchoolIcon color="primary" />}><TableContainer><Table size="small"><TableHead><TableRow>{['Course', 'Batch', 'Status', 'Payment', 'LMS Access', 'Enrolled', 'Completed'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>
+        {enrollments.map((item) => <TableRow key={item.id}><TableCell>{item.course?.name || '-'}</TableCell><TableCell>{item.batch?.name || 'All-course'}</TableCell><TableCell><Chip size="small" label={item.enrollmentStatus} color={item.enrollmentStatus === 'active' ? 'success' : 'default'} /></TableCell><TableCell><Chip size="small" label={item.paymentStatus || 'missing'} color={item.paymentStatus === 'paid' || item.paymentStatus === 'current' ? 'success' : 'warning'} /></TableCell><TableCell><Chip size="small" label={item.accessAllowed ? 'Allowed' : 'Blocked'} color={item.accessAllowed ? 'success' : 'warning'} /></TableCell><TableCell>{dateText(item.enrolledAt)}</TableCell><TableCell>{dateText(item.completedAt)}</TableCell></TableRow>)}
+        {!enrollments.length && <TableRow><TableCell colSpan={7}><EmptyState label="No enrollment history found" /></TableCell></TableRow>}
+      </TableBody></Table></TableContainer></InfoCard></Grid>
       <Grid item xs={12} md={6}><InfoCard title="Fee Summary" icon={<PaymentsIcon color="primary" />}><DetailGrid rows={[
         ['Original Fee', money(fees.originalFee)], ['Discount', money(fees.discount)], ['Final Fee', money(fees.finalFee)], ['Paid Amount', money(fees.paidAmount)],
         ['Balance', money(fees.balance)], ['Next Installment Date', dateText(fees.nextInstallmentDate)], ['Payment Status', fees.paymentStatus]

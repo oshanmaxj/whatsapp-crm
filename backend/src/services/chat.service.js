@@ -101,7 +101,7 @@ class ChatService {
       throw error;
     }
 
-    const compliance = await whatsappComplianceService.canSendFreeFormMessage(conversation.contactId);
+    const compliance = await whatsappComplianceService.canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId);
     if (!compliance.canSend) {
       const error = new Error('Template required to message this customer.');
       error.status = 409;
@@ -110,7 +110,7 @@ class ChatService {
       throw error;
     }
 
-    const runtimeConfig = await whatsappService.getRuntimeConfig();
+    const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
     const replyContext = await this.resolveReplyContext(conversationId, replyToMessageId);
     const message = await Message.create({
       conversationId,
@@ -128,6 +128,7 @@ class ChatService {
       statusUpdatedAt: new Date(),
       isRead: true,
       rawPayload: {}
+      , whatsappAccountId: conversation.whatsappAccountId || null
     });
 
     try {
@@ -135,7 +136,8 @@ class ChatService {
         to: toNumber,
         text,
         contextMessageId: replyContext.replyToWhatsappMessageId,
-        log: false
+        log: false,
+        whatsappAccountId: conversation.whatsappAccountId
       });
       await message.update({
         whatsappMessageId: whatsappResponse?.id || null,
@@ -183,7 +185,8 @@ class ChatService {
 
     const template = await whatsappTemplateService.approvedTemplateByName(
       templateName,
-      languageCode
+      languageCode,
+      conversation.whatsappAccountId
     );
     if (!template) {
       const error = new Error('Approved WhatsApp template not found');
@@ -192,7 +195,7 @@ class ChatService {
       throw error;
     }
 
-    const runtimeConfig = await whatsappService.getRuntimeConfig();
+    const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
     const replyContext = await this.resolveReplyContext(conversationId, replyToMessageId);
     const message = await Message.create({
       conversationId,
@@ -210,6 +213,7 @@ class ChatService {
       statusUpdatedAt: new Date(),
       isRead: true,
       rawPayload: { template: { name: template.name, language: template.language, components } }
+      , whatsappAccountId: conversation.whatsappAccountId || null
     });
 
     try {
@@ -219,7 +223,8 @@ class ChatService {
         language: template.language,
         components,
         contextMessageId: replyContext.replyToWhatsappMessageId,
-        log: false
+        log: false,
+        whatsappAccountId: conversation.whatsappAccountId
       });
       await message.update({
         whatsappMessageId: whatsappResponse?.id || null,

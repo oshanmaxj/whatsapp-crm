@@ -100,7 +100,7 @@ function ChatPage() {
   const [newMessage, setNewMessage] = useState('');
   const [noteText, setNoteText] = useState('');
   const [labelText, setLabelText] = useState('');
-  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', unread: '' });
+  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', unread: '', whatsappAccountId: '' });
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -116,7 +116,8 @@ function ChatPage() {
     mine: filters.mine || undefined,
     status: filters.status || undefined,
     unread: filters.unread || undefined
-  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.unread]);
+    , whatsappAccountId: filters.whatsappAccountId || undefined
+  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.unread, filters.whatsappAccountId]);
 
   const selectedConversation = conversation
     || safeArray(conversations).find((item) => String(item.id) === String(selected))
@@ -127,6 +128,13 @@ function ChatPage() {
     const interval = window.setInterval(() => setWindowNow(Date.now()), 60000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!conversation?.whatsappAccountId) return;
+    listWhatsAppTemplates({ status: 'APPROVED', whatsappAccountId: conversation.whatsappAccountId })
+      .then((response) => setWhatsAppTemplates(safeArray(response.data?.data)))
+      .catch(() => {});
+  }, [conversation?.whatsappAccountId]);
 
   useEffect(() => {
     selectedRef.current = selected;

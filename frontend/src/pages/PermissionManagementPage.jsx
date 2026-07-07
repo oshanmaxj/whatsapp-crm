@@ -17,6 +17,7 @@ import {
   createRole, deactivateRole, getPermissions, getRoles, getUserPermissions, getUsers, setRolePermissions,
   setUserPermissions, updateRole
 } from '../services/userManagement.service';
+import { getWhatsAppAccounts } from '../services/whatsappAccount.service';
 
 const ACTIONS = ['view', 'create', 'edit', 'delete', 'send', 'export', 'special'];
 const ACTION_LABELS = {
@@ -191,6 +192,8 @@ function PermissionManagementPage() {
   const [editingRole, setEditingRole] = useState(null);
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [roleName, setRoleName] = useState('');
+  const [whatsappAccounts, setWhatsappAccounts] = useState([]);
+  const [roleWhatsappAccountIds, setRoleWhatsappAccountIds] = useState([]);
   const [showInactive, setShowInactive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -201,11 +204,14 @@ function PermissionManagementPage() {
     try {
       setLoading(true);
       setError('');
-      const [rolesRes, permissionsRes, usersRes] = await Promise.all([getRoles(showInactive), getPermissions(), getUsers()]);
+      const [rolesRes, permissionsRes, usersRes, accountsRes] = await Promise.all([
+        getRoles(showInactive), getPermissions(), getUsers(), getWhatsAppAccounts()
+      ]);
       const nextRoles = rolesRes.data.data || [];
       setRoles(nextRoles);
       setPermissions(permissionsRes.data.data || []);
       setUsers(usersRes.data.data || []);
+      setWhatsappAccounts(accountsRes.data.data || []);
       setSelectedRoleId((current) => nextRoles.some((role) => String(role.id) === String(current))
         ? current
         : String(nextRoles[0]?.id || ''));
@@ -319,12 +325,14 @@ function PermissionManagementPage() {
     try {
       setSaving(true);
       setError('');
-      if (editingRole) await updateRole(editingRole.id, { name: roleName });
-      else await createRole({ name: roleName });
+      const payload = { name: roleName, whatsappAccountIds: roleWhatsappAccountIds };
+      if (editingRole) await updateRole(editingRole.id, payload);
+      else await createRole(payload);
       setNotice(editingRole ? 'Department updated successfully' : 'Department created successfully');
       setEditingRole(null);
       setRoleDialogOpen(false);
       setRoleName('');
+      setRoleWhatsappAccountIds([]);
       await load();
     } catch (err) {
       setError(requestErrorMessage(err, 'Unable to save role.'));
@@ -404,6 +412,7 @@ function PermissionManagementPage() {
           <Button variant="outlined" startIcon={<AddIcon />} onClick={() => {
             setEditingRole(null);
             setRoleName('');
+            setRoleWhatsappAccountIds([]);
             setRoleDialogOpen(true);
           }}>Create Department</Button>
           <FormControlLabel
@@ -455,6 +464,7 @@ function PermissionManagementPage() {
                 <Button fullWidth startIcon={<EditOutlinedIcon />} onClick={() => {
                   setEditingRole(selectedRole);
                   setRoleName(selectedRole.name);
+                  setRoleWhatsappAccountIds((selectedRole.whatsappAccounts || []).map((account) => account.id));
                   setRoleDialogOpen(true);
                 }} sx={{ borderRadius: 0 }}>Edit Department</Button>
                 <Button
@@ -763,15 +773,41 @@ function PermissionManagementPage() {
       <Dialog open={roleDialogOpen} onClose={() => {
         setEditingRole(null);
         setRoleName('');
+        setRoleWhatsappAccountIds([]);
         setRoleDialogOpen(false);
       }} maxWidth="xs" fullWidth>
         <DialogTitle>{editingRole ? 'Edit Department' : 'Create Department'}</DialogTitle>
         <DialogContent>
           {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
           <TextField sx={{ mt: 2 }} label="Department Name" value={roleName} onChange={(event) => setRoleName(event.target.value)} fullWidth />
+          <TextField
+            select
+            sx={{ mt: 2 }}
+            label="WhatsApp Accounts"
+            value={roleWhatsappAccountIds}
+            onChange={(event) => setRoleWhatsappAccountIds(
+              typeof event.target.value === 'string' ? event.target.value.split(',') : event.target.value
+            )}
+            SelectProps={{
+              multiple: true,
+              renderValue: (selected) => whatsappAccounts
+                .filter((account) => selected.map(String).includes(String(account.id)))
+                .map((account) => account.name)
+                .join(', ')
+            }}
+            helperText="Users in this department can only access chats and tools for these accounts."
+            fullWidth
+          >
+            {whatsappAccounts.map((account) => (
+              <MenuItem key={account.id} value={account.id}>
+                <Checkbox checked={roleWhatsappAccountIds.map(String).includes(String(account.id))} />
+                {account.name}{account.phoneNumber ? ` · ${account.phoneNumber}` : ''}
+              </MenuItem>
+            ))}
+          </TextField>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => { setEditingRole(null); setRoleName(''); setRoleDialogOpen(false); }}>Cancel</Button>
+          <Button onClick={() => { setEditingRole(null); setRoleName(''); setRoleWhatsappAccountIds([]); setRoleDialogOpen(false); }}>Cancel</Button>
           <Button variant="contained" onClick={saveRole} disabled={!roleName.trim() || saving}>
             {saving ? <CircularProgress size={20} /> : 'Save'}
           </Button>

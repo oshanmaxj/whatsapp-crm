@@ -15,6 +15,7 @@ const {
 } = require('../models');
 const messageQueueService = require('./messageQueue.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
+const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
 
 function fullName(person) {
   return [person?.firstName, person?.lastName].filter(Boolean).join(' ') || person?.name || person?.phone || 'Unknown';
@@ -110,8 +111,10 @@ function parseCsv(csv = '') {
 }
 
 class CampaignService {
-  async listCampaigns() {
+  async listCampaigns(query = {}, userId = null) {
+    const accessWhere = userId ? await whatsappAccountAccessService.whereForUser(userId) : {};
     const campaigns = await Campaign.findAll({
+      where: { ...(query.whatsappAccountId ? { whatsappAccountId: query.whatsappAccountId } : {}), ...accessWhere },
       include: [
         { model: MessageTemplate, as: 'template', required: false },
         { model: WhatsAppTemplate, as: 'whatsappTemplate', required: false },
@@ -129,8 +132,10 @@ class CampaignService {
     });
   }
 
-  async getCampaign(id) {
-    const campaign = await Campaign.findByPk(id, {
+  async getCampaign(id, userId = null) {
+    const accessWhere = userId ? await whatsappAccountAccessService.whereForUser(userId) : {};
+    const campaign = await Campaign.findOne({
+      where: { id, ...accessWhere },
       include: [
         { model: MessageTemplate, as: 'template', required: false },
         { model: WhatsAppTemplate, as: 'whatsappTemplate', required: false },
@@ -142,16 +147,17 @@ class CampaignService {
     return campaign;
   }
 
-  async approvedTemplate(id) {
+  async approvedTemplate(id, whatsappAccountId = null) {
     if (!id) throw Object.assign(new Error('Select an approved WhatsApp template'), { status: 422 });
-    const template = await WhatsAppTemplate.findOne({ where: { id, status: 'APPROVED' } });
+    const template = await WhatsAppTemplate.findOne({ where: { id, status: 'APPROVED', ...(whatsappAccountId ? { whatsappAccountId } : {}) } });
     if (!template) throw Object.assign(new Error('Selected WhatsApp template is not approved or no longer exists'), { status: 422 });
     return template;
   }
 
   async createCampaign(payload, createdBy) {
     if (!String(payload.name || '').trim()) throw Object.assign(new Error('Campaign name is required'), { status: 422 });
-    const template = await this.approvedTemplate(payload.whatsappTemplateId || payload.templateId);
+    const selectedAccountId = await whatsappAccountAccessService.resolveSelection(payload.whatsappAccountId, createdBy);
+    const template = await this.approvedTemplate(payload.whatsappTemplateId || payload.templateId, selectedAccountId);
     const recipientSource = payload.recipient_source || payload.recipientSource;
     const filters = {
       ...(payload.filters || {}),
@@ -176,6 +182,7 @@ class CampaignService {
       mediaId: payload.mediaId || null,
       scheduledAt: payload.scheduledAt || null,
       createdBy
+      , whatsappAccountId: selectedAccountId || template.whatsappAccountId || null
     });
   }
 
@@ -186,7 +193,7 @@ class CampaignService {
     }
     const updates = { ...payload };
     if (payload.whatsappTemplateId) {
-      const template = await this.approvedTemplate(payload.whatsappTemplateId);
+      const template = await this.approvedTemplate(payload.whatsappTemplateId, payload.whatsappAccountId || campaign.whatsappAccountId);
       updates.whatsappTemplateId = template.id;
       updates.templateName = template.name;
       updates.messageBody = template.body;
@@ -323,6 +330,7 @@ class CampaignService {
           name: item.name || item.contact_name || phone,
           status: 'pending',
           variableData: item
+          , whatsappAccountId: campaign.whatsappAccountId || null
         }
       });
       if (created) imported += 1;
@@ -359,8 +367,8 @@ class CampaignService {
     const campaign = await this.getCampaign(id);
     if (campaign.status === 'Cancelled') throw Object.assign(new Error('Cancelled campaigns cannot be sent'), { status: 409 });
     const template = campaign.whatsappTemplateId
-      ? await this.approvedTemplate(campaign.whatsappTemplateId)
-      : await WhatsAppTemplate.findOne({ where: { name: campaign.templateName, status: 'APPROVED' } });
+      ? await this.approvedTemplate(campaign.whatsappTemplateId, campaign.whatsappAccountId)
+      : await WhatsAppTemplate.findOne({ where: { name: campaign.templateName, status: 'APPROVED', whatsappAccountId: campaign.whatsappAccountId } });
     if (!template && !String(campaign.messageBody || '').trim()) {
       throw Object.assign(new Error('This legacy campaign has no approved WhatsApp template or message body'), { status: 422 });
     }
@@ -378,6 +386,7 @@ class CampaignService {
         templateId: template?.id || null,
         templateName: template?.name || campaign.templateName,
         messageType: template ? 'template' : 'free_form'
+        , whatsappAccountId: campaign.whatsappAccountId
       });
       if (!compliance.allowed) {
         await recipient.update({ status: 'failed', errorMessage: compliance.reason });
@@ -397,6 +406,7 @@ class CampaignService {
         maxAttempts: 3,
         campaignId: campaign.id,
         campaignRecipientId: recipient.id,
+        whatsappAccountId: campaign.whatsappAccountId,
         payload: template
           ? {
               to: recipient.phone,
@@ -404,11 +414,13 @@ class CampaignService {
               language: template.language,
               components: templateComponents(campaign, recipient),
               log: true
+              , whatsappAccountId: campaign.whatsappAccountId
             }
           : {
               to: recipient.phone,
               text: legacyMessageBody(campaign, recipient),
               log: true
+              , whatsappAccountId: campaign.whatsappAccountId
             }
       }, campaign.createdBy);
       await recipient.update({ status: 'queued', queueId: queueItem.id, errorMessage: null });

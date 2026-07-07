@@ -6,22 +6,24 @@ const followupService = require('./followup.service');
 const notificationService = require('./notification.service');
 
 class LeadManagementService {
-  async processIncomingWhatsapp({ from, whatsappId, profileName, text, threadId, payload }) {
+  async processIncomingWhatsapp({ from, whatsappId, profileName, text, threadId, payload, whatsappAccountId = null }) {
     const contact = await contactService.findOrCreateFromWhatsapp({
       phone: from,
       whatsappId,
       firstName: profileName || null,
-      lastName: null
+      lastName: null,
+      whatsappAccountId
     });
 
-    let lead = await leadService.getOpenLeadForContact(contact.id);
+    let lead = await leadService.getOpenLeadForContact(contact.id, whatsappAccountId);
     if (!lead) {
       lead = await leadService.createLead(contact.id, {
         source: 'WhatsApp',
         status: 'new',
         stage: 'new',
         priority: 'medium',
-        nextFollowupAt: new Date(Date.now() + 1000 * 60 * 60)
+        nextFollowupAt: new Date(Date.now() + 1000 * 60 * 60),
+        whatsappAccountId
       });
     }
 
@@ -45,7 +47,8 @@ class LeadManagementService {
       leadId: lead.id,
       whatsappThreadId: threadId,
       assignedTo: assignee?.id || null,
-      lastMessageAt: new Date()
+      lastMessageAt: new Date(),
+      whatsappAccountId
     });
 
     let followup = null;

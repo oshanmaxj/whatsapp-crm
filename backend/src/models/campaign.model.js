@@ -1,6 +1,7 @@
 module.exports = (sequelize, DataTypes) => {
   const Campaign = sequelize.define('Campaign', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     name: { type: DataTypes.STRING(180), allowNull: false },
     description: { type: DataTypes.TEXT, allowNull: true },
     status: {

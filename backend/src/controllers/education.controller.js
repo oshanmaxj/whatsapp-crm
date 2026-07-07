@@ -18,17 +18,35 @@ class EducationController {
   async listStudents(req, res, next) { try { return ok(res, await educationService.listStudents(req.query)); } catch (err) { next(err); } }
   async getStudentProfile(req, res, next) { try { return ok(res, await educationService.getStudentProfile(req.params.id)); } catch (err) { next(err); } }
   async getStudent(req, res, next) { try { return ok(res, await educationService.getStudent(req.params.id)); } catch (err) { next(err); } }
-  async createStudent(req, res, next) { try { return ok(res, await educationService.createStudent(req.body), 201); } catch (err) { next(err); } }
-  async updateStudent(req, res, next) { try { return ok(res, await educationService.updateStudent(req.params.id, req.body)); } catch (err) { next(err); } }
+  async listStudentEnrollments(req, res, next) { try { return ok(res, await educationService.listStudentEnrollments(req.params.id)); } catch (err) { next(err); } }
+  async createStudentEnrollment(req, res, next) { try { return ok(res, await educationService.createStudentEnrollment(req.params.id, req.body, req.user?.id || null), 201); } catch (err) { next(err); } }
+  async updateEnrollment(req, res, next) { try { return ok(res, await educationService.updateEnrollment(req.params.id, req.body)); } catch (err) { next(err); } }
+  async deleteEnrollment(req, res, next) { try { return ok(res, await educationService.deleteEnrollment(req.params.id)); } catch (err) { next(err); } }
+  async createStudent(req, res, next) {
+    try {
+      const payload = { ...req.body, enrollments: req.body.enrollments };
+      return ok(res, await educationService.createStudent(payload, req.user?.id || null), 201);
+    } catch (err) { next(err); }
+  }
+  async updateStudent(req, res, next) { try { return ok(res, await educationService.updateStudent(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }
+  async resetStudentPortalPassword(req, res, next) { try { return ok(res, await educationService.resetStudentPortalPassword(req.params.id, req.body)); } catch (err) { next(err); } }
   async deleteStudent(req, res, next) { try { return ok(res, await educationService.deleteStudent(req.params.id)); } catch (err) { next(err); } }
-  async convertLead(req, res, next) { try { return ok(res, await educationService.convertLeadToStudent(req.params.id, req.body), 201); } catch (err) { next(err); } }
+  async convertLead(req, res, next) {
+    try {
+      const payload = { ...req.body, enrollments: req.body.enrollments };
+      return ok(res, await educationService.convertLeadToStudent(req.params.id, payload, req.user?.id || null), 201);
+    } catch (err) { next(err); }
+  }
 
   async listFees(req, res, next) { try { return ok(res, await educationService.listFees(req.query)); } catch (err) { next(err); } }
   async getFee(req, res, next) { try { return ok(res, await educationService.getFee(req.params.id)); } catch (err) { next(err); } }
-  async createFee(req, res, next) { try { return ok(res, await educationService.createFee(req.body), 201); } catch (err) { next(err); } }
+  async createFee(req, res, next) { try { return ok(res, await educationService.createFee(req.body, req.user), 201); } catch (err) { next(err); } }
   async updateFee(req, res, next) { try { return ok(res, await educationService.updateFee(req.params.id, req.body)); } catch (err) { next(err); } }
   async deleteFee(req, res, next) { try { return ok(res, await educationService.deleteFee(req.params.id)); } catch (err) { next(err); } }
-  async payInstallment(req, res, next) { try { return ok(res, await educationService.payInstallment(req.params.id, req.body)); } catch (err) { next(err); } }
+  async payInstallment(req, res, next) { try { return ok(res, await educationService.payInstallment(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }
+  async confirmInstallment(req, res, next) { try { return ok(res, await educationService.confirmInstallmentPayment(req.params.id, req.user?.id || null)); } catch (err) { next(err); } }
+  async rejectInstallment(req, res, next) { try { return ok(res, await educationService.rejectInstallmentPayment(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }
+  async reverseInstallment(req, res, next) { try { return ok(res, await educationService.reverseInstallmentPayment(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }
   async remindInstallment(req, res, next) { try { return ok(res, await educationService.sendFeeReminder(req.params.id)); } catch (err) { next(err); } }
 
   async listAttendance(req, res, next) { try { return ok(res, await educationService.listAttendance(req.query)); } catch (err) { next(err); } }

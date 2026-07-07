@@ -17,7 +17,8 @@ const {
   LeadStatus,
   Student,
   StudentFee,
-  User
+  User,
+  WhatsAppAccount
 } = require('../models');
 const logger = require('../config/logger');
 const feeReminderService = require('./feeReminder.service');
@@ -26,6 +27,7 @@ const whatsappComplianceService = require('./whatsappCompliance.service');
 const automationService = require('./automation.service');
 const attendanceAlertService = require('./attendanceAlert.service');
 const birthdayWishService = require('./birthdayWish.service');
+const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
 
 const REPORT_TITLES = {
   overview: 'Overview Report',
@@ -118,13 +120,18 @@ class ReportService {
     return { [field]: range };
   }
 
-  async options() {
-    const [courses, batches, agents, leadStatuses, leadSources] = await Promise.all([
+  async options(userId = null) {
+    const [courses, batches, agents, leadStatuses, leadSources, departments, whatsappAccounts] = await Promise.all([
       safeList('courses', () => Course.findAll({ attributes: ['id', 'code', 'name', 'category'], order: [['name', 'ASC']] })),
       safeList('batches', () => Batch.findAll({ attributes: ['id', 'name', 'courseId', 'schedule'], include: [{ model: Course, as: 'course', attributes: ['id', 'code', 'name'] }], order: [['name', 'ASC']] })),
       safeList('agents', () => User.findAll({ where: { status: 'active' }, attributes: ['id', 'firstName', 'lastName', 'email'], include: [{ model: Role, as: 'roles', attributes: ['id', 'name'], through: { attributes: [] }, required: false }], order: [['firstName', 'ASC']] })),
       safeList('leadStatuses', () => LeadStatus.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] })),
-      safeList('leadSources', () => LeadSource.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }))
+      safeList('leadSources', () => LeadSource.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] })),
+      safeList('departments', () => Role.findAll({ where: { isActive: true }, attributes: ['id', 'name'], order: [['name', 'ASC']] })),
+      safeList('whatsappAccounts', async () => {
+        const where = userId ? await whatsappAccountAccessService.whereForUser(userId, 'id') : {};
+        return WhatsAppAccount.findAll({ where: { status: 'active', ...where }, attributes: ['id', 'name', 'phoneNumber'], order: [['name', 'ASC']] });
+      })
     ]);
 
     return {
@@ -144,7 +151,9 @@ class ReportService {
       paymentStatuses: PAYMENT_STATUSES,
       paymentMethods: PAYMENT_METHODS,
       campaignStatuses: CAMPAIGN_STATUSES,
-      attendanceStatuses: ATTENDANCE_STATUSES
+      attendanceStatuses: ATTENDANCE_STATUSES,
+      departments: departments.map((item) => ({ id: item.id, name: item.name })),
+      whatsappAccounts: whatsappAccounts.map((item) => ({ id: item.id, name: item.name, phoneNumber: item.phoneNumber }))
     };
   }
 
@@ -184,7 +193,15 @@ class ReportService {
     return { leads, students, revenue: revenue[0] || {}, campaign, agents };
   }
 
-  async report(type, filters = {}) {
+  async report(type, filters = {}, userId = null) {
+    filters = { ...filters };
+    if (userId) {
+      const accessibleIds = await whatsappAccountAccessService.accessibleIds(userId);
+      if (filters.whatsappAccountId) {
+        await whatsappAccountAccessService.assertAccess(filters.whatsappAccountId, userId);
+      }
+      Object.defineProperty(filters, '_accessibleAccountIds', { value: accessibleIds, enumerable: false });
+    }
     const handler = {
       overview: () => this.overviewReport(filters),
       leads: () => this.leadReport(filters),
@@ -232,13 +249,30 @@ class ReportService {
       { model: Contact, as: 'contact' },
       { model: LeadStatus, as: 'status', where: filters.leadStatus ? { name: filters.leadStatus } : undefined, required: !!filters.leadStatus },
       { model: LeadSource, as: 'source', where: filters.leadSource ? { name: filters.leadSource } : undefined, required: !!filters.leadSource },
-      { model: User, as: 'owner', attributes: ['id', 'firstName', 'lastName', 'email'], include: [{ model: Role, as: 'roles', attributes: ['id', 'name'], through: { attributes: [] }, required: false }] }
+      {
+        model: User,
+        as: 'owner',
+        attributes: ['id', 'firstName', 'lastName', 'email'],
+        required: Boolean(filters.departmentId),
+        include: [{
+          model: Role,
+          as: 'roles',
+          attributes: ['id', 'name'],
+          through: { attributes: [] },
+          where: filters.departmentId ? { id: filters.departmentId } : undefined,
+          required: Boolean(filters.departmentId)
+        }]
+      }
     ];
   }
 
   leadWhere(filters) {
     const where = { ...this.dateWhere(filters) };
     if (filters.agentId) where.ownerId = filters.agentId;
+    if (filters.whatsappAccountId) where.whatsappAccountId = filters.whatsappAccountId;
+    else if (filters._accessibleAccountIds !== null && filters._accessibleAccountIds !== undefined) {
+      where.whatsappAccountId = { [Op.in]: filters._accessibleAccountIds };
+    }
     return where;
   }
 
@@ -496,6 +530,17 @@ class ReportService {
     if (filters.campaignStatus && CAMPAIGN_STATUSES.includes(filters.campaignStatus) && filters.campaignStatus !== 'simulated_sent') {
       campaignWhere.status = filters.campaignStatus;
     }
+    if (filters.whatsappAccountId) campaignWhere.whatsappAccountId = filters.whatsappAccountId;
+    else if (filters._accessibleAccountIds !== null && filters._accessibleAccountIds !== undefined) {
+      campaignWhere.whatsappAccountId = { [Op.in]: filters._accessibleAccountIds };
+    }
+    if (filters.departmentId) {
+      const departmentUsers = await User.findAll({
+        attributes: ['id'],
+        include: [{ model: Role, as: 'roles', attributes: [], where: { id: filters.departmentId }, through: { attributes: [] }, required: true }]
+      });
+      campaignWhere.createdBy = { [Op.in]: departmentUsers.map((user) => user.id) };
+    }
     const campaigns = await Campaign.findAll({ where: campaignWhere, include: [{ model: CampaignRecipient, as: 'recipients' }], order: [['createdAt', 'DESC']], limit: 1000 });
     const rows = campaigns.map((campaign) => this.campaignRow(campaign));
     return makeReport('campaigns', filters, [
@@ -552,14 +597,30 @@ class ReportService {
   }
 
   async agentReport(filters) {
+    const accountWhere = {};
+    if (filters.whatsappAccountId) accountWhere.whatsappAccountId = filters.whatsappAccountId;
+    else if (filters._accessibleAccountIds !== null && filters._accessibleAccountIds !== undefined) {
+      accountWhere.whatsappAccountId = { [Op.in]: filters._accessibleAccountIds };
+    }
     const agents = await User.findAll({
       where: filters.agentId ? { id: filters.agentId } : { status: 'active' },
       attributes: ['id', 'firstName', 'lastName', 'email'],
-      include: [{ model: Role, as: 'roles', attributes: ['id', 'name'], through: { attributes: [] }, required: false }]
+      include: [{
+        model: Role,
+        as: 'roles',
+        attributes: ['id', 'name'],
+        through: { attributes: [] },
+        where: filters.departmentId ? { id: filters.departmentId } : undefined,
+        required: Boolean(filters.departmentId)
+      }]
     });
     const [leads, conversations, followups] = await Promise.all([
       Lead.findAll({ where: this.leadWhere(filters), include: [{ model: LeadStatus, as: 'status' }] }),
-      Conversation.findAll({ where: filters.agentId ? { assignedUserId: filters.agentId } : {} }),
+      Conversation.findAll({ where: {
+        ...(filters.agentId ? { assignedUserId: filters.agentId } : {}),
+        ...(filters.departmentId ? { assignedRoleId: filters.departmentId } : {}),
+        ...accountWhere
+      } }),
       Followup.findAll({ where: filters.agentId ? { assignedTo: filters.agentId } : {} })
     ]);
     const rows = agents.map((agent) => {

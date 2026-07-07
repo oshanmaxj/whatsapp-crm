@@ -15,10 +15,12 @@ import {
   createFlow, deleteFlow, duplicateFlow, getFlowAnalytics, getFlowRuns, getFlows,
   publishFlow, unpublishFlow
 } from '../services/flowBuilder.service';
+import { normalizeKeywords } from '../components/flow-builder/flowBuilderConfig';
 
 function FlowAnalyticsDialog({ flow, onClose }) {
   const [analytics, setAnalytics] = useState(null);
   const [runs, setRuns] = useState([]);
+  const [errorRun, setErrorRun] = useState(null);
 
   useEffect(() => {
     if (!flow) return;
@@ -52,12 +54,29 @@ function FlowAnalyticsDialog({ flow, onClose }) {
         <Typography variant="h6" fontWeight={850} sx={{ mb: 1 }}>Recent Runs</Typography>
         <TableContainer>
           <Table size="small">
-            <TableHead><TableRow><TableCell>ID</TableCell><TableCell>Status</TableCell><TableCell>Current Node</TableCell><TableCell>Started</TableCell></TableRow></TableHead>
-            <TableBody>{runs.map((run) => <TableRow key={run.id}><TableCell>{run.id}</TableCell><TableCell>{run.status}</TableCell><TableCell>{run.currentNodeKey || '-'}</TableCell><TableCell>{run.startedAt ? new Date(run.startedAt).toLocaleString() : '-'}</TableCell></TableRow>)}</TableBody>
+            <TableHead><TableRow><TableCell>ID</TableCell><TableCell>Status</TableCell><TableCell>Current Node</TableCell><TableCell>Started</TableCell><TableCell align="right">Error</TableCell></TableRow></TableHead>
+            <TableBody>{runs.map((run) => <TableRow key={run.id}><TableCell>{run.id}</TableCell><TableCell>{run.status}</TableCell><TableCell>{run.currentNodeKey || '-'}</TableCell><TableCell>{run.startedAt ? new Date(run.startedAt).toLocaleString() : '-'}</TableCell><TableCell align="right">{run.status === 'failed' && <Button size="small" onClick={() => setErrorRun(run)}>View Error</Button>}</TableCell></TableRow>)}</TableBody>
           </Table>
         </TableContainer>
       </DialogContent>
       <DialogActions><Button onClick={onClose}>Close</Button></DialogActions>
+      <Dialog open={!!errorRun} onClose={() => setErrorRun(null)} maxWidth="md" fullWidth>
+        <DialogTitle>Flow Run Error</DialogTitle>
+        <DialogContent>
+          {errorRun && <Stack spacing={1.5}>
+            <Typography><strong>Run ID:</strong> {errorRun.id}</Typography>
+            <Typography><strong>Status:</strong> {errorRun.status}</Typography>
+            <Typography><strong>Failed Node:</strong> {errorRun.failedNodeId || errorRun.currentNodeKey || '-'}</Typography>
+            <Typography><strong>Node Type:</strong> {errorRun.failedNodeType || '-'}</Typography>
+            <Typography><strong>Error Message:</strong> {errorRun.errorMessage || '-'}</Typography>
+            <Typography fontWeight={800}>WhatsApp API Response</Typography>
+            <Paper variant="outlined" sx={{ p: 1.5, maxHeight: 220, overflow: 'auto', bgcolor: '#fafafa' }}><pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(errorRun.whatsappApiResponse || {}, null, 2)}</pre></Paper>
+            <Typography fontWeight={800}>Payload Sent</Typography>
+            <Paper variant="outlined" sx={{ p: 1.5, maxHeight: 220, overflow: 'auto', bgcolor: '#fafafa' }}><pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(errorRun.payloadSent || {}, null, 2)}</pre></Paper>
+          </Stack>}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setErrorRun(null)}>Close</Button></DialogActions>
+      </Dialog>
     </Dialog>
   );
 }
@@ -79,7 +98,13 @@ function FlowBuilderListPage() {
   useEffect(() => { load().catch((err) => setError(err.response?.data?.message || 'Unable to load flows.')); }, []);
 
   const create = async () => {
-    const res = await createFlow(form);
+    const keywords = normalizeKeywords(form.triggerKeywords);
+    const res = await createFlow({
+      ...form,
+      triggerType: 'inbound_message',
+      triggerKeywords: keywords,
+      triggerConfig: { source: 'inbound_message', keywords, matchType: 'contains', keywordMatchMode: 'contains' }
+    });
     setCreateOpen(false);
     navigate(`/flow-builder/${res.data.data.id}`);
   };

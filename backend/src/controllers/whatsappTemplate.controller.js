@@ -9,7 +9,7 @@ class WhatsAppTemplateController {
   async update(req, res, next) { try { return ok(res, await whatsappTemplateService.update(req.params.id, req.body)); } catch (err) { next(err); } }
   async delete(req, res, next) { try { return ok(res, await whatsappTemplateService.delete(req.params.id)); } catch (err) { next(err); } }
   async submit(req, res, next) { try { return ok(res, await whatsappTemplateService.submit(req.params.id)); } catch (err) { next(err); } }
-  async sync(req, res, next) { try { return ok(res, await whatsappTemplateService.sync()); } catch (err) { next(err); } }
+  async sync(req, res, next) { try { return ok(res, await whatsappTemplateService.sync(req.body?.whatsappAccountId || req.query.whatsappAccountId)); } catch (err) { next(err); } }
   async uploadSample(req, res, next) { try { return ok(res, await whatsappTemplateService.uploadSample(req.body), 201); } catch (err) { next(err); } }
 }
 

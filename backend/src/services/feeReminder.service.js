@@ -13,6 +13,8 @@ const {
 const notificationService = require('./notification.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappService = require('./whatsapp.service');
+const notificationTemplateService = require('./notificationTemplate.service');
+const studentMessageAutomationService = require('./studentMessageAutomation.service');
 
 const UPCOMING_TYPES = [
   { days: 7, type: 'upcoming_7' },
@@ -48,7 +50,7 @@ function money(value) {
   return amount(value).toFixed(2);
 }
 
-function templateMessage(type, installment) {
+async function templateMessage(type, installment) {
   const student = installment.fee?.student;
   const course = installment.fee?.course;
   const studentName = student?.name || 'Student';
@@ -57,13 +59,17 @@ function templateMessage(type, installment) {
   const value = money(outstanding(installment) || installment.amount);
   const balance = money(installment.fee?.balance);
 
-  if (type === 'due_today') {
-    return `Hello ${studentName}\n\nYour installment payment for ${courseName}\nis due today.\n\nAmount: Rs.${value}`;
-  }
-  if (String(type).startsWith('overdue')) {
-    return `Hello ${studentName}\n\nYour installment payment for ${courseName}\nis overdue.\n\nOutstanding Amount: Rs.${value}\n\nPlease contact administration if already paid.`;
-  }
-  return `Hello ${studentName}\n\nThis is a reminder that your installment of Rs.${value}\nfor ${courseName} is due on ${dueDate}.\n\nBalance: Rs.${balance}`;
+  return notificationTemplateService.renderTemplate('payment_reminder', {
+    student: { name: studentName, phone: student?.phone || '' },
+    course: { name: courseName },
+    batch: { name: installment.fee?.batch?.name || '' },
+    fee: { amount: value, balance },
+    installment: { no: installment.installmentNo, due_date: dueDate }
+  }).catch(() => {
+    if (type === 'due_today') return `Hello ${studentName}\n\nYour installment payment for ${courseName}\nis due today.\n\nAmount: Rs.${value}`;
+    if (String(type).startsWith('overdue')) return `Hello ${studentName}\n\nYour installment payment for ${courseName}\nis overdue.\n\nOutstanding Amount: Rs.${value}`;
+    return `Hello ${studentName}\n\nThis is a reminder that your installment of Rs.${value}\nfor ${courseName} is due on ${dueDate}.\n\nBalance: Rs.${balance}`;
+  });
 }
 
 function notificationTitle(status) {
@@ -193,7 +199,7 @@ class FeeReminderService {
         scheduledDate,
         status: 'pending',
         channel: 'whatsapp',
-        message: templateMessage(reminderType, installment)
+        message: await templateMessage(reminderType, installment)
       }
     });
     await this.notifyLargeOverdue(installment).catch(() => null);
@@ -211,7 +217,7 @@ class FeeReminderService {
       scheduledDate: dateKey(),
       status: 'pending',
       channel: 'whatsapp',
-      message: templateMessage('manual', installment)
+      message: await templateMessage('manual', installment)
     });
     return this.sendReminder(reminder.id);
   }
@@ -236,6 +242,25 @@ class FeeReminderService {
     if (reminder.status === 'sent') return reminder;
 
     try {
+      const student = reminder.student || reminder.fee?.student;
+      const queued = await studentMessageAutomationService.dispatch('payment_reminder', student.id, {
+        eventId: `fee-reminder:${reminder.id}`,
+        eventDate: reminder.scheduledDate,
+        paymentAmount: outstanding(reminder.installment) || reminder.installment?.amount,
+        installmentNo: reminder.installment?.installmentNo,
+        installmentDueDate: reminder.installment?.dueDate
+      });
+      await reminder.update({
+        status: queued.status === 'disabled' ? 'cancelled' : 'sent',
+        sentDate: queued.status === 'disabled' ? null : new Date(),
+        response: { mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null }
+      });
+      if (queued.status !== 'disabled') {
+        await FeeInstallment.update({ reminderSentAt: new Date() }, { where: { id: reminder.installmentId } });
+        await this.notifyReminder(reminder, 'sent');
+      }
+      return FeeReminder.findByPk(reminder.id, { include: this.reminderInclude() });
+      /*
       const compliance = await this.whatsappCompliance(reminder);
       const validation = await whatsappComplianceService.validateTemplateUsage({
         contactId: compliance.contactId,
@@ -262,6 +287,7 @@ class FeeReminderService {
       await FeeInstallment.update({ reminderSentAt: new Date() }, { where: { id: reminder.installmentId } });
       await this.notifyReminder(reminder, 'sent');
       return FeeReminder.findByPk(reminder.id, { include: this.reminderInclude() });
+      */
     } catch (error) {
       await reminder.update({ status: 'failed', response: { message: error.message, status: error.response?.status, data: error.response?.data } });
       await this.notifyReminder(reminder, 'failed', error.message);

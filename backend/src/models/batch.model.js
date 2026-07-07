@@ -8,6 +8,8 @@ module.exports = (sequelize, DataTypes) => {
     endDate: { type: DataTypes.DATEONLY, allowNull: true },
     schedule: { type: DataTypes.STRING(255), allowNull: true },
     capacity: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+    whatsappGroupLink: { type: DataTypes.STRING(500), allowNull: true },
+    whatsappGroupName: { type: DataTypes.STRING(180), allowNull: true },
     assignedTrainerId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     status: { type: DataTypes.ENUM('upcoming', 'active', 'completed', 'cancelled'), allowNull: false, defaultValue: 'upcoming' }
   }, {

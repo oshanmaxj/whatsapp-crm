@@ -11,12 +11,14 @@ import EditIcon from '@mui/icons-material/Edit';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import LockResetIcon from '@mui/icons-material/LockReset';
 import {
-  createAttendance, createBatch, createCertificate, createCourse, createFee, createStudent, deleteAttendance,
+  confirmInstallmentPayment, convertLeadToStudent, createAttendance, createBatch, createCertificate, createCourse, createFee, createStudent, deleteAttendance,
   deleteBatch, deleteCertificate, deleteCourse, deleteFee, deleteStudent, listAttendance, listBatches,
-  listCertificates, listCourses, listFees, listStudents, payInstallment, sendFeeReminder, updateAttendance,
-  updateBatch, updateCertificate, updateCourse, updateFee, updateStudent
+  listCertificates, listCourses, listFees, listStudents, payInstallment, rejectInstallmentPayment, reverseInstallmentPayment, sendFeeReminder, updateAttendance,
+  updateBatch, updateCertificate, updateCourse, updateFee, updateStudent, resetStudentPortalPassword
 } from '../services/education.service';
+import { getAccessPayload, hasAnyPermission } from '../utils/access';
 
 const paymentMethods = ['Cash', 'Bank Deposit', 'Bank Transfer', 'Card', 'Online Payment', 'Cheque', 'Free Card', 'Scholarship', 'Other'];
 const paymentTypes = ['full', 'installment', 'free_card', 'scholarship'];
@@ -29,8 +31,8 @@ const modules = {
     create: createCourse,
     update: updateCourse,
     remove: deleteCourse,
-    initial: { name: '', code: '', category: '', feeAmount: '', defaultInstallmentCount: 1, durationWeeks: '', status: 'active', description: '' },
-    fields: ['code', 'name', 'category', 'feeAmount', 'defaultInstallmentCount', 'durationWeeks', 'status', 'description'],
+    initial: { name: '', code: '', category: '', feeAmount: '', defaultInstallmentCount: 1, durationWeeks: '', status: 'active', whatsappGroupName: '', whatsappGroupLink: '', description: '' },
+    fields: ['code', 'name', 'category', 'feeAmount', 'defaultInstallmentCount', 'durationWeeks', 'status', 'whatsappGroupName', 'whatsappGroupLink', 'description'],
     columns: ['code', 'name', 'category', 'feeAmount', 'defaultInstallmentCount', 'durationWeeks', 'status']
   },
   batches: {
@@ -39,8 +41,8 @@ const modules = {
     create: createBatch,
     update: updateBatch,
     remove: deleteBatch,
-    initial: { courseId: '', name: '', code: '', startDate: '', endDate: '', schedule: '', capacity: '', status: 'upcoming' },
-    fields: ['courseId', 'name', 'code', 'startDate', 'endDate', 'schedule', 'capacity', 'status'],
+    initial: { courseId: '', name: '', code: '', startDate: '', endDate: '', schedule: '', capacity: '', status: 'upcoming', whatsappGroupName: '', whatsappGroupLink: '' },
+    fields: ['courseId', 'name', 'code', 'startDate', 'endDate', 'schedule', 'capacity', 'status', 'whatsappGroupName', 'whatsappGroupLink'],
     columns: ['name', 'code', 'course.code', 'course.name', 'startDate', 'schedule', 'status']
   },
   students: {
@@ -51,10 +53,11 @@ const modules = {
     remove: deleteStudent,
     initial: {
       name: '', phone: '', email: '', contactId: '', leadId: '', dateOfBirth: '',
-      courseId: '', batchId: '', status: 'enrolled', notes: ''
+      enrollments: [{ courseId: '', batchId: '', status: 'active', feePlan: 'full', installments: 1 }],
+      leadSource: '', status: 'enrolled', studentPortalPassword: '', notes: ''
     },
-    fields: ['name', 'phone', 'email', 'dateOfBirth', 'courseId', 'batchId', 'status', 'notes'],
-    columns: ['studentNo', 'name', 'phone', 'dateOfBirth', 'course.name', 'batch.name', 'status']
+    fields: ['name', 'phone', 'email', 'dateOfBirth', 'leadSource', 'status', 'studentPortalPassword', 'notes'],
+    columns: ['studentNo', 'name', 'phone', 'dateOfBirth', 'currentCourses', 'currentBatches', 'status']
   },
   fees: {
     title: 'Fee & Installment Tracking',
@@ -63,8 +66,9 @@ const modules = {
     update: updateFee,
     remove: deleteFee,
     initial: {
-      studentId: '', originalAmount: '', discountType: 'none', discountValue: '', discountReason: '', approvedBy: '',
-      paymentType: 'full', installmentCount: 1, dueDate: new Date().toISOString().slice(0, 10), notes: ''
+      studentId: '', enrollmentId: '', courseId: '', batchId: '', originalAmount: '', discountType: 'none', discountValue: '', discountReason: '', approvedBy: '',
+      paymentType: 'full', installmentCount: 1, dueDate: new Date().toISOString().slice(0, 10), notes: '',
+      paymentAmount: '', paymentMethod: 'Cash', transactionReference: '', paidDate: new Date().toISOString().slice(0, 10)
     },
     columns: ['student.name', 'course.name', 'batch.name', 'originalAmount', 'discountAmount', 'totalAmount', 'paidAmount', 'balance', 'paymentType', 'installmentCount', 'nextDueDate', 'status']
   },
@@ -100,6 +104,8 @@ function moneyText(value) {
 }
 
 function getValue(row, path) {
+  if (path === 'currentCourses') return [...new Set((row.enrollments || []).filter((item) => item.enrollmentStatus === 'active').map((item) => item.course?.name).filter(Boolean))].join(', ') || '-';
+  if (path === 'currentBatches') return [...new Set((row.enrollments || []).filter((item) => item.enrollmentStatus === 'active').map((item) => item.batch?.name).filter(Boolean))].join(', ') || '-';
   if (path === 'nextDueDate') {
     const next = [...(row.installments || [])].filter((item) => !['paid', 'cancelled'].includes(item.status)).sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)))[0];
     return next?.dueDate || '-';
@@ -115,6 +121,19 @@ function normalizePayload(form) {
   return payload;
 }
 
+function normalizeStudentEnrollments(enrollments = []) {
+  return enrollments
+    .filter((row) => row.courseId || row.course_id)
+    .map((row) => ({
+      ...(row.id ? { id: row.id } : {}),
+      courseId: row.courseId || row.course_id,
+      batchId: row.batchId || row.batch_id || null,
+      status: row.status || row.enrollmentStatus || row.enrollment_status || 'active',
+      feePlan: row.feePlan || row.fee_plan || row.paymentType || row.payment_type || 'full',
+      installments: Math.max(Number(row.installments || row.installmentCount || row.installment_count || 1), 1)
+    }));
+}
+
 function courseLabel(course) {
   return [course.code, course.name, course.category].filter(Boolean).join(' - ');
 }
@@ -124,7 +143,8 @@ function batchLabel(batch) {
 }
 
 function studentLabel(student) {
-  return [student.studentNo, student.name, student.course?.name, student.batch?.name].filter(Boolean).join(' - ');
+  const courses = (student.enrollments || []).filter((item) => item.enrollmentStatus === 'active').map((item) => item.course?.name).filter(Boolean).join(', ');
+  return [student.studentNo, student.name, courses || student.course?.name].filter(Boolean).join(' - ');
 }
 
 function contactName(contact) {
@@ -135,14 +155,30 @@ function contactName(contact) {
     || '';
 }
 
-function studentFormFromNavigation(initial, state) {
+function lookupId(rows, value, courseId = null) {
+  if (!value) return '';
+  const direct = rows.find((item) => String(item.id) === String(value));
+  if (direct) return direct.id;
+  const normalized = String(value).trim().toLowerCase();
+  return rows.find((item) => (
+    (!courseId || String(item.courseId) === String(courseId)) &&
+    [item.name, item.code].some((field) => String(field || '').trim().toLowerCase() === normalized)
+  ))?.id || '';
+}
+
+function studentFormFromNavigation(initial, state, lookups) {
   const conversation = state?.selectedConversation || state?.conversation || {};
   const contact = state?.selectedContact || state?.contact || conversation.contact || {};
   const lead = state?.lead || conversation.lead || {};
   const conversationId = conversation.id || state?.conversationId;
-  const sourceNote = conversationId
-    ? `Converted from chat conversation #${conversationId}`
-    : 'Converted from chat conversation';
+  const leadSource = lead.source?.name || lead.source || state?.leadSource || '';
+  const courseId = lookupId(lookups.courses, state?.courseId || lead.courseId || contact.courseId || lead.courseInterested);
+  const batchId = lookupId(lookups.batches, state?.batchId || lead.batchId || contact.batchId || lead.batchInterested, courseId);
+  const sourceNote = [
+    conversationId ? `Converted from chat conversation #${conversationId}` : 'Converted from lead',
+    lead.notes || '',
+    leadSource ? `Lead source: ${leadSource}` : ''
+  ].filter(Boolean).join('\n');
 
   return {
     ...initial,
@@ -151,9 +187,11 @@ function studentFormFromNavigation(initial, state) {
     email: contact.email || '',
     contactId: contact.id || conversation.contactId || '',
     leadId: lead.id || conversation.leadId || '',
-    courseId: state?.courseId || lead.courseId || contact.courseId || '',
-    batchId: state?.batchId || lead.batchId || contact.batchId || '',
+    courseId,
+    batchId,
+    leadSource,
     status: 'enrolled',
+    enrollments: courseId ? [{ courseId, batchId: batchId || '', status: 'active', feePlan: 'full', installments: 1 }] : initial.enrollments,
     notes: sourceNote
   };
 }
@@ -177,6 +215,8 @@ function Field({ name, value, onChange, moduleKey, form, lookups }) {
   if (selectOptions[name]) {
     return <FormControl fullWidth><InputLabel>{label}</InputLabel><Select label={label} value={value || ''} onChange={(e) => onChange(name, e.target.value)}>{selectOptions[name].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>;
   }
+  if (name === 'leadSource') return <TextField label="Lead Source" value={value || ''} fullWidth disabled />;
+  if (name === 'studentPortalPassword') return <TextField type="password" label="Student Portal Password" helperText="Leave blank to auto-generate a password; students can also use WhatsApp OTP." value={value || ''} onChange={(e) => onChange(name, e.target.value)} fullWidth />;
   if (name === 'courseId') {
     const activeCourses = lookups.courses.filter((course) => !['batches', 'students'].includes(moduleKey) || course.status === 'active');
     return <FormControl fullWidth required={moduleKey === 'batches' || moduleKey === 'students'}><InputLabel>Course</InputLabel><Select label="Course" value={value || ''} onChange={(e) => onChange(name, e.target.value)}>{activeCourses.map((course) => <MenuItem key={course.id} value={course.id}>{courseLabel(course)}</MenuItem>)}{activeCourses.length === 0 && <MenuItem disabled>No active courses available</MenuItem>}</Select></FormControl>;
@@ -193,17 +233,74 @@ function Field({ name, value, onChange, moduleKey, form, lookups }) {
   return <TextField label={label} type={type} value={value || ''} onChange={(e) => onChange(name, e.target.value)} multiline={name === 'notes' || name === 'description'} minRows={name === 'notes' || name === 'description' ? 3 : undefined} InputLabelProps={type === 'date' ? { shrink: true } : undefined} fullWidth />;
 }
 
-function FeeFields({ form, setForm, lookups }) {
-  const student = lookups.students.find((item) => String(item.id) === String(form.studentId));
-  const course = student?.course;
-  const batch = student?.batch;
+function StudentEnrollmentFields({ form, setForm, lookups }) {
+  const enrollments = form.enrollments || [];
+  const update = (index, changes) => setForm((current) => ({
+    ...current,
+    enrollments: (current.enrollments || []).map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item)
+  }));
+  const remove = (index) => setForm((current) => ({
+    ...current,
+    enrollments: (current.enrollments || []).filter((_, itemIndex) => itemIndex !== index)
+  }));
+  return <Grid item xs={12}>
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+        <Box><Typography fontWeight={850}>Enrollments</Typography><Typography variant="body2" color="text.secondary">Add every course and batch this student belongs to.</Typography></Box>
+        <Button startIcon={<AddIcon />} onClick={() => setForm((current) => ({ ...current, enrollments: [...(current.enrollments || []), { courseId: '', batchId: '', status: 'active', feePlan: 'full', installments: 1 }] }))}>Add Enrollment</Button>
+      </Stack>
+      <Stack spacing={1.5}>
+        {enrollments.map((enrollment, index) => {
+          const batches = lookups.batches.filter((batch) => String(batch.courseId) === String(enrollment.courseId));
+          return <Stack key={enrollment.id || index} direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }}>
+            <TextField select label="Course" value={enrollment.courseId || ''} onChange={(event) => update(index, { courseId: event.target.value, batchId: '' })} fullWidth required>
+              {lookups.courses.filter((course) => course.status === 'active' || String(course.id) === String(enrollment.courseId)).map((course) => <MenuItem key={course.id} value={course.id}>{courseLabel(course)}</MenuItem>)}
+            </TextField>
+            <TextField select label="Batch (optional)" value={enrollment.batchId || ''} onChange={(event) => update(index, { batchId: event.target.value })} fullWidth disabled={!enrollment.courseId}>
+              <MenuItem value="">All-course lessons</MenuItem>
+              {batches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{batchLabel(batch)}</MenuItem>)}
+            </TextField>
+            <TextField select label="Status" value={enrollment.status || enrollment.enrollmentStatus || 'active'} onChange={(event) => update(index, { status: event.target.value })} sx={{ minWidth: 170 }}>
+              {['active', 'completed', 'suspended', 'cancelled', 'expired'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
+            </TextField>
+            <TextField select label="Fee plan" value={enrollment.feePlan || enrollment.paymentType || 'full'} onChange={(event) => update(index, { feePlan: event.target.value })} sx={{ minWidth: 150 }}>
+              {paymentTypes.map((type) => <MenuItem value={type} key={type}>{type.replaceAll('_', ' ')}</MenuItem>)}
+            </TextField>
+            {(enrollment.feePlan || enrollment.paymentType) === 'installment' && <TextField type="number" label="Installments" value={enrollment.installments || enrollment.installmentCount || 1} onChange={(event) => update(index, { installments: event.target.value })} inputProps={{ min: 1 }} sx={{ width: 120 }} />}
+            <IconButton color="error" onClick={() => remove(index)} disabled={enrollments.length === 1}><DeleteOutlineIcon /></IconButton>
+          </Stack>;
+        })}
+      </Stack>
+    </Paper>
+  </Grid>;
+}
+
+function FeeFields({ form, setForm, lookups, selectedStudent = null, lockStudent = false }) {
+  const student = selectedStudent || lookups.students.find((item) => String(item.id) === String(form.studentId));
+  const activeEnrollments = (student?.enrollments || []).filter((item) => item.enrollmentStatus === 'active');
+  const enrollment = activeEnrollments.find((item) => String(item.id) === String(form.enrollmentId))
+    || activeEnrollments.find((item) => String(item.courseId) === String(form.courseId) && String(item.batchId || '') === String(form.batchId || ''))
+    || activeEnrollments[0];
+  const course = enrollment?.course || student?.course;
+  const batch = enrollment?.batch || student?.batch;
   const totals = discountPreview(form);
   const set = (name, value) => setForm((current) => {
     const next = { ...current, [name]: value };
     if (name === 'studentId') {
       const selected = lookups.students.find((item) => String(item.id) === String(value));
-      next.originalAmount = selected?.course?.feeAmount ?? '';
-      next.installmentCount = selected?.course?.defaultInstallmentCount || 1;
+      const selectedEnrollment = (selected?.enrollments || []).find((item) => item.enrollmentStatus === 'active');
+      next.enrollmentId = selectedEnrollment?.id || '';
+      next.courseId = selectedEnrollment?.courseId || '';
+      next.batchId = selectedEnrollment?.batchId || '';
+      next.originalAmount = selectedEnrollment?.course?.feeAmount ?? selected?.course?.feeAmount ?? '';
+      next.installmentCount = selectedEnrollment?.course?.defaultInstallmentCount || selected?.course?.defaultInstallmentCount || 1;
+    }
+    if (name === 'enrollmentId') {
+      const selectedEnrollment = activeEnrollments.find((item) => String(item.id) === String(value));
+      next.courseId = selectedEnrollment?.courseId || '';
+      next.batchId = selectedEnrollment?.batchId || '';
+      next.originalAmount = selectedEnrollment?.course?.feeAmount ?? '';
+      next.installmentCount = selectedEnrollment?.course?.defaultInstallmentCount || 1;
     }
     if (name === 'paymentType' && value === 'full') next.installmentCount = 1;
     if (name === 'paymentType' && value === 'free_card') {
@@ -215,8 +312,12 @@ function FeeFields({ form, setForm, lookups }) {
   });
 
   return <Grid container spacing={2} sx={{ mt: 0.5 }}>
-    <Grid item xs={12}><Field name="studentId" value={form.studentId} onChange={set} moduleKey="fees" form={form} lookups={lookups} /></Grid>
-    <Grid item xs={12} md={6}><TextField label="Course" value={course ? courseLabel(course) : 'Select a student'} fullWidth disabled /></Grid>
+    <Grid item xs={12}>{lockStudent ? <TextField label="Student" value={student?.name || ''} fullWidth disabled /> : <Field name="studentId" value={form.studentId} onChange={set} moduleKey="fees" form={form} lookups={lookups} />}</Grid>
+    <Grid item xs={12} md={6}><TextField label="Student Registration Number" value={student?.studentNo || student?.registration_no || student?.registrationNumber || student?.admissionNo || '-'} fullWidth disabled /></Grid>
+    <Grid item xs={12} md={6}><TextField select label="Enrollment" value={enrollment?.id || ''} onChange={(e) => set('enrollmentId', e.target.value)} fullWidth disabled={!student}>
+      {activeEnrollments.map((item) => <MenuItem key={item.id} value={item.id}>{item.course?.name || 'Course'}{item.batch?.name ? ` — ${item.batch.name}` : ''}</MenuItem>)}
+    </TextField></Grid>
+    <Grid item xs={12} md={6}><TextField label="Course" value={course ? courseLabel(course) : 'Select an enrollment'} fullWidth disabled /></Grid>
     <Grid item xs={12} md={6}><TextField label="Batch" value={batch ? batchLabel(batch) : 'Select a student'} fullWidth disabled /></Grid>
     <Grid item xs={12} md={6}><TextField label="Original Course Fee" type="number" value={form.originalAmount || ''} onChange={(e) => set('originalAmount', e.target.value)} fullWidth /></Grid>
     <Grid item xs={12} md={6}><FormControl fullWidth><InputLabel>Payment Type</InputLabel><Select label="Payment Type" value={form.paymentType || 'full'} onChange={(e) => set('paymentType', e.target.value)}>{paymentTypes.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl></Grid>
@@ -229,6 +330,11 @@ function FeeFields({ form, setForm, lookups }) {
     <Grid item xs={12} md={6}><TextField label="Final Payable Amount" value={moneyText(totals.totalAmount)} fullWidth disabled /></Grid>
     <Grid item xs={12} md={6}><TextField label="Installment Count" type="number" value={form.installmentCount || 1} onChange={(e) => set('installmentCount', e.target.value)} fullWidth disabled={form.paymentType !== 'installment'} /></Grid>
     <Grid item xs={12} md={6}><TextField label="Due Date" type="date" value={form.dueDate || ''} onChange={(e) => set('dueDate', e.target.value)} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
+    <Grid item xs={12}><Divider><Typography variant="caption" color="text.secondary">Payment</Typography></Divider></Grid>
+    <Grid item xs={12} md={6}><TextField label="Payment Amount" type="number" value={form.paymentAmount || ''} onChange={(e) => set('paymentAmount', e.target.value)} fullWidth /></Grid>
+    <Grid item xs={12} md={6}><FormControl fullWidth><InputLabel>Payment Method</InputLabel><Select label="Payment Method" value={form.paymentMethod || 'Cash'} onChange={(e) => set('paymentMethod', e.target.value)}>{paymentMethods.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl></Grid>
+    <Grid item xs={12} md={6}><TextField label="Transaction Reference" value={form.transactionReference || ''} onChange={(e) => set('transactionReference', e.target.value)} fullWidth /></Grid>
+    <Grid item xs={12} md={6}><TextField label="Paid Date" type="date" value={form.paidDate || ''} onChange={(e) => set('paidDate', e.target.value)} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
     <Grid item xs={12}><TextField label="Notes" value={form.notes || ''} onChange={(e) => set('notes', e.target.value)} multiline minRows={3} fullWidth /></Grid>
   </Grid>;
 }
@@ -238,17 +344,24 @@ function EducationModulePage({ moduleKey }) {
   const location = useLocation();
   const navigate = useNavigate();
   const consumedNavigationStateRef = useRef(false);
+  const conversionFlowRef = useRef(false);
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState(config.initial);
   const [editing, setEditing] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [lookups, setLookups] = useState({ courses: [], batches: [], students: [] });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [installmentFee, setInstallmentFee] = useState(null);
   const [payTarget, setPayTarget] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ amount: '', paymentMethod: 'Cash', transactionReference: '', paidDate: new Date().toISOString().slice(0, 10), notes: '' });
+  const access = getAccessPayload();
+  const canConfirmPayment = access.isSystemAdmin ||
+    (access.roles || []).some((role) => ['admin', 'accountant', 'manager'].includes(String(role).toLowerCase())) ||
+    hasAnyPermission(['fees.confirm_payment', 'accounting.confirm_income']);
+  const canEditStudents = access.isSystemAdmin || access.permissions?.includes('students.edit');
 
   const totals = useMemo(() => ({
     total: rows.length,
@@ -279,15 +392,17 @@ function EducationModulePage({ moduleKey }) {
   useEffect(() => {
     const state = location.state || {};
     if (moduleKey !== 'students' || !state.openCreate || consumedNavigationStateRef.current) return;
+    if (!lookups.courses.length) return;
 
     consumedNavigationStateRef.current = true;
+    conversionFlowRef.current = true;
     setEditing(null);
-    setForm(studentFormFromNavigation(config.initial, state));
+    setForm(studentFormFromNavigation(config.initial, state, lookups));
     setDialogOpen(true);
     navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-  }, [config.initial, location.pathname, location.search, location.state, moduleKey, navigate]);
+  }, [config.initial, location.pathname, location.search, location.state, lookups, moduleKey, navigate]);
 
-  const openCreate = () => { setEditing(null); setForm(config.initial); setDialogOpen(true); };
+  const openCreate = () => { setError(''); setEditing(null); setForm(config.initial); setDialogOpen(true); };
   const openEdit = (row) => {
     setEditing(row);
     const next = { ...config.initial };
@@ -297,22 +412,50 @@ function EducationModulePage({ moduleKey }) {
   };
 
   const save = async () => {
+    let payload = normalizePayload(form);
+    delete payload.leadSource;
+    if (moduleKey === 'students') {
+      payload.enrollments = normalizeStudentEnrollments(form.enrollments);
+      if (payload.enrollments.length === 0) {
+        setError('Please add at least one enrollment.');
+        return;
+      }
+    }
     try {
-      const payload = normalizePayload(form);
+      setSubmitting(true);
+      setError('');
       if (moduleKey === 'batches' && !payload.courseId) return setError('Course is required when creating a batch.');
-      if (moduleKey === 'students' && !payload.courseId) return setError('Course is required when creating a student.');
-      if (moduleKey === 'students' && !payload.batchId) return setError('Batch is required when creating a student.');
       if (moduleKey === 'courses' && Number(payload.defaultInstallmentCount || 1) < 1) return setError('Default installment count must be at least 1.');
       if (moduleKey === 'fees') {
         if (!payload.studentId) return setError('Student is required.');
         if (Number(payload.installmentCount || 1) < 1) return setError('Installment count must be at least 1.');
       }
-      if (editing) await config.update(editing.id, payload); else await config.create(payload);
-      setSuccess(editing ? 'Record updated.' : 'Record created.');
+      let response;
+      if (editing) {
+        response = await config.update(editing.id, payload);
+      } else if (moduleKey === 'students' && payload.leadId) {
+        response = await convertLeadToStudent(payload.leadId, payload);
+      } else {
+        response = await config.create(payload);
+      }
+      const result = response?.data?.data;
+      if (moduleKey === 'students' && !editing && conversionFlowRef.current && result) {
+        setDialogOpen(false);
+        setSuccess(`Student ${result.studentNo || result.registration_no || ''} registered with enrollment and fee plan.${result.generatedPortalPassword ? ` Portal password: ${result.generatedPortalPassword} (shown once).` : ''}`);
+        conversionFlowRef.current = false;
+        await load();
+        return;
+      }
+      const generatedPasswordNotice = result?.generatedPortalPassword
+        ? ` Student portal password: ${result.generatedPortalPassword} (shown once)`
+        : '';
+      setSuccess(moduleKey === 'fees' && !editing ? (result?.message || 'Fee added.') : editing ? 'Record updated.' : `Record created.${generatedPasswordNotice}`);
       setDialogOpen(false);
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to save record.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -323,6 +466,20 @@ function EducationModulePage({ moduleKey }) {
     await load();
   };
 
+  const resetPortalPassword = async (row) => {
+    const password = window.prompt('Enter a new student portal password, or leave blank to auto-generate one:');
+    if (password === null) return;
+    try {
+      const response = await resetStudentPortalPassword(row.id, password.trim());
+      const generated = response.data.data.generatedPassword;
+      setSuccess(generated
+        ? `New portal password for ${row.studentNo}: ${generated} (shown once)`
+        : `Portal password reset for ${row.studentNo}.`);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to reset student portal password.');
+    }
+  };
+
   const openPay = (installment) => {
     const remaining = Math.max(money(installment.amount) - money(installment.paidAmount), 0);
     setPayTarget(installment);
@@ -331,13 +488,49 @@ function EducationModulePage({ moduleKey }) {
 
   const submitPay = async () => {
     try {
-      await payInstallment(payTarget.id, paymentForm);
-      setSuccess('Installment payment recorded.');
+      const response = await payInstallment(payTarget.id, paymentForm);
+      setSuccess('Payment added. Waiting for confirmation.');
       setPayTarget(null);
-      setInstallmentFee(null);
+      setInstallmentFee(response.data.data.fee);
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to pay installment.');
+    }
+  };
+
+  const confirmPayment = async (installment) => {
+    try {
+      const response = await confirmInstallmentPayment(installment.id);
+      setInstallmentFee(response.data.data.fee);
+      setSuccess('Payment confirmed and income recorded.');
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to confirm payment.');
+    }
+  };
+
+  const rejectPayment = async (installment) => {
+    const reason = window.prompt('Reason for rejecting this payment (optional):') || '';
+    try {
+      const response = await rejectInstallmentPayment(installment.id, { reason });
+      setInstallmentFee(response.data.data.fee);
+      setSuccess('Payment rejected. No income was recorded.');
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to reject payment.');
+    }
+  };
+
+  const reversePayment = async (installment) => {
+    const reason = window.prompt('Reason for reversing this confirmed payment:');
+    if (reason === null) return;
+    try {
+      const response = await reverseInstallmentPayment(installment.id, { reason });
+      setInstallmentFee(response.data.data.fee);
+      setSuccess('Payment reversed and a compensating accounting transaction was recorded.');
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to reverse payment.');
     }
   };
 
@@ -362,20 +555,23 @@ function EducationModulePage({ moduleKey }) {
     <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
       {loading && <LinearProgress />}
       <TableContainer><Table><TableHead><TableRow>{config.columns.map((column) => <TableCell key={column}>{column}</TableCell>)}<TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-        {rows.map((row) => <TableRow hover key={row.id}>{config.columns.map((column) => <TableCell key={column}>{column === 'status' ? <Chip size="small" label={getValue(row, column)} /> : getValue(row, column)}</TableCell>)}<TableCell align="right"><Stack direction="row" spacing={0.5} justifyContent="flex-end">{moduleKey === 'students' && <IconButton component={RouterLink} to={`/students/${row.id}`}><VisibilityIcon /></IconButton>}{moduleKey === 'fees' && <IconButton onClick={() => setInstallmentFee(row)}><VisibilityIcon /></IconButton>}<IconButton onClick={() => openEdit(row)}><EditIcon /></IconButton><IconButton color="error" onClick={() => remove(row)}><DeleteOutlineIcon /></IconButton></Stack></TableCell></TableRow>)}
+        {rows.map((row) => <TableRow hover key={row.id}>{config.columns.map((column) => <TableCell key={column}>{column === 'status' ? <Chip size="small" label={getValue(row, column)} /> : getValue(row, column)}</TableCell>)}<TableCell align="right"><Stack direction="row" spacing={0.5} justifyContent="flex-end">{moduleKey === 'students' && <><IconButton component={RouterLink} to={`/students/${row.id}`}><VisibilityIcon /></IconButton>{canEditStudents && <Button size="small" startIcon={<LockResetIcon />} onClick={() => resetPortalPassword(row)}>Reset Portal Password</Button>}</>}{moduleKey === 'fees' && <IconButton onClick={() => setInstallmentFee(row)}><VisibilityIcon /></IconButton>}<IconButton onClick={() => openEdit(row)}><EditIcon /></IconButton><IconButton color="error" onClick={() => remove(row)}><DeleteOutlineIcon /></IconButton></Stack></TableCell></TableRow>)}
         {!loading && rows.length === 0 && <TableRow><TableCell colSpan={config.columns.length + 1}><Box sx={{ py: 5, textAlign: 'center' }}><Typography fontWeight={800}>No records found</Typography><Typography color="text.secondary">Create the first record for this module.</Typography></Box></TableCell></TableRow>}
       </TableBody></Table></TableContainer>
     </Paper>
 
-    <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>
+    <Dialog open={dialogOpen} onClose={() => { if (!submitting) setDialogOpen(false); }} maxWidth="md" fullWidth>
       <DialogTitle>{editing ? 'Edit Record' : 'Add Record'}</DialogTitle>
-      <DialogContent>{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '' } : {}) }))} /></Grid>)}{moduleKey === 'students' && form.courseId && lookups.batches.filter((batch) => String(batch.courseId) === String(form.courseId)).length === 0 && <Grid item xs={12}><Alert severity="info">No batches available for this course.</Alert></Grid>}</Grid>}</DialogContent>
-      <DialogActions><Button onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" onClick={save}>Save</Button></DialogActions>
+      <DialogContent>{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '' } : {}) }))} /></Grid>)}{moduleKey === 'students' && <StudentEnrollmentFields form={form} setForm={setForm} lookups={lookups} />}</Grid>}</DialogContent>
+      <DialogActions><Button onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button><Button variant="contained" onClick={save} disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button></DialogActions>
     </Dialog>
 
     <Dialog open={!!installmentFee} onClose={() => setInstallmentFee(null)} maxWidth="lg" fullWidth>
       <DialogTitle>View Installments</DialogTitle>
-      <DialogContent><TableContainer><Table size="small"><TableHead><TableRow>{['Installment No', 'Amount', 'Due Date', 'Paid Amount', 'Paid Date', 'Payment Method', 'Status', 'Action'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>{(installmentFee?.installments || []).map((item) => <TableRow key={item.id}><TableCell>{item.installmentNo}</TableCell><TableCell>{moneyText(item.amount)}</TableCell><TableCell>{item.dueDate}</TableCell><TableCell>{moneyText(item.paidAmount)}</TableCell><TableCell>{item.paidDate || '-'}</TableCell><TableCell>{item.paymentMethod || '-'}</TableCell><TableCell><Chip size="small" label={item.status} /></TableCell><TableCell><Stack direction="row" spacing={0.5}><IconButton size="small" onClick={() => openPay(item)} disabled={item.status === 'paid'}><PaymentsIcon /></IconButton><IconButton size="small" onClick={() => remind(item)}><NotificationsActiveIcon /></IconButton></Stack></TableCell></TableRow>)}{(!installmentFee?.installments || installmentFee.installments.length === 0) && <TableRow><TableCell colSpan={8}>No installments for this fee plan.</TableCell></TableRow>}</TableBody></Table></TableContainer></DialogContent>
+      <DialogContent>
+        {!canConfirmPayment && (installmentFee?.installments || []).some((item) => item.status === 'pending_confirmation') && <Alert severity="info" sx={{ mb: 2 }}>Payment added. Waiting for confirmation by Accounting or an administrator.</Alert>}
+        <TableContainer><Table size="small"><TableHead><TableRow>{['Installment No', 'Amount', 'Due Date', 'Paid Amount', 'Pending Amount', 'Paid Date', 'Payment Method', 'Status', 'Action'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>{(installmentFee?.installments || []).map((item) => <TableRow key={item.id}><TableCell>{item.installmentNo}</TableCell><TableCell>{moneyText(item.amount)}</TableCell><TableCell>{item.dueDate}</TableCell><TableCell>{moneyText(item.paidAmount)}</TableCell><TableCell>{item.pendingPaymentAmount ? moneyText(item.pendingPaymentAmount) : '-'}</TableCell><TableCell>{item.paidDate || '-'}</TableCell><TableCell>{item.paymentMethod || '-'}</TableCell><TableCell><Chip size="small" color={item.status === 'confirmed' ? 'success' : item.status === 'rejected' || item.status === 'reversed' ? 'error' : item.status === 'pending_confirmation' ? 'warning' : 'default'} label={String(item.status).replaceAll('_', ' ')} /></TableCell><TableCell><Stack direction="row" spacing={0.5} alignItems="center"><IconButton title="Add payment" size="small" onClick={() => openPay(item)} disabled={['paid', 'pending_confirmation'].includes(item.status) || Number(item.paidAmount) >= Number(item.amount)}><PaymentsIcon /></IconButton><IconButton title="Send reminder" size="small" onClick={() => remind(item)}><NotificationsActiveIcon /></IconButton>{canConfirmPayment && item.status === 'pending_confirmation' && <><Button size="small" variant="contained" color="success" onClick={() => confirmPayment(item)}>Confirm Payment</Button><Button size="small" variant="outlined" color="error" onClick={() => rejectPayment(item)}>Reject Payment</Button></>}{canConfirmPayment && item.status === 'confirmed' && <Button size="small" variant="outlined" color="warning" onClick={() => reversePayment(item)}>Reverse</Button>}</Stack></TableCell></TableRow>)}{(!installmentFee?.installments || installmentFee.installments.length === 0) && <TableRow><TableCell colSpan={9}>No installments for this fee plan.</TableCell></TableRow>}</TableBody></Table></TableContainer>
+      </DialogContent>
       <DialogActions><Button onClick={() => setInstallmentFee(null)}>Close</Button></DialogActions>
     </Dialog>
 

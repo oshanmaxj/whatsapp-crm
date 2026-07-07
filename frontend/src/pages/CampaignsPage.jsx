@@ -16,6 +16,7 @@ import {
 import { getContacts } from '../services/contact.service';
 import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
 import { getRoles } from '../services/userManagement.service';
+import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const steps = ['Details', 'Template', 'Recipients', 'Variables', 'Schedule', 'Review'];
 const leadStatuses = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
@@ -23,7 +24,7 @@ const statusColors = { Draft: 'default', Scheduled: 'info', Processing: 'warning
 const blankForm = () => ({
   name: '', description: '', whatsappTemplateId: '', recipientMode: 'all', contactIds: [],
   tag: '', leadStatus: '', departmentId: '', csv: '', startDate: '', endDate: '',
-  statusId: '', sourceId: '', variables: {}, sendMode: 'now', scheduledAt: ''
+  statusId: '', sourceId: '', variables: {}, sendMode: 'now', scheduledAt: '', whatsappAccountId: ''
 });
 
 function displayName(contact) {
@@ -61,6 +62,7 @@ function CampaignsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [selectedAccountId, setSelectedAccountId] = useState('');
 
   const selectedTemplate = templates.find((template) => String(template.id) === String(form.whatsappTemplateId));
   const variables = useMemo(() => variableIndexes(selectedTemplate), [selectedTemplate]);
@@ -71,9 +73,9 @@ function CampaignsPage() {
       setLoading(true);
       setError('');
       const [campaignRes, templateRes, contactRes, roleRes, audienceOptionsRes] = await Promise.all([
-        getCampaigns(),
-        listWhatsAppTemplates({ status: 'APPROVED' }),
-        getContacts({ limit: 100 }),
+        getCampaigns({ whatsappAccountId: selectedAccountId || undefined }),
+        listWhatsAppTemplates({ status: 'APPROVED', whatsappAccountId: selectedAccountId || undefined }),
+        getContacts({ limit: 100, whatsappAccountId: selectedAccountId || undefined }),
         getRoles(),
         getCampaignAudienceOptions()
       ]);
@@ -89,10 +91,10 @@ function CampaignsPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [selectedAccountId]);
 
   const openWizard = () => {
-    setForm(blankForm());
+    setForm({ ...blankForm(), whatsappAccountId: selectedAccountId });
     setStep(0);
     setPreview(null);
     setError('');
@@ -102,6 +104,7 @@ function CampaignsPage() {
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
   const validateStep = () => {
+    if (step === 0 && !form.whatsappAccountId) return 'Select a WhatsApp number.';
     if (step === 0 && !form.name.trim()) return 'Campaign name is required.';
     if (step === 1 && !form.whatsappTemplateId) return 'Select an approved WhatsApp template.';
     if (step === 2) {
@@ -182,6 +185,7 @@ function CampaignsPage() {
         name: form.name.trim(),
         description: form.description.trim() || null,
         whatsappTemplateId: Number(form.whatsappTemplateId),
+        whatsappAccountId: form.whatsappAccountId,
         ...audience,
         variables: form.variables,
         scheduledAt: form.sendMode === 'schedule' ? new Date(form.scheduledAt).toISOString() : null
@@ -252,6 +256,11 @@ function CampaignsPage() {
 
   const renderStep = () => {
     if (step === 0) return <Grid container spacing={2}>
+      <Grid item xs={12}><WhatsAppAccountSelect value={form.whatsappAccountId} onChange={(value) => {
+        setField('whatsappAccountId', value);
+        setSelectedAccountId(value);
+        setForm((current) => ({ ...current, whatsappAccountId: value, whatsappTemplateId: '' }));
+      }} fullWidth required /></Grid>
       <Grid item xs={12}><TextField label="Campaign name" value={form.name} onChange={(e) => setField('name', e.target.value)} required fullWidth /></Grid>
       <Grid item xs={12}><TextField label="Campaign description" value={form.description} onChange={(e) => setField('description', e.target.value)} multiline minRows={3} fullWidth /></Grid>
     </Grid>;
@@ -303,7 +312,7 @@ function CampaignsPage() {
     {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
     {success && <Alert severity="success" onClose={() => setSuccess('')}>{success}</Alert>}
     {loading && <LinearProgress />}
-    <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }}><Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}><Box sx={{ flex: 1 }}><Typography variant="h5" fontWeight={850}>Broadcasting / Campaigns</Typography><Typography color="text.secondary">Create compliant WhatsApp broadcasts, schedule queue delivery, and monitor results.</Typography></Box><Button variant="contained" startIcon={<AddIcon />} onClick={openWizard}>Create Broadcast</Button></Stack></Paper>
+    <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }}><Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}><Box sx={{ flex: 1 }}><Typography variant="h5" fontWeight={850}>Broadcasting / Campaigns</Typography><Typography color="text.secondary">Create compliant WhatsApp broadcasts, schedule queue delivery, and monitor results.</Typography></Box><WhatsAppAccountSelect value={selectedAccountId} onChange={setSelectedAccountId} sx={{ minWidth: 260 }} /><Button variant="contained" startIcon={<AddIcon />} onClick={openWizard}>Create Broadcast</Button></Stack></Paper>
     <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}><TableContainer><Table><TableHead><TableRow><TableCell>Campaign</TableCell><TableCell>Template</TableCell><TableCell>Recipients</TableCell><TableCell>Status</TableCell><TableCell>Scheduled</TableCell><TableCell>Sent</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
       {campaigns.map((campaign) => <TableRow key={campaign.id} hover><TableCell><Typography fontWeight={850}>{campaign.name}</Typography><Typography variant="caption" color="text.secondary">{campaign.description || 'No description'}</Typography></TableCell><TableCell>{campaign.whatsappTemplate?.name || campaign.templateName || '-'}</TableCell><TableCell>{campaign.recipientCount || 0}</TableCell><TableCell><Chip size="small" label={campaign.status} color={statusColors[campaign.status] || 'default'} /></TableCell><TableCell>{formatDate(campaign.scheduledAt)}</TableCell><TableCell>{formatDate(campaign.sentAt)}</TableCell><TableCell align="right">{['Draft', 'Failed', 'Completed'].includes(campaign.status) && <IconButton title={campaign.status === 'Draft' ? 'Send now' : 'Retry failed recipients'} onClick={() => retryOrSend(campaign)}><PlayArrowIcon /></IconButton>}<IconButton title="Analytics" onClick={() => showAnalytics(campaign)}><AnalyticsIcon /></IconButton><IconButton color="error" title="Delete" onClick={() => remove(campaign)}><DeleteOutlineIcon /></IconButton></TableCell></TableRow>)}
       {!campaigns.length && !loading && <TableRow><TableCell colSpan={7}><Box sx={{ py: 6, textAlign: 'center' }}><Typography fontWeight={850}>No broadcasts yet</Typography><Typography color="text.secondary">Create your first professional WhatsApp campaign.</Typography></Box></TableCell></TableRow>}

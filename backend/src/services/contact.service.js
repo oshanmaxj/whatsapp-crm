@@ -28,6 +28,7 @@ function serializeContact(contact) {
     tags: normalizeTags(contact.tags),
     createdAt: contact.createdAt,
     updatedAt: contact.updatedAt
+    , whatsappAccountId: contact.whatsappAccountId || null
   };
 }
 
@@ -121,7 +122,7 @@ class ContactService {
     });
   }
 
-  buildContactWhere({ search, status, tag } = {}) {
+  buildContactWhere({ search, status, tag, whatsappAccountId } = {}) {
     const where = {};
     const and = [];
 
@@ -152,6 +153,7 @@ class ContactService {
     if (tag) {
       and.push(literal(`"Contact"."tags"::jsonb ? ${sequelize.escape(tag)}`));
     }
+    if (whatsappAccountId) where.whatsappAccountId = whatsappAccountId;
 
     if (and.length) {
       where[Op.and] = and;
@@ -160,10 +162,10 @@ class ContactService {
     return where;
   }
 
-  async listContacts({ page = 1, limit = 20, search, status, tag } = {}) {
+  async listContacts({ page = 1, limit = 20, search, status, tag, whatsappAccountId } = {}) {
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const where = this.buildContactWhere({ search, status, tag });
+    const where = this.buildContactWhere({ search, status, tag, whatsappAccountId });
 
     const { count, rows } = await Contact.findAndCountAll({
       where,
@@ -222,20 +224,21 @@ class ContactService {
     return { deleted: true, id: contactId };
   }
 
-  async createFromWhatsapp({ phone, whatsappId, firstName, lastName }) {
+  async createFromWhatsapp({ phone, whatsappId, firstName, lastName, whatsappAccountId = null }) {
     return Contact.create({
       phone,
       whatsappId,
       firstName,
       lastName,
-      status: 'new'
+      status: 'new',
+      whatsappAccountId
     });
   }
 
-  async findOrCreateFromWhatsapp({ phone, whatsappId, firstName, lastName }) {
+  async findOrCreateFromWhatsapp({ phone, whatsappId, firstName, lastName, whatsappAccountId = null }) {
     let contact = await this.findByWhatsappIdentity(phone, whatsappId);
     if (!contact) {
-      contact = await this.createFromWhatsapp({ phone, whatsappId, firstName, lastName });
+      contact = await this.createFromWhatsapp({ phone, whatsappId, firstName, lastName, whatsappAccountId });
       return contact;
     }
 
@@ -248,6 +251,9 @@ class ContactService {
     }
     if (lastName && !contact.lastName) {
       updates.lastName = lastName;
+    }
+    if (whatsappAccountId && !contact.whatsappAccountId) {
+      updates.whatsappAccountId = whatsappAccountId;
     }
     if (Object.keys(updates).length > 0) {
       await contact.update(updates);
@@ -295,13 +301,12 @@ class ContactService {
         result.errors.push({ row: rowNumber, message: error.message });
       }
     }
-
     return result;
   }
 
-  async exportContactsToCsv({ status, tag, search } = {}) {
+  async exportContactsToCsv({ status, tag, search, whatsappAccountId } = {}) {
     const contacts = await Contact.findAll({
-      where: this.buildContactWhere({ status, tag, search }),
+      where: this.buildContactWhere({ status, tag, search, whatsappAccountId }),
       order: [['created_at', 'DESC']]
     });
     const headers = ['id', ...CONTACT_FIELDS, 'createdAt', 'updatedAt'];

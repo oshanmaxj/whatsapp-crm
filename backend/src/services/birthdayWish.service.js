@@ -10,6 +10,8 @@ const {
 const notificationService = require('./notification.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappService = require('./whatsapp.service');
+const notificationTemplateService = require('./notificationTemplate.service');
+const studentMessageAutomationService = require('./studentMessageAutomation.service');
 
 const DEFAULT_SETTINGS = {
   birthday_auto_send_enabled: false,
@@ -216,6 +218,20 @@ class BirthdayWishService {
         throw Object.assign(new Error('Recipient WhatsApp number is missing'), { status: 400 });
       }
 
+      if (wish.recipientType === 'student') {
+        const queued = await studentMessageAutomationService.dispatch('birthday_wish', wish.studentId, {
+          eventId: `birthday:${wish.birthdayDate}`,
+          eventDate: wish.birthdayDate
+        });
+        await wish.update({
+          status: queued.status === 'disabled' ? 'cancelled' : 'sent',
+          sentDate: queued.status === 'disabled' ? null : new Date(),
+          response: { mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null }
+        });
+        if (queued.status !== 'disabled') await this.notifyResult(wish, 'sent');
+        return BirthdayWish.findByPk(wish.id, { include: this.include() });
+      }
+
       requiredType = target.contactId
         ? await whatsappComplianceService.getRequiredMessageType(target.contactId)
         : 'template';
@@ -312,7 +328,11 @@ class BirthdayWishService {
   async messageFor(student, guardian, recipientType) {
     const context = await this.messageContext(student, guardian);
     const recipientName = recipientType === 'guardian' ? context.guardianName : context.studentName;
-    return `Happy Birthday ${recipientName}!\n\nWarm wishes from ${context.instituteName}. We hope you have a wonderful year ahead.\n\nCourse: ${context.courseName}`;
+    return notificationTemplateService.renderTemplate('birthday_wish', {
+      student: { name: recipientName, phone: guardian?.phone || student?.phone || '' },
+      course: { name: context.courseName },
+      company: { name: context.instituteName }
+    }).catch(() => `Happy Birthday ${recipientName}!\n\nWarm wishes from ${context.instituteName}. We hope you have a wonderful year ahead.\n\nCourse: ${context.courseName}`);
   }
 
   async templateComponents(wish) {

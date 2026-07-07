@@ -2,8 +2,8 @@ const { Op } = require('sequelize');
 const { AutoReply } = require('../models');
 
 class AutoReplyService {
-  async listReplies() {
-    return AutoReply.findAll({ order: [['created_at', 'DESC']] });
+  async listReplies(whatsappAccountId = null) {
+    return AutoReply.findAll({ where: whatsappAccountId ? { whatsappAccountId } : {}, order: [['created_at', 'DESC']] });
   }
 
   async getReplyById(id) {
@@ -35,7 +35,7 @@ class AutoReplyService {
     return { id };
   }
 
-  async findReplyForText(text) {
+  async findReplyForText(text, whatsappAccountId = null) {
     if (!text || !text.trim()) {
       return null;
     }
@@ -43,7 +43,8 @@ class AutoReplyService {
     const normalizedText = text.trim().toLowerCase();
     const replies = await AutoReply.findAll({
       where: {
-        active: true
+        active: true,
+        [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null }]
       },
       order: [['created_at', 'ASC']]
     });

@@ -25,12 +25,14 @@ import {
   updateAutoReply,
   deleteAutoReply
 } from '../services/autoReply.service';
+import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const initialForm = {
   trigger: '',
   matchType: 'contains',
   response: '',
-  active: true
+  active: true,
+  whatsappAccountId: ''
 };
 
 function AutoReplyManagement() {
@@ -38,17 +40,18 @@ function AutoReplyManagement() {
   const [form, setForm] = useState(initialForm);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [accountFilter, setAccountFilter] = useState('');
 
   const loadReplies = async () => {
     setLoading(true);
-    const response = await getAutoReplies();
+    const response = await getAutoReplies({ whatsappAccountId: accountFilter || undefined });
     setReplies(response.data.data);
     setLoading(false);
   };
 
   useEffect(() => {
     loadReplies();
-  }, []);
+  }, [accountFilter]);
 
   const handleChange = (field) => (event) => {
     const value = field === 'active' ? event.target.checked : event.target.value;
@@ -61,7 +64,8 @@ function AutoReplyManagement() {
       trigger: reply.trigger,
       matchType: reply.matchType,
       response: reply.response,
-      active: reply.active
+      active: reply.active,
+      whatsappAccountId: reply.whatsappAccountId || ''
     });
   };
 
@@ -73,9 +77,9 @@ function AutoReplyManagement() {
   const handleSave = async () => {
     setLoading(true);
     if (selectedId) {
-      await updateAutoReply(selectedId, form);
+      await updateAutoReply(selectedId, { ...form, whatsappAccountId: form.whatsappAccountId || null });
     } else {
-      await createAutoReply(form);
+      await createAutoReply({ ...form, whatsappAccountId: form.whatsappAccountId || null });
     }
     await loadReplies();
     handleReset();
@@ -99,6 +103,7 @@ function AutoReplyManagement() {
           {selectedId ? 'Edit Reply' : 'Create Reply'}
         </Typography>
         <Stack spacing={2}>
+          <WhatsAppAccountSelect value={form.whatsappAccountId} onChange={(value) => setForm((current) => ({ ...current, whatsappAccountId: value }))} allowAll label="Apply to WhatsApp number" fullWidth />
           <TextField
             label="Trigger"
             value={form.trigger}
@@ -142,6 +147,7 @@ function AutoReplyManagement() {
       </Paper>
 
       <Paper>
+        <Box sx={{ p: 2 }}><WhatsAppAccountSelect value={accountFilter} onChange={setAccountFilter} allowAll fullWidth /></Box>
         <TableContainer>
           <Table>
             <TableHead>

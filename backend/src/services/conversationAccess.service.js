@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const { Conversation, Role, User } = require('../models');
+const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
 
 const scopeRank = { assigned_only: 1, role_only: 1, role_and_assigned: 2, all: 3 };
 
@@ -39,18 +40,26 @@ class ConversationAccessService {
   }
 
   async whereForUser(userId) {
-    const { scope, user } = await this.getUserScope(userId);
-    if (scope === 'all') return {};
+    const [{ scope, user }, accountWhere] = await Promise.all([
+      this.getUserScope(userId),
+      whatsappAccountAccessService.whereForUser(userId)
+    ]);
+    if (scope === 'all') return accountWhere;
     const roleIds = (user.roles || []).map((role) => role.id).filter(Boolean);
+    let conversationWhere;
     if (scope === 'role_only') {
-      return roleIds.length ? { assignedRoleId: { [Op.in]: roleIds } } : { id: null };
+      conversationWhere = roleIds.length ? { assignedRoleId: { [Op.in]: roleIds } } : { id: null };
+    } else {
+      conversationWhere = {
+        [Op.or]: [
+          { assignedUserId: user.id },
+          ...(roleIds.length ? [{ assignedRoleId: { [Op.in]: roleIds } }] : [])
+        ]
+      };
     }
-    return {
-      [Op.or]: [
-        { assignedUserId: user.id },
-        ...(roleIds.length ? [{ assignedRoleId: { [Op.in]: roleIds } }] : [])
-      ]
-    };
+    return Object.keys(accountWhere).length
+      ? { [Op.and]: [accountWhere, conversationWhere] }
+      : conversationWhere;
   }
 
   async scopedWhere(userId, baseWhere = {}) {

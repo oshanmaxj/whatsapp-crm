@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Alert, Avatar, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid,
-  IconButton, InputAdornment, LinearProgress, MenuItem, Paper, Stack, Switch, Tab, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography
+  IconButton, InputAdornment, LinearProgress, MenuItem, Paper, Stack, Switch, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, TextField, Tooltip, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import BackupIcon from '@mui/icons-material/Backup';
@@ -152,7 +153,8 @@ export function NotificationsPage() {
 }
 
 export function ProductionSettingsPage() {
-  const [tab, setTab] = useState('company');
+  const location = useLocation();
+  const [tab, setTab] = useState(() => new URLSearchParams(location.search).get('tab') || 'company');
   const [settings, setSettings] = useState({});
   const [company, setCompany] = useState({ name: '', phone: '', email: '', address: '', website: '', logoUrl: '' });
   const [branding, setBranding] = useState({ primaryColor: '#25d366', sidebarColor: '#0b1f1a', logoUrl: '', darkModeDefault: false });
@@ -243,6 +245,9 @@ export function ProductionSettingsPage() {
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    setTab(new URLSearchParams(location.search).get('tab') || 'company');
+  }, [location.search]);
 
   const mask = (value) => {
     if (!value) return '';
@@ -352,16 +357,6 @@ export function ProductionSettingsPage() {
     }
   };
 
-  const tabs = [
-    ['company', 'Company Profile', <BusinessIcon />],
-    ['branding', 'Branding', <SettingsIcon />],
-    ['whatsapp', 'WhatsApp API', <WhatsAppIcon />],
-    ['smtp', 'SMTP Email', <EmailIcon />],
-    ['security', 'Security & Session', <SecurityIcon />],
-    ['backup', 'Backup', <BackupIcon />],
-    ['system', 'System Info', <StorageIcon />]
-  ];
-
   const latestBackup = backups.find((backup) => backup.status === 'completed') || backups[0];
 
   return (
@@ -380,10 +375,6 @@ export function ProductionSettingsPage() {
       </Paper>
 
       <Paper sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }} elevation={0}>
-        <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
-          {tabs.map(([value, label, icon]) => <Tab key={value} value={value} icon={icon} iconPosition="start" label={label} />)}
-        </Tabs>
-
         <Box sx={{ p: { xs: 2, md: 3 } }}>
           {tab === 'company' && (
             <Grid container spacing={2.5}>
@@ -510,7 +501,9 @@ export function ReportsPage() {
     paymentStatuses: ['paid', 'pending', 'partial', 'overdue', 'cancelled'],
     paymentMethods: ['Cash', 'Bank Deposit', 'Bank Transfer', 'Card', 'Online Payment', 'Cheque', 'Other'],
     campaignStatuses: ['Draft', 'Scheduled', 'Processing', 'Completed', 'Failed', 'Cancelled', 'simulated_sent'],
-    attendanceStatuses: ['Present', 'Absent', 'Late', 'Excused']
+    attendanceStatuses: ['Present', 'Absent', 'Late', 'Excused'],
+    departments: [],
+    whatsappAccounts: []
   };
   const reportTypes = [
     ['overview', 'Overview Report'],
@@ -549,7 +542,9 @@ export function ReportsPage() {
     paymentStatus: '',
     paymentMethod: '',
     campaignStatus: '',
-    attendanceStatus: ''
+    attendanceStatus: '',
+    departmentId: '',
+    whatsappAccountId: ''
   };
   const [reportType, setReportType] = useState('overview');
   const [filters, setFilters] = useState(blankFilters);
@@ -648,6 +643,8 @@ export function ReportsPage() {
           <Grid item xs={12} md={4}><TextField select label="Course" value={filters.courseId || ''} onChange={(e) => setFilters((current) => ({ ...current, courseId: e.target.value, batchId: '' }))} fullWidth><MenuItem value="">All Courses</MenuItem>{(options.courses || []).map((course) => <MenuItem key={course.id} value={course.id}>{[course.code, course.name, course.category].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
           <Grid item xs={12} md={4}><TextField select label="Batch" value={filters.batchId || ''} onChange={(e) => updateFilter('batchId', e.target.value)} fullWidth><MenuItem value="">All Batches</MenuItem>{filteredBatches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{[batch.name, batch.courseName || batch.course?.name, batch.schedule].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
           <Grid item xs={12} md={4}><TextField select label="Agent" value={filters.agentId || ''} onChange={(e) => updateFilter('agentId', e.target.value)} fullWidth><MenuItem value="">All Agents</MenuItem>{(options.agents || []).map((agent) => <MenuItem key={agent.id} value={agent.id}>{[agent.name, agent.department].filter(Boolean).join(' - ')}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="Department" value={filters.departmentId || ''} onChange={(e) => updateFilter('departmentId', e.target.value)} fullWidth><MenuItem value="">All Departments</MenuItem>{(options.departments || []).map((department) => <MenuItem key={department.id} value={department.id}>{department.name}</MenuItem>)}</TextField></Grid>
+          <Grid item xs={12} md={4}><TextField select label="WhatsApp Account" value={filters.whatsappAccountId || ''} onChange={(e) => updateFilter('whatsappAccountId', e.target.value)} fullWidth><MenuItem value="">All WhatsApp Accounts</MenuItem>{(options.whatsappAccounts || []).map((account) => <MenuItem key={account.id} value={account.id}>{account.name}{account.phoneNumber ? ` · ${account.phoneNumber}` : ''}</MenuItem>)}</TextField></Grid>
           <Grid item xs={12} md={4}><TextField select label="Lead Status" value={filters.leadStatus} onChange={(e) => updateFilter('leadStatus', e.target.value)} fullWidth><MenuItem value="">All Statuses</MenuItem>{(options.leadStatuses || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
           <Grid item xs={12} md={4}><TextField select label="Lead Source" value={filters.leadSource} onChange={(e) => updateFilter('leadSource', e.target.value)} fullWidth><MenuItem value="">All Sources</MenuItem>{(options.leadSources || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
           <Grid item xs={12} md={4}><TextField select label="Student Status" value={filters.studentStatus} onChange={(e) => updateFilter('studentStatus', e.target.value)} fullWidth><MenuItem value="">All Statuses</MenuItem>{(options.studentStatuses || []).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>

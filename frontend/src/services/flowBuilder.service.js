@@ -6,6 +6,7 @@ export const createFlow = (payload) => api.post('/flows', payload);
 export const updateFlow = (id, payload) => api.patch(`/flows/${id}`, payload);
 export const deleteFlow = (id) => api.delete(`/flows/${id}`);
 export const saveFlowBuilder = (id, payload) => api.post(`/flows/${id}/save-builder`, payload);
+export const uploadFlowMedia = (id, payload) => api.post(`/flows/${id}/media`, payload);
 export const publishFlow = (id) => api.post(`/flows/${id}/publish`);
 export const unpublishFlow = (id) => api.post(`/flows/${id}/unpublish`);
 export const duplicateFlow = (id) => api.post(`/flows/${id}/duplicate`);

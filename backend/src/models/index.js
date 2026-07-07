@@ -60,6 +60,24 @@ const AppSetting = require('./appSetting.model');
 const BackupJob = require('./backupJob.model');
 const LoginHistory = require('./loginHistory.model');
 const PasswordResetToken = require('./passwordResetToken.model');
+const WhatsAppAccount = require('./whatsappAccount.model');
+const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
+const AccountingCategory = require('./accountingCategory.model');
+const AccountingTransaction = require('./accountingTransaction.model');
+const NotificationMessageTemplate = require('./notificationMessageTemplate.model');
+const LmsLesson = require('./lmsLesson.model');
+const LmsLessonMaterial = require('./lmsLessonMaterial.model');
+const LmsLessonComment = require('./lmsLessonComment.model');
+const LmsStudentProgress = require('./lmsStudentProgress.model');
+const StudentPortalSession = require('./studentPortalSession.model');
+const StudentMessageTemplate = require('./studentMessageTemplate.model');
+const StudentAutomationDispatch = require('./studentAutomationDispatch.model');
+const LmsLiveClassJoin = require('./lmsLiveClassJoin.model');
+const StudentEnrollment = require('./studentEnrollment.model');
+const CourseSchedule = require('./courseSchedule.model');
+const ScheduledLesson = require('./scheduledLesson.model');
+const ZoomRecordingImport = require('./zoomRecordingImport.model');
+const LessonAutoPublishLog = require('./lessonAutoPublishLog.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -120,7 +138,25 @@ const models = {
   AppSetting: AppSetting(sequelize, Sequelize.DataTypes),
   BackupJob: BackupJob(sequelize, Sequelize.DataTypes),
   LoginHistory: LoginHistory(sequelize, Sequelize.DataTypes),
-  PasswordResetToken: PasswordResetToken(sequelize, Sequelize.DataTypes)
+  PasswordResetToken: PasswordResetToken(sequelize, Sequelize.DataTypes),
+  WhatsAppAccount: WhatsAppAccount(sequelize, Sequelize.DataTypes),
+  RoleWhatsAppAccount: RoleWhatsAppAccount(sequelize, Sequelize.DataTypes),
+  AccountingCategory: AccountingCategory(sequelize, Sequelize.DataTypes),
+  AccountingTransaction: AccountingTransaction(sequelize, Sequelize.DataTypes),
+  NotificationMessageTemplate: NotificationMessageTemplate(sequelize, Sequelize.DataTypes),
+  LmsLesson: LmsLesson(sequelize, Sequelize.DataTypes),
+  LmsLessonMaterial: LmsLessonMaterial(sequelize, Sequelize.DataTypes),
+  LmsLessonComment: LmsLessonComment(sequelize, Sequelize.DataTypes),
+  LmsStudentProgress: LmsStudentProgress(sequelize, Sequelize.DataTypes),
+  StudentPortalSession: StudentPortalSession(sequelize, Sequelize.DataTypes),
+  StudentMessageTemplate: StudentMessageTemplate(sequelize, Sequelize.DataTypes),
+  StudentAutomationDispatch: StudentAutomationDispatch(sequelize, Sequelize.DataTypes),
+  LmsLiveClassJoin: LmsLiveClassJoin(sequelize, Sequelize.DataTypes),
+  StudentEnrollment: StudentEnrollment(sequelize, Sequelize.DataTypes),
+  CourseSchedule: CourseSchedule(sequelize, Sequelize.DataTypes),
+  ScheduledLesson: ScheduledLesson(sequelize, Sequelize.DataTypes),
+  ZoomRecordingImport: ZoomRecordingImport(sequelize, Sequelize.DataTypes),
+  LessonAutoPublishLog: LessonAutoPublishLog(sequelize, Sequelize.DataTypes)
 };
 
 models.User.belongsToMany(models.Role, {
@@ -134,6 +170,18 @@ models.Role.belongsToMany(models.User, {
   as: 'users',
   foreignKey: 'roleId',
   otherKey: 'userId'
+});
+models.Role.belongsToMany(models.WhatsAppAccount, {
+  through: models.RoleWhatsAppAccount,
+  as: 'whatsappAccounts',
+  foreignKey: 'roleId',
+  otherKey: 'whatsappAccountId'
+});
+models.WhatsAppAccount.belongsToMany(models.Role, {
+  through: models.RoleWhatsAppAccount,
+  as: 'roles',
+  foreignKey: 'whatsappAccountId',
+  otherKey: 'roleId'
 });
 
 models.Role.belongsToMany(models.Permission, {
@@ -208,17 +256,43 @@ models.AttendanceRecord.hasMany(models.AttendanceAlert, { foreignKey: 'attendanc
 models.Batch.hasMany(models.ClassReminder, { foreignKey: 'batch_id', as: 'classReminders' });
 models.Student.hasMany(models.ClassReminder, { foreignKey: 'student_id', as: 'classReminders' });
 models.Student.hasMany(models.StudentFee, { foreignKey: 'student_id', as: 'fees' });
+models.StudentEnrollment.hasMany(models.StudentFee, { foreignKey: 'enrollment_id', as: 'fees' });
 models.StudentFee.hasMany(models.FeeInstallment, { foreignKey: { name: 'studentFeeId', field: 'fee_id' }, as: 'installments' });
 models.Student.hasMany(models.FeeReminder, { foreignKey: 'student_id', as: 'feeReminders' });
 models.StudentFee.hasMany(models.FeeReminder, { foreignKey: 'student_fee_id', as: 'reminders' });
 models.FeeInstallment.hasMany(models.FeeReminder, { foreignKey: 'installment_id', as: 'reminders' });
 models.Student.hasMany(models.AttendanceRecord, { foreignKey: 'student_id', as: 'attendance' });
+models.StudentEnrollment.hasMany(models.AttendanceRecord, { foreignKey: 'enrollment_id', as: 'attendance' });
 models.Student.hasMany(models.Certificate, { foreignKey: 'student_id', as: 'certificates' });
+models.StudentEnrollment.hasMany(models.Certificate, { foreignKey: 'enrollment_id', as: 'certificates' });
 models.Student.hasMany(models.StudentNote, { foreignKey: 'student_id', as: 'profileNotes' });
 models.Student.hasMany(models.StudentDocument, { foreignKey: 'student_id', as: 'documents' });
+models.Course.hasMany(models.LmsLesson, { foreignKey: 'course_id', as: 'lmsLessons' });
+models.Batch.hasMany(models.LmsLesson, { foreignKey: 'batch_id', as: 'lmsLessons' });
+models.LmsLesson.hasMany(models.LmsLessonMaterial, { foreignKey: 'lesson_id', as: 'materials' });
+models.LmsLesson.hasMany(models.LmsLessonComment, { foreignKey: 'lesson_id', as: 'comments' });
+models.Student.hasMany(models.LmsLessonComment, { foreignKey: 'student_id', as: 'lessonComments' });
+models.LmsLesson.hasMany(models.LmsStudentProgress, { foreignKey: 'lesson_id', as: 'progress' });
+models.Student.hasMany(models.LmsStudentProgress, { foreignKey: 'student_id', as: 'lmsProgress' });
+models.Student.hasMany(models.StudentPortalSession, { foreignKey: 'student_id', as: 'portalSessions' });
+models.Student.hasMany(models.StudentEnrollment, { foreignKey: 'student_id', as: 'enrollments' });
+models.Course.hasMany(models.StudentEnrollment, { foreignKey: 'course_id', as: 'studentEnrollments' });
+models.Batch.hasMany(models.StudentEnrollment, { foreignKey: 'batch_id', as: 'studentEnrollments' });
+models.Student.hasMany(models.StudentAutomationDispatch, { foreignKey: 'student_id', as: 'automationDispatches' });
+models.Student.hasMany(models.LmsLiveClassJoin, { foreignKey: 'student_id', as: 'liveClassJoins' });
+models.LmsLesson.hasMany(models.LmsLiveClassJoin, { foreignKey: 'lesson_id', as: 'joinLogs' });
 models.User.hasMany(models.Notification, { foreignKey: 'user_id', as: 'notifications' });
 models.User.hasMany(models.AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
 models.User.hasMany(models.MessageQueue, { foreignKey: 'created_by', as: 'queuedMessages' });
+models.WhatsAppAccount.hasMany(models.Conversation, { foreignKey: 'whatsapp_account_id', as: 'conversations' });
+models.WhatsAppAccount.hasMany(models.Message, { foreignKey: 'whatsapp_account_id', as: 'messages' });
+[
+  models.Conversation, models.Message, models.Contact, models.Lead, models.WhatsAppTemplate,
+  models.Campaign, models.CampaignRecipient, models.MessageQueue, models.Flow, models.FlowRun,
+  models.AutoReply, models.WhatsAppComplianceLog
+].forEach((model) => {
+  model.belongsTo(models.WhatsAppAccount, { foreignKey: 'whatsapp_account_id', as: 'whatsappAccount' });
+});
 
 models.Lead.hasMany(models.Followup, { foreignKey: 'lead_id', as: 'followups' });
 models.Contact.hasMany(models.Followup, { foreignKey: 'contact_id', as: 'followups' });

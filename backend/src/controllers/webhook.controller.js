@@ -1,6 +1,7 @@
 const whatsappService = require('../services/whatsapp.service');
 const whatsappSettingsService = require('../services/whatsappSettings.service');
 const logger = require('../config/logger');
+const { WhatsAppAccount } = require('../models');
 
 class WebhookController {
   async verifyWebhook(req, res, next) {
@@ -9,13 +10,14 @@ class WebhookController {
       const token = req.query['hub.verify_token'];
       const challenge = req.query['hub.challenge'];
       const settings = await whatsappSettingsService.getRaw();
+      const account = token ? await WhatsAppAccount.findOne({ where: { webhookVerifyToken: token, status: 'active' } }).catch(() => null) : null;
 
-      if (!settings.verifyToken) {
+      if (!settings.verifyToken && !account) {
         return res.status(503).json({ success: false, message: 'WhatsApp webhook verify token is not configured' });
       }
 
-      if (mode === 'subscribe' && token === settings.verifyToken) {
-        await whatsappSettingsService.markWebhookVerified();
+      if (mode === 'subscribe' && (account || token === settings.verifyToken)) {
+        if (!account) await whatsappSettingsService.markWebhookVerified();
         return res.status(200).send(challenge);
       }
 

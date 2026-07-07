@@ -2,6 +2,7 @@ module.exports = (sequelize, DataTypes) => {
   const FlowRun = sequelize.define('FlowRun', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     flowId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     contactId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     conversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     leadId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
@@ -11,6 +12,11 @@ module.exports = (sequelize, DataTypes) => {
     waitingForReply: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     waitingNodeKey: { type: DataTypes.STRING(120), allowNull: true },
     lastWhatsappMessageId: { type: DataTypes.STRING(255), allowNull: true },
+    errorMessage: { type: DataTypes.TEXT, allowNull: true },
+    failedNodeId: { type: DataTypes.STRING(120), allowNull: true },
+    failedNodeType: { type: DataTypes.STRING(120), allowNull: true },
+    whatsappApiResponse: { type: DataTypes.JSON, allowNull: true },
+    payloadSent: { type: DataTypes.JSON, allowNull: true },
     startedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
     completedAt: { type: DataTypes.DATE, allowNull: true }
   }, {

@@ -1,6 +1,8 @@
 const express = require('express');
 const educationController = require('../controllers/education.controller');
 const authMiddleware = require('../middleware/auth.middleware');
+const canConfirmPayment = require('../middleware/paymentConfirmation.middleware');
+const permit = require('../middleware/permission.middleware');
 
 const router = express.Router();
 router.use(authMiddleware.authenticate);
@@ -30,8 +32,13 @@ router.post('/students/:id/guardians', educationController.createStudentGuardian
 router.patch('/students/guardians/:guardianId', educationController.updateStudentGuardian.bind(educationController));
 router.delete('/students/guardians/:guardianId', educationController.deleteStudentGuardian.bind(educationController));
 router.get('/students/:id', educationController.getStudent.bind(educationController));
+router.get('/students/:id/enrollments', educationController.listStudentEnrollments.bind(educationController));
+router.post('/students/:id/enrollments', educationController.createStudentEnrollment.bind(educationController));
+router.patch('/enrollments/:id', educationController.updateEnrollment.bind(educationController));
+router.delete('/enrollments/:id', educationController.deleteEnrollment.bind(educationController));
 router.post('/students', educationController.createStudent.bind(educationController));
 router.patch('/students/:id', educationController.updateStudent.bind(educationController));
+router.post('/students/:id/reset-portal-password', permit('students.edit'), educationController.resetStudentPortalPassword.bind(educationController));
 router.delete('/students/:id', educationController.deleteStudent.bind(educationController));
 router.post('/leads/:id/convert-to-student', educationController.convertLead.bind(educationController));
 
@@ -41,6 +48,9 @@ router.post('/fees', educationController.createFee.bind(educationController));
 router.patch('/fees/:id', educationController.updateFee.bind(educationController));
 router.delete('/fees/:id', educationController.deleteFee.bind(educationController));
 router.post('/fees/installments/:id/pay', educationController.payInstallment.bind(educationController));
+router.post('/fees/installments/:id/confirm', canConfirmPayment, educationController.confirmInstallment.bind(educationController));
+router.post('/fees/installments/:id/reject', canConfirmPayment, educationController.rejectInstallment.bind(educationController));
+router.post('/fees/installments/:id/reverse', canConfirmPayment, educationController.reverseInstallment.bind(educationController));
 router.post('/fees/installments/:id/reminder', educationController.remindInstallment.bind(educationController));
 
 router.get('/attendance', educationController.listAttendance.bind(educationController));

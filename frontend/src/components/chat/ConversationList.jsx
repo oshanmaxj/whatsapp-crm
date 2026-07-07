@@ -9,6 +9,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import { agentName, contactName, formatTime, initials, messagePreview, safeArray } from './chatUtils';
+import WhatsAppAccountSelect from '../WhatsAppAccountSelect';
 
 export const ConversationItem = memo(function ConversationItem({ conversation, selected, onSelect }) {
   const unread = Number(conversation.unreadCount || 0);
@@ -86,6 +87,7 @@ export const ConversationItem = memo(function ConversationItem({ conversation, s
             variant={isOpen ? 'filled' : 'outlined'}
             sx={{ height: 20, fontSize: 10, textTransform: 'capitalize' }}
           />
+          {conversation.whatsappAccount?.name && <Chip size="small" label={conversation.whatsappAccount.name} variant="outlined" sx={{ height: 20, fontSize: 10 }} />}
           {safeArray(conversation.labels).slice(0, 1).map((label) => (
             <Chip key={label.id || label.name} size="small" label={label.name} variant="outlined" sx={{ height: 20, fontSize: 10 }} />
           ))}
@@ -156,6 +158,7 @@ export function ConversationList({
           }}
         />
         <Collapse in={filtersOpen}>
+          <Box sx={{ pt: 1 }}><WhatsAppAccountSelect value={filters.whatsappAccountId || ''} onChange={(value) => onFiltersChange({ ...filters, whatsappAccountId: value })} allowAll fullWidth /></Box>
           <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
             <FormControl size="small" fullWidth>
               <InputLabel>Agent</InputLabel>

@@ -12,6 +12,8 @@ const {
 const notificationService = require('./notification.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappService = require('./whatsapp.service');
+const notificationTemplateService = require('./notificationTemplate.service');
+const studentMessageAutomationService = require('./studentMessageAutomation.service');
 
 const DEFAULT_CLASS_TIME = process.env.CLASS_REMINDER_DEFAULT_TIME || '09:00';
 
@@ -63,12 +65,12 @@ function templateNameFor(type) {
   return nameMap[type] || process.env.CLASS_REMINDER_DEFAULT_TEMPLATE || 'class_reminder';
 }
 
-function messageFor(type, { student, batch, classDate, classTime }) {
+async function messageFor(type, { student, batch, classDate, classTime }) {
   const course = batch.course;
   const lecturer = trainerName(batch.trainer) || 'your lecturer';
   const zoom = zoomLink(batch.schedule);
   const lead = type === 'day_before' ? 'tomorrow' : type === 'one_hour_before' ? 'in one hour' : 'today';
-  return [
+  const fallback = [
     `Hello ${student.name}`,
     '',
     `Reminder: your ${course?.name || 'class'} class for ${batch.name} starts ${lead}.`,
@@ -77,6 +79,14 @@ function messageFor(type, { student, batch, classDate, classTime }) {
     `Lecturer: ${lecturer}`,
     zoom ? `Zoom Link: ${zoom}` : ''
   ].filter((line) => line !== '').join('\n');
+  return notificationTemplateService.renderTemplate('class_reminder', {
+    student: { name: student.name, phone: student.phone || '' },
+    course: { name: course?.name || 'class' },
+    batch: { name: batch.name },
+    zoom: { link: zoom || '-' },
+    class: { date: classDate, time: classTime },
+    agent: { name: lecturer }
+  }).catch(() => fallback);
 }
 
 class ClassReminderService {
@@ -235,7 +245,7 @@ class ClassReminderService {
           scheduledTime,
           status: 'pending',
           channel: 'whatsapp',
-          message: messageFor(reminderType, { student, batch, classDate, classTime })
+          message: await messageFor(reminderType, { student, batch, classDate, classTime })
         }
       });
       rows.push(row);
@@ -283,6 +293,19 @@ class ClassReminderService {
     let complianceMode = null;
     let validation = null;
     try {
+      const queued = await studentMessageAutomationService.dispatch('class_reminder', reminder.studentId, {
+        eventId: `class-reminder:${reminder.id}`,
+        eventDate: reminder.scheduleDate,
+        liveClassAt: reminder.scheduledTime || `${reminder.scheduleDate}T${reminder.scheduleTime || '00:00:00'}`
+      });
+      await reminder.update({
+        status: queued.status === 'disabled' ? 'cancelled' : 'sent',
+        sentTime: queued.status === 'disabled' ? null : new Date(),
+        response: { mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null }
+      });
+      if (queued.status !== 'disabled') await this.notifyReminder(reminder, 'sent');
+      return ClassReminder.findByPk(reminder.id, { include: this.include() });
+      /*
       if (!to) throw Object.assign(new Error('Student WhatsApp number is missing'), { status: 400 });
       const requiredType = await whatsappComplianceService.getRequiredMessageType(student.contactId);
       complianceMode = requiredType;
@@ -318,6 +341,7 @@ class ClassReminderService {
       await reminder.update({ status: 'sent', sentTime: new Date(), response: { ...response, complianceMode, validation } });
       await this.notifyReminder(reminder, 'sent');
       return ClassReminder.findByPk(reminder.id, { include: this.include() });
+      */
     } catch (error) {
       await reminder.update({ status: 'failed', response: { message: error.message, status: error.response?.status, data: error.response?.data, complianceMode, validation } });
       await this.notifyReminder(reminder, 'failed', error.message);

@@ -2,6 +2,7 @@ module.exports = (sequelize, DataTypes) => {
   const CampaignRecipient = sequelize.define('CampaignRecipient', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     campaignId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     contactId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     leadId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     phone: { type: DataTypes.STRING(50), allowNull: false },

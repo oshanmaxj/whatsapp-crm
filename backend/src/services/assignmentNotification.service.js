@@ -3,6 +3,7 @@ const { AppSetting } = require('../models');
 const auditService = require('./audit.service');
 const whatsappService = require('./whatsapp.service');
 const outboundHistoryService = require('./outboundHistory.service');
+const notificationTemplateService = require('./notificationTemplate.service');
 
 function normalizeWhatsAppNumber(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
@@ -77,7 +78,7 @@ class AssignmentNotificationService {
       }
 
       const contact = conversation.contact || {};
-      const text = [
+      const fallbackText = [
         'New chat assigned to you.',
         '',
         `Customer: ${displayName(contact, 'Unknown')}`,
@@ -87,9 +88,17 @@ class AssignmentNotificationService {
         '',
         'Please check CRM.'
       ].join('\n');
+      const text = await notificationTemplateService.renderTemplate('assignment_notification', {
+        student: {
+          name: displayName(contact, 'Customer'),
+          phone: contact.phone || contact.whatsappId || ''
+        },
+        batch: { name: department?.name || '' },
+        agent: { name: displayName(user, 'Agent') }
+      }).catch(() => fallbackText);
 
       try {
-        const response = await whatsappService.sendTextMessage({ to, text, log: false });
+        const response = await whatsappService.sendTextMessage({ to, text, log: false, whatsappAccountId: conversation.whatsappAccountId });
         sent += 1;
         await outboundHistoryService.record({
           conversationId: conversation.id,
@@ -102,6 +111,7 @@ class AssignmentNotificationService {
           messageType: 'assignment_notification',
           text,
           status: 'sent',
+          whatsappAccountId: conversation.whatsappAccountId || null,
           isInternalNotification: true,
           sentToUserId: user.id,
           sentToUserName: displayName(user, 'agent'),

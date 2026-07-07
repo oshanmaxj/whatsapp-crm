@@ -1,6 +1,7 @@
 module.exports = (sequelize, DataTypes) => {
   const WhatsAppComplianceLog = sequelize.define('WhatsAppComplianceLog', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     contactId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     messageType: { type: DataTypes.ENUM('free_form', 'template'), allowNull: false },
     windowStatus: { type: DataTypes.ENUM('open', 'closed', 'unknown'), allowNull: false, defaultValue: 'unknown' },

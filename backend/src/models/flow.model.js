@@ -1,6 +1,8 @@
 module.exports = (sequelize, DataTypes) => {
   const Flow = sequelize.define('Flow', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    departmentId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
     name: { type: DataTypes.STRING(180), allowNull: false },
     description: { type: DataTypes.TEXT, allowNull: true },
     status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'draft', validate: { isIn: [['draft', 'published', 'inactive']] } },
@@ -18,6 +20,7 @@ module.exports = (sequelize, DataTypes) => {
 
   Flow.associate = (models) => {
     Flow.belongsTo(models.User, { foreignKey: 'created_by', as: 'creator' });
+    Flow.belongsTo(models.Role, { foreignKey: 'department_id', as: 'department' });
     Flow.hasMany(models.FlowNode, { foreignKey: 'flow_id', as: 'nodes' });
     Flow.hasMany(models.FlowConnection, { foreignKey: 'flow_id', as: 'connections' });
     Flow.hasMany(models.FlowRun, { foreignKey: 'flow_id', as: 'runs' });

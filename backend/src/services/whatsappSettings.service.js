@@ -128,6 +128,27 @@ class WhatsappSettingsService {
     };
 
     await row.update({ value: next, updatedBy: userId || null });
+    // Keep the legacy single-number settings screen compatible after the
+    // multi-account migration by mirroring edits into the active default.
+    try {
+      const whatsappAccountService = require('./whatsappAccount.service');
+      const defaultAccount = await whatsappAccountService.ensureDefault();
+      if (defaultAccount) {
+        await whatsappAccountService.update(defaultAccount.id, {
+          businessAccountId: payload.businessAccountId,
+          phoneNumberId: payload.phoneNumberId,
+          accessToken: payload.accessToken,
+          webhookVerifyToken: payload.verifyToken,
+          appId: payload.appId,
+          appSecret: payload.appSecret,
+          apiVersion: payload.apiVersion,
+          apiBaseUrl: payload.apiBaseUrl
+        });
+      }
+    } catch (error) {
+      // The legacy settings table remains authoritative when the account
+      // migration has not been applied yet.
+    }
     return this.getPublic();
   }
 

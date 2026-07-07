@@ -10,8 +10,10 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import EditIcon from '@mui/icons-material/Edit';
 import PersonAddAltIcon from '@mui/icons-material/PersonAddAlt';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import { useNavigate } from 'react-router-dom';
 import { getAgents } from '../services/agent.service';
 import { assignLead, autoAssignLeads, createLead, deleteLead, getLeads, updateLead } from '../services/lead.service';
+import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const statuses = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
 const sources = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
@@ -65,10 +67,11 @@ function toPayload(form) {
 }
 
 function LeadsPage() {
+  const navigate = useNavigate();
   const [leads, setLeads] = useState([]);
   const [agents, setAgents] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
-  const [filters, setFilters] = useState({ search: '', status: '', source: '', assignedAgentId: '', courseInterested: '' });
+  const [filters, setFilters] = useState({ search: '', status: '', source: '', assignedAgentId: '', courseInterested: '', whatsappAccountId: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -84,7 +87,8 @@ function LeadsPage() {
     status: filters.status || undefined,
     source: filters.source || undefined,
     assignedAgentId: filters.assignedAgentId || undefined,
-    courseInterested: filters.courseInterested || undefined
+    courseInterested: filters.courseInterested || undefined,
+    whatsappAccountId: filters.whatsappAccountId || undefined
   }), [filters, pagination.page, pagination.limit]);
 
   const loadLeads = async () => {
@@ -115,6 +119,21 @@ function LeadsPage() {
 
   const openCreate = () => { setEditing(null); setForm(initialForm); setDialogOpen(true); };
   const openEdit = (lead) => { setEditing(lead); setForm(toForm(lead)); setDialogOpen(true); };
+  const convertToStudent = (lead) => {
+    navigate('/students', {
+      state: {
+        openCreate: true,
+        source: 'lead',
+        lead: { ...lead, id: lead.id },
+        contact: lead.contact || {
+          firstName: String(lead.name || '').split(' ')[0] || '',
+          lastName: String(lead.name || '').split(' ').slice(1).join(' '),
+          phone: lead.phone,
+          email: lead.email
+        }
+      }
+    });
+  };
 
   const saveLead = async () => {
     try {
@@ -170,6 +189,7 @@ function LeadsPage() {
           <FormControl sx={{ minWidth: 160 }}><InputLabel>Source</InputLabel><Select label="Source" value={filters.source} onChange={setFilter('source')}><MenuItem value="">All</MenuItem>{sources.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Agent</InputLabel><Select label="Agent" value={filters.assignedAgentId} onChange={setFilter('assignedAgentId')}><MenuItem value="">All</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Course</InputLabel><Select label="Course" value={filters.courseInterested} onChange={setFilter('courseInterested')}><MenuItem value="">All</MenuItem>{courses.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
+          <WhatsAppAccountSelect value={filters.whatsappAccountId} onChange={(value) => { setFilters((current) => ({ ...current, whatsappAccountId: value })); setPagination((current) => ({ ...current, page: 1 })); }} allowAll sx={{ minWidth: 230 }} />
           <Button variant="outlined" startIcon={<AutoFixHighIcon />} onClick={runAutoAssign}>Auto Assign</Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} sx={{ bgcolor: '#128c7e' }}>Add Lead</Button>
         </Stack>
@@ -242,7 +262,7 @@ function LeadsPage() {
           <Box><Typography variant="subtitle2" color="text.secondary">Budget and Student Type</Typography><Typography>{profile.budget || '-'} / {profile.studentType || '-'}</Typography></Box>
           <Box><Typography variant="subtitle2" color="text.secondary">Follow-up Date</Typography><Typography>{profile.followUpDate ? new Date(profile.followUpDate).toLocaleString() : '-'}</Typography></Box>
           <Box><Typography variant="subtitle2" color="text.secondary">Notes</Typography><Typography sx={{ whiteSpace: 'pre-wrap' }}>{profile.notes || 'No notes yet.'}</Typography></Box>
-          <Stack direction="row" spacing={1}><Button variant="outlined" startIcon={<EditIcon />} onClick={() => openEdit(profile)}>Edit</Button><Button variant="outlined" startIcon={<PersonAddAltIcon />} onClick={() => openEdit(profile)}>Reassign</Button></Stack>
+          <Stack direction="row" spacing={1} flexWrap="wrap"><Button variant="contained" startIcon={<PersonAddAltIcon />} onClick={() => convertToStudent(profile)}>Convert to Student</Button><Button variant="outlined" startIcon={<EditIcon />} onClick={() => openEdit(profile)}>Edit</Button><Button variant="outlined" startIcon={<PersonAddAltIcon />} onClick={() => openEdit(profile)}>Reassign</Button></Stack>
         </Stack>}
       </Drawer>
     </Stack>

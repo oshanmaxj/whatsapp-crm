@@ -43,6 +43,7 @@ import {
   importContactsCsv,
   updateContact
 } from '../services/contact.service';
+import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const statusOptions = ['new', 'active', 'inactive', 'archived'];
 const initialForm = {
@@ -87,7 +88,7 @@ function ContactsPage() {
   const fileInputRef = useRef(null);
   const [contacts, setContacts] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
-  const [filters, setFilters] = useState({ search: '', status: '', tag: '' });
+  const [filters, setFilters] = useState({ search: '', status: '', tag: '', whatsappAccountId: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -102,7 +103,8 @@ function ContactsPage() {
       limit: pagination.limit,
       search: filters.search || undefined,
       status: filters.status || undefined,
-      tag: filters.tag || undefined
+      tag: filters.tag || undefined,
+      whatsappAccountId: filters.whatsappAccountId || undefined
     }),
     [filters, pagination.page, pagination.limit]
   );
@@ -201,7 +203,8 @@ function ContactsPage() {
       const response = await exportContactsCsv({
         search: filters.search || undefined,
         status: filters.status || undefined,
-        tag: filters.tag || undefined
+        tag: filters.tag || undefined,
+        whatsappAccountId: filters.whatsappAccountId || undefined
       });
       const blobUrl = window.URL.createObjectURL(response.data);
       const link = document.createElement('a');
@@ -234,6 +237,7 @@ function ContactsPage() {
             </Select>
           </FormControl>
           <TextField label="Tag" value={filters.tag} onChange={handleFilterChange('tag')} sx={{ minWidth: 160 }} />
+          <WhatsAppAccountSelect value={filters.whatsappAccountId} onChange={(value) => { setFilters((current) => ({ ...current, whatsappAccountId: value })); setPagination((current) => ({ ...current, page: 1 })); }} allowAll sx={{ minWidth: 230 }} />
           <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => fileInputRef.current?.click()}>
             Import
           </Button>

@@ -13,11 +13,12 @@ function windowStatus(open) {
 }
 
 class WhatsAppComplianceService {
-  async getLastInboundMessage(contactId) {
+  async getLastInboundMessage(contactId, whatsappAccountId = null) {
     if (!contactId) return null;
     return Message.findOne({
       where: {
         contactId,
+        ...(whatsappAccountId ? { whatsappAccountId } : {}),
         [Op.or]: [
           { direction: 'inbound' },
           { status: 'received' }
@@ -27,15 +28,15 @@ class WhatsAppComplianceService {
     });
   }
 
-  async isConversationWindowOpen(contactId) {
-    const lastInbound = await this.getLastInboundMessage(contactId);
+  async isConversationWindowOpen(contactId, whatsappAccountId = null) {
+    const lastInbound = await this.getLastInboundMessage(contactId, whatsappAccountId);
     if (!lastInbound) return { open: false, lastInboundAt: null };
     const open = Date.now() - new Date(lastInbound.createdAt).getTime() <= WINDOW_MS;
     return { open, lastInboundAt: lastInbound.createdAt };
   }
 
-  async canSendFreeFormMessage(contactId) {
-    const window = await this.isConversationWindowOpen(contactId);
+  async canSendFreeFormMessage(contactId, whatsappAccountId = null) {
+    const window = await this.isConversationWindowOpen(contactId, whatsappAccountId);
     return {
       canSend: window.open,
       windowOpen: window.open,
@@ -49,8 +50,8 @@ class WhatsAppComplianceService {
     return result.canSend ? 'free_form' : 'template';
   }
 
-  async validateTemplateUsage({ contactId, templateId, templateName, messageType } = {}) {
-    const window = await this.isConversationWindowOpen(contactId);
+  async validateTemplateUsage({ contactId, templateId, templateName, messageType, whatsappAccountId = null } = {}) {
+    const window = await this.isConversationWindowOpen(contactId, whatsappAccountId);
     const requiredMessageType = window.open ? 'free_form' : 'template';
     let allowed = true;
     let reason = 'Free-form message allowed inside 24-hour window.';
@@ -64,7 +65,7 @@ class WhatsAppComplianceService {
     if (messageType === 'template' || requiredMessageType === 'template') {
       template = templateId
         ? await WhatsAppTemplate.findByPk(templateId)
-        : await WhatsAppTemplate.findOne({ where: { name: templateName || '', status: 'APPROVED' } });
+        : await WhatsAppTemplate.findOne({ where: { name: templateName || '', status: 'APPROVED', ...(whatsappAccountId ? { whatsappAccountId } : {}) } });
       if (!template) {
         allowed = false;
         reason = 'Approved WhatsApp template is required.';
@@ -84,6 +85,7 @@ class WhatsAppComplianceService {
       templateId: template?.id || templateId || null,
       allowed,
       reason
+      , whatsappAccountId
     });
 
     return {
@@ -146,8 +148,18 @@ class WhatsAppComplianceService {
     };
   }
 
-  async report() {
-    const logs = await WhatsAppComplianceLog.findAll({ order: [['created_at', 'DESC']], limit: 1000 });
+  async report(filters = {}) {
+    const where = {};
+    if (filters.whatsappAccountId) where.whatsappAccountId = filters.whatsappAccountId;
+    else if (filters._accessibleAccountIds !== null && filters._accessibleAccountIds !== undefined) {
+      where.whatsappAccountId = { [Op.in]: filters._accessibleAccountIds };
+    }
+    if (filters.fromDate || filters.toDate) {
+      where.createdAt = {};
+      if (filters.fromDate) where.createdAt[Op.gte] = new Date(filters.fromDate);
+      if (filters.toDate) where.createdAt[Op.lte] = new Date(`${filters.toDate}T23:59:59.999Z`);
+    }
+    const logs = await WhatsAppComplianceLog.findAll({ where, order: [['created_at', 'DESC']], limit: 1000 });
     return {
       messagesSent: logs.filter((row) => row.allowed).length,
       templateMessages: logs.filter((row) => row.messageType === 'template').length,

@@ -1,6 +1,7 @@
 module.exports = (sequelize, DataTypes) => {
   const WhatsAppTemplate = sequelize.define('WhatsAppTemplate', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
+    whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     name: { type: DataTypes.STRING(180), allowNull: false },
     metaTemplateId: { type: DataTypes.STRING(180), allowNull: true },
     category: { type: DataTypes.ENUM('UTILITY', 'MARKETING', 'AUTHENTICATION'), allowNull: false, defaultValue: 'UTILITY' },

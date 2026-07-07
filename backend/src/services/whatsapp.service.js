@@ -4,6 +4,7 @@ const fs = require('fs');
 const { CampaignEvent, CampaignRecipient, FlowNode, Message, MessageQueue } = require('../models');
 const whatsappConfig = require('../config/whatsapp');
 const whatsappSettingsService = require('./whatsappSettings.service');
+const whatsappAccountService = require('./whatsappAccount.service');
 const leadManagementService = require('./leadManagement.service');
 const contactService = require('./contact.service');
 const conversationService = require('./conversation.service');
@@ -137,7 +138,17 @@ class WhatsappService {
     return parseInboundContent(message);
   }
 
-  async getWhatsAppConfig() {
+  async getWhatsAppConfig(whatsappAccountId = null, options = {}) {
+    let accountConfig = null;
+    try {
+      accountConfig = await whatsappAccountService.runtimeConfig(whatsappAccountId, options);
+    } catch (error) {
+      logger.warn('whatsapp_account_resolution_failed', { whatsappAccountId, message: error.message });
+      if (whatsappAccountId || options.phoneNumberId) throw error;
+    }
+    if (accountConfig) {
+      return { ...accountConfig, tokenSource: 'whatsapp_account', phoneNumberIdSource: 'whatsapp_account' };
+    }
     let settings = {};
     try {
       settings = await whatsappSettingsService.runtimeConfig();
@@ -168,8 +179,8 @@ class WhatsappService {
     return config;
   }
 
-  async getRuntimeConfig() {
-    return this.getWhatsAppConfig();
+  async getRuntimeConfig(whatsappAccountId = null, options = {}) {
+    return this.getWhatsAppConfig(whatsappAccountId, options);
   }
 
   async requestClient(resolvedConfig = null) {
@@ -187,8 +198,8 @@ class WhatsappService {
     };
   }
 
-  async sendTextMessage({ to, text, recipientType = 'individual', contextMessageId = null, log = true }) {
-    const config = await this.getWhatsAppConfig();
+  async sendTextMessage({ to, text, recipientType = 'individual', contextMessageId = null, log = true, whatsappAccountId = null }) {
+    const config = await this.getWhatsAppConfig(whatsappAccountId);
     const payload = {
       messaging_product: 'whatsapp',
       to,
@@ -235,6 +246,7 @@ class WhatsappService {
         fromNumber: config.phoneNumberId,
         toNumber: to,
         status: 'sent',
+        whatsappAccountId: config.whatsappAccountId || null,
         rawPayload: payload
       });
     }
@@ -242,8 +254,8 @@ class WhatsappService {
     return response;
   }
 
-  async sendTemplateMessage({ to, templateName, language = 'en_US', components = [], contextMessageId = null, log = true }) {
-    const config = await this.getRuntimeConfig();
+  async sendTemplateMessage({ to, templateName, language = 'en_US', components = [], contextMessageId = null, log = true, whatsappAccountId = null }) {
+    const config = await this.getRuntimeConfig(whatsappAccountId);
     const payload = {
       messaging_product: 'whatsapp',
       to,
@@ -258,7 +270,7 @@ class WhatsappService {
       payload.context = { message_id: contextMessageId };
     }
 
-    const response = await this.sendRequest(payload);
+    const response = await this.sendRequest(payload, { config });
     if (log) {
       await this.logMessage({
         whatsappMessageId: response.id,
@@ -268,6 +280,7 @@ class WhatsappService {
         fromNumber: config.phoneNumberId,
         toNumber: to,
         status: 'sent',
+        whatsappAccountId: config.whatsappAccountId || null,
         rawPayload: payload
       });
     }
@@ -275,14 +288,23 @@ class WhatsappService {
     return response;
   }
 
-  async sendInteractiveMessage({ to, body, footer = null, header = null, buttons = [], sections = [], buttonText = 'Choose', log = false }) {
-    const config = await this.getRuntimeConfig();
+  async sendInteractiveMessage({ to, body, footer = null, header = null, buttons = [], sections = [], buttonText = 'Choose', log = false, whatsappAccountId = null }) {
+    const config = await this.getRuntimeConfig(whatsappAccountId);
     const interactive = {
       type: sections.length ? 'list' : 'button',
       body: { text: body || 'Please choose an option' }
     };
     if (footer) interactive.footer = { text: footer };
     if (header?.text) interactive.header = { type: 'text', text: header.text };
+    else if (header?.url && ['image', 'video', 'document'].includes(header.type)) {
+      interactive.header = {
+        type: header.type,
+        [header.type]: {
+          link: header.url,
+          ...(header.type === 'document' && header.filename ? { filename: header.filename } : {})
+        }
+      };
+    }
     if (sections.length) {
       interactive.action = {
         button: buttonText,
@@ -307,18 +329,18 @@ class WhatsappService {
       };
     }
     const payload = { messaging_product: 'whatsapp', to, type: 'interactive', interactive };
-    const response = await this.sendRequest(payload);
+    const response = await this.sendRequest(payload, { config });
     if (log) {
       await this.logMessage({
         whatsappMessageId: response.id, direction: 'outbound', type: 'text',
         messageType: 'interactive', text: body, fromNumber: config.phoneNumberId,
-        toNumber: to, status: 'sent', rawPayload: payload
+        toNumber: to, status: 'sent', rawPayload: payload, whatsappAccountId: config.whatsappAccountId || null
       });
     }
     return response;
   }
 
-  async sendWhatsAppFlowMessage({ to, body, flowId, flowToken, screen, data = {} }) {
+  async sendWhatsAppFlowMessage({ to, body, flowId, flowToken, screen, data = {}, whatsappAccountId = null }) {
     const payload = {
       messaging_product: 'whatsapp',
       to,
@@ -339,11 +361,12 @@ class WhatsappService {
         }
       }
     };
-    return this.sendRequest(payload);
+    const config = await this.getRuntimeConfig(whatsappAccountId);
+    return this.sendRequest(payload, { config });
   }
 
-  async uploadMedia({ filePath, mimeType }) {
-    const config = await this.getWhatsAppConfig();
+  async uploadMedia({ filePath, mimeType, whatsappAccountId = null }) {
+    const config = await this.getWhatsAppConfig(whatsappAccountId);
     if (!config.accessToken || !config.phoneNumberId) {
       const error = new Error('WhatsApp Cloud API credentials are not configured');
       error.status = 500;
@@ -418,9 +441,10 @@ class WhatsappService {
     recipientType = 'individual',
     contextMessageId = null,
     log = true,
-    returnMetaResponse = false
+    returnMetaResponse = false,
+    whatsappAccountId = null
   }) {
-    const config = await this.getWhatsAppConfig();
+    const config = await this.getWhatsAppConfig(whatsappAccountId);
     if (!mediaId && !url) {
       const error = new Error('Either mediaId or url is required to send media');
       error.status = 400;
@@ -488,6 +512,7 @@ class WhatsappService {
         fromNumber: config.phoneNumberId,
         toNumber: to,
         status: 'sent',
+        whatsappAccountId: config.whatsappAccountId || null,
         rawPayload: {
           request: payload,
           response: responseData
@@ -507,10 +532,16 @@ class WhatsappService {
       throw error;
     }
 
-    const response = await this.retryRequest(() => client.post('/messages', payload));
-    return options.fullResponseData
-      ? response.data
-      : response.data?.messages?.[0] || response.data;
+    try {
+      const response = await this.retryRequest(() => client.post('/messages', payload));
+      return options.fullResponseData
+        ? response.data
+        : response.data?.messages?.[0] || response.data;
+    } catch (error) {
+      error.payloadSent = payload;
+      error.whatsappApiResponse = error.response?.data || null;
+      throw error;
+    }
   }
 
   async getMediaUrl(mediaId, resolvedConfig = null) {
@@ -531,8 +562,8 @@ class WhatsappService {
     return response.data;
   }
 
-  async downloadMedia(mediaId) {
-    const config = await this.getWhatsAppConfig();
+  async downloadMedia(mediaId, whatsappAccountId = null) {
+    const config = await this.getWhatsAppConfig(whatsappAccountId);
     const mediaInfo = await this.getMediaUrl(mediaId, config);
     if (!mediaInfo?.url) {
       const error = new Error('Unable to retrieve media URL');
@@ -603,8 +634,10 @@ class WhatsappService {
     }
 
     const from = message.from;
-    const config = await this.getRuntimeConfig();
-    const to = value.metadata?.phone_number_id || config.phoneNumberId;
+    const webhookPhoneNumberId = value.metadata?.phone_number_id || null;
+    const config = await this.getRuntimeConfig(null, { phoneNumberId: webhookPhoneNumberId });
+    const whatsappAccountId = config.whatsappAccountId || null;
+    const to = webhookPhoneNumberId || config.phoneNumberId;
     const threadId = [to, from].filter(Boolean).join(':');
     const messageType = parsed.rawType;
     const text = parsed.text;
@@ -642,7 +675,8 @@ class WhatsappService {
         profileName: contactProfile?.profile?.name || contactProfile?.name || null,
         text,
         threadId,
-        payload: value
+        payload: value,
+        whatsappAccountId
       });
     } catch (error) {
       console.error(error);
@@ -659,14 +693,16 @@ class WhatsappService {
           phone: from,
           whatsappId,
           firstName: contactProfile?.profile?.name || contactProfile?.name || null,
-          lastName: null
+          lastName: null,
+          whatsappAccountId
         });
         const conversation = await conversationService.upsertConversation({
           contactId: contact.id,
           leadId: assignmentResult?.lead?.id || null,
           whatsappThreadId: threadId,
           assignedTo: assignmentResult?.assignee?.id || null,
-          lastMessageAt: receivedAt
+          lastMessageAt: receivedAt,
+          whatsappAccountId
         });
         assignmentResult = { ...assignmentResult, contact, conversation };
         logger.info('whatsapp_inbound_conversation_fallback_resolved', {
@@ -709,6 +745,7 @@ class WhatsappService {
       fromNumber: from,
       toNumber: to,
       status: 'delivered',
+      whatsappAccountId,
       statusUpdatedAt: receivedAt,
       replyToMessageId: replyToMessage?.id || null,
       replyToWhatsappMessageId,
@@ -733,7 +770,7 @@ class WhatsappService {
 
     let attachment = null;
     if (mediaId) {
-      const downloadedMedia = await this.downloadAndStoreMedia(mediaId, { fileName, mimeType }).catch((error) => {
+      const downloadedMedia = await this.downloadAndStoreMedia(mediaId, { fileName, mimeType, whatsappAccountId }).catch((error) => {
         logger.warn('whatsapp_media_download_failed', error);
         return null;
       });
@@ -820,7 +857,7 @@ class WhatsappService {
 
     const isTextMessage = messageType === 'text' && !!text;
     const activeReply = isTextMessage
-      ? await autoReplyService.findReplyForText(text).catch((error) => {
+      ? await autoReplyService.findReplyForText(text, whatsappAccountId).catch((error) => {
         logger.warn('whatsapp_auto_reply_lookup_failed', error);
         return null;
       })
@@ -828,7 +865,7 @@ class WhatsappService {
     const autoReply = activeReply ? activeReply.response : null;
 
     if (autoReply) {
-      await this.sendTextMessage({ to: from, text: autoReply }).catch((error) => {
+      await this.sendTextMessage({ to: from, text: autoReply, whatsappAccountId }).catch((error) => {
         logger.warn('whatsapp_auto_reply_send_failed', error);
         return null;
       });
@@ -846,6 +883,7 @@ class WhatsappService {
       whatsappMessageId: message.id || null,
       replyToWhatsappMessageId,
       rawPayload: message
+      , whatsappAccountId
     }).catch((error) => {
       logger.warn('flow_builder_execution_failed', error);
       return null;
@@ -960,8 +998,9 @@ class WhatsappService {
     return existing;
   }
 
-  async downloadAndStoreMedia(mediaId, { fileName, mimeType }) {
-    const mediaInfo = await this.getMediaUrl(mediaId);
+  async downloadAndStoreMedia(mediaId, { fileName, mimeType, whatsappAccountId = null }) {
+    const config = await this.getRuntimeConfig(whatsappAccountId);
+    const mediaInfo = await this.getMediaUrl(mediaId, config);
     const downloadUrl = mediaInfo?.url;
     if (!downloadUrl) {
       const error = new Error('Media download URL is missing');
@@ -969,7 +1008,6 @@ class WhatsappService {
       throw error;
     }
 
-    const config = await this.getRuntimeConfig();
     const downloadResponse = await axios.get(downloadUrl, {
       headers: { Authorization: `Bearer ${config.accessToken}` },
       responseType: 'arraybuffer',
@@ -1123,8 +1161,8 @@ class WhatsappService {
     return response;
   }
 
-  async sendLocationMessage({ to, latitude, longitude, name, address, log = true }) {
-    const config = await this.getRuntimeConfig();
+  async sendLocationMessage({ to, latitude, longitude, name, address, log = true, whatsappAccountId = null }) {
+    const config = await this.getRuntimeConfig(whatsappAccountId);
     if (!latitude || !longitude) {
       const error = new Error('Latitude and longitude are required for location messages');
       error.status = 400;
@@ -1143,7 +1181,7 @@ class WhatsappService {
       }
     };
 
-    const response = await this.sendRequest(payload);
+    const response = await this.sendRequest(payload, { config });
     if (log) await this.logMessage({
       whatsappMessageId: response.id,
       direction: 'outbound',
@@ -1151,6 +1189,7 @@ class WhatsappService {
       fromNumber: config.phoneNumberId,
       toNumber: to,
       status: 'sent',
+      whatsappAccountId: config.whatsappAccountId || null,
       rawPayload: payload
     });
 

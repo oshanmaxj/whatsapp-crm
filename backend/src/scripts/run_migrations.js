@@ -24,6 +24,7 @@ const studentAutomationSecureLmsMigration = require('../../migrations/019_add_st
 const studentEnrollmentsMigration = require('../../migrations/020_add_student_enrollments');
 const courseSchedulerMigration = require('../../migrations/021_add_course_scheduler_and_zoom_recordings');
 const flowRunErrorDetailsMigration = require('../../migrations/022_add_flow_run_error_details');
+const passwordResetTokensMigration = require('../../migrations/023_create_password_reset_tokens');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -141,6 +142,9 @@ async function run() {
 
     await flowRunErrorDetailsMigration.up(queryInterface, Sequelize);
     console.log('Applied: flow run error details');
+
+    await passwordResetTokensMigration.up(queryInterface, Sequelize);
+    console.log('Applied: password reset tokens');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

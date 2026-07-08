@@ -35,8 +35,9 @@ class AuthService {
 
     if (user.status !== 'active') {
       await LoginHistory.create({ userId: user.id, email, status: 'failed', reason: 'user_inactive' }).catch(() => null);
-      const error = new Error('Your account is not active. Please contact an administrator.');
+      const error = new Error('Account disabled. Contact admin.');
       error.status = 403;
+      error.code = 'USER_DISABLED';
       throw error;
     }
 
@@ -57,7 +58,7 @@ class AuthService {
 
   async requestPasswordReset(email) {
     const user = await User.findOne({ where: { email } });
-    if (!user) return { requested: true };
+    if (!user) return { requested: true, emailDeliveryConfigured: this.isPasswordResetEmailConfigured() };
     const token = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     await PasswordResetToken.create({
@@ -67,8 +68,16 @@ class AuthService {
     });
     return {
       requested: true,
+      emailDeliveryConfigured: this.isPasswordResetEmailConfigured(),
       resetToken: process.env.NODE_ENV === 'production' ? undefined : token
     };
+  }
+
+  isPasswordResetEmailConfigured() {
+    return Boolean(
+      process.env.PASSWORD_RESET_EMAIL_ENABLED === 'true'
+      || (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
+    );
   }
 
   async resetPassword({ token, password }) {

@@ -5,18 +5,50 @@ import {
   Avatar,
   Box,
   Button,
+  Link,
   Paper,
   Stack,
   TextField,
   Typography
 } from '@mui/material';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import { Link as RouterLink } from 'react-router-dom';
 import { login } from '../services/auth.service';
+
+function extractAuthPayload(response) {
+  const body = response?.data || {};
+  const data = body.data || {};
+  const token = body.token || data.token || data.accessToken || data.tokens?.accessToken;
+  const refreshToken = body.refreshToken || data.refreshToken || data.tokens?.refreshToken;
+  const user = body.user || data.user || null;
+
+  return { token, refreshToken, user };
+}
+
+function getLoginErrorMessage(err) {
+  if (!err.response) {
+    return 'Cannot connect to server. Please try again.';
+  }
+
+  const status = err.response.status;
+  const message = String(err.response.data?.message || '').toLowerCase();
+  const code = String(err.response.data?.code || '').toLowerCase();
+
+  if (status === 403 || code.includes('inactive') || code.includes('disabled') || /inactive|disabled|suspended/.test(message)) {
+    return 'Account disabled. Contact admin.';
+  }
+
+  if (status === 401 || /invalid.*email|invalid.*password|invalid credentials/.test(message)) {
+    return 'Invalid email or password.';
+  }
+
+  return err.response.data?.message || 'Login failed. Please try again.';
+}
 
 function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [form, setForm] = useState({ email: 'admin@test.com', password: '123456' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -33,13 +65,25 @@ function LoginPage() {
 
     try {
       const response = await login(form);
-      const tokens = response.data.data.tokens;
+      const { token, refreshToken, user } = extractAuthPayload(response);
 
-      localStorage.setItem('accessToken', tokens.accessToken);
-      localStorage.setItem('refreshToken', tokens.refreshToken);
+      if (!token) {
+        throw Object.assign(new Error('Login response did not include an access token.'), {
+          response: { data: { message: 'Login failed. Please try again.' } }
+        });
+      }
+
+      localStorage.setItem('accessToken', token);
+      if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
+      else localStorage.removeItem('refreshToken');
+      if (user) localStorage.setItem('user', JSON.stringify(user));
+      else localStorage.removeItem('user');
       navigate(redirectTo, { replace: true });
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Check your email and password.');
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Login failed', err);
+      }
+      setError(getLoginErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -101,10 +145,9 @@ function LoginPage() {
           <Button type="submit" variant="contained" size="large" disabled={loading} sx={{ bgcolor: '#128c7e' }}>
             {loading ? 'Signing in...' : 'Sign in'}
           </Button>
-
-          <Alert severity="info" icon={false}>
-            Local admin: admin@test.com / 123456
-          </Alert>
+          <Link component={RouterLink} to="/forgot-password" underline="hover" textAlign="center">
+            Forgot password?
+          </Link>
         </Stack>
       </Paper>
     </Box>

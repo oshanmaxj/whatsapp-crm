@@ -21,6 +21,7 @@ import CrmLayout from './components/CrmLayout';
 import AgentsPage from './pages/AgentsPage';
 import LeadsPage from './pages/LeadsPage';
 import LoginPage from './pages/LoginPage';
+import { ForgotPasswordPage, ResetPasswordPage } from './pages/PasswordResetPages';
 import PermissionManagementPage from './pages/PermissionManagementPage';
 import PermissionRoute from './components/PermissionRoute';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -76,6 +77,8 @@ function App() {
       <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/student/login" element={<StudentLoginPage />} />
           <Route element={<StudentPortalGuard />}>
             <Route element={<StudentPortalLayout />}>

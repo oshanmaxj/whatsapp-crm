@@ -12,7 +12,7 @@ module.exports = (err, req, res, next) => {
   if (err.details) {
     response.details = err.details;
   }
-  if (['AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_EXPIRED'].includes(err.code)) {
+  if (['AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_EXPIRED', 'USER_DISABLED'].includes(err.code)) {
     response.code = err.code;
   }
 

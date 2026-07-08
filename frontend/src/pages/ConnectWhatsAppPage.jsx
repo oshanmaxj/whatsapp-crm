@@ -26,8 +26,9 @@ import {
   testWhatsappConnection,
   testWhatsappSend
 } from '../services/whatsappConnect.service';
+import { apiUrl } from '../config/apiConfig';
 
-const WEBHOOK_URL = 'http://localhost:4000/api/webhooks/whatsapp';
+const WEBHOOK_URL = apiUrl('/webhooks/whatsapp');
 
 const emptyForm = {
   businessAccountId: '',

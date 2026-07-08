@@ -30,6 +30,7 @@ import {
   testWhatsappConnection,
   testWhatsappSend
 } from '../services/whatsappConnect.service';
+import { API_BASE_URL } from '../config/apiConfig';
 
 function JsonField({ value, onChange, minRows = 4 }) {
   return <TextField value={value} onChange={(e) => onChange(e.target.value)} multiline minRows={minRows} fullWidth />;
@@ -171,7 +172,7 @@ export function ProductionSettingsPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const backendUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
+  const backendUrl = API_BASE_URL;
   const frontendUrl = window.location.origin;
   const appVersion = process.env.REACT_APP_VERSION || '0.1.0';
 

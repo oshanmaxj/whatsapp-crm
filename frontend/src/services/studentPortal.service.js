@@ -1,6 +1,7 @@
 import axios from 'axios';
+import { API_BASE_URL } from '../config/apiConfig';
 
-const portalApi = axios.create({ baseURL: process.env.REACT_APP_API_URL || 'http://localhost:4000/api' });
+const portalApi = axios.create({ baseURL: API_BASE_URL });
 portalApi.interceptors.request.use((config) => {
   const token = localStorage.getItem('studentPortalToken');
   if (token) config.headers.Authorization = `Bearer ${token}`;

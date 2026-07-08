@@ -1,5 +1,4 @@
-export const API_ORIGIN = (process.env.REACT_APP_API_URL || 'http://localhost:4000/api')
-  .replace(/\/api\/?$/, '');
+import { API_ORIGIN } from '../../config/apiConfig';
 
 export function safeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];

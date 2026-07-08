@@ -16,10 +16,10 @@ import {
   addStudentLessonComment, getStudentDashboard, getStudentLesson, getStudentLessons, getStudentMaterials,
   getStudentMe, getStudentPayments, joinStudentLiveClass, studentLogin, updateStudentProgress, verifyStudentOtp
 } from '../services/studentPortal.service';
+import { API_ORIGIN } from '../config/apiConfig';
 
 const paymentWarning = 'Your LMS access is temporarily disabled due to pending payment. Please contact the office.';
-const apiOrigin = (process.env.REACT_APP_API_URL || 'http://localhost:4000/api').replace(/\/api\/?$/, '');
-const assetUrl = (value) => String(value || '').startsWith('/uploads/') ? `${apiOrigin}${value}` : value;
+const assetUrl = (value) => String(value || '').startsWith('/uploads/') ? `${API_ORIGIN}${value}` : value;
 
 function saveSession(data) {
   localStorage.setItem('studentPortalToken', data.token);

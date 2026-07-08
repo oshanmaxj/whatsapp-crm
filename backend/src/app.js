@@ -6,6 +6,7 @@ const path = require('path');
 
 const routes = require('./routes');
 const logger = require('./config/logger');
+const { corsOptions } = require('./config/cors');
 const errorHandler = require('./middleware/error.middleware');
 const auditMiddleware = require('./middleware/audit.middleware');
 const { clearApiCache } = require('./middleware/cache.middleware');
@@ -17,11 +18,6 @@ const quietDevelopmentGetPaths = new Set([
   '/api/chat/unread',
   '/api/agents'
 ]);
-
-const allowedOrigins = (process.env.FRONTEND_URL || '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
 
 app.disable('x-powered-by');
 app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
@@ -38,15 +34,8 @@ app.use(helmet({
       }
     : false
 }));
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || (process.env.NODE_ENV !== 'production' && allowedOrigins.length === 0)) {
-      return callback(null, true);
-    }
-    return callback(new Error('CORS origin not allowed'));
-  },
-  credentials: true
-}));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: false }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev', {

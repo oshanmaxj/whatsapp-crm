@@ -4,15 +4,16 @@ const socketService = require('../services/socket.service');
 const chatService = require('../services/chat.service');
 const conversationAccessService = require('../services/conversationAccess.service');
 const logger = require('../config/logger');
+const { corsOptions } = require('../config/cors');
 
 const activeSockets = new Map();
 
 function initSocket(server) {
   const io = new Server(server, {
     cors: {
-      origin: process.env.FRONTEND_URL || '*',
+      origin: corsOptions.origin,
       methods: ['GET', 'POST'],
-      credentials: true
+      credentials: corsOptions.credentials
     }
   });
 

@@ -1,6 +1,7 @@
 const logger = require('./logger');
 
 const DEFAULT_ALLOWED_ORIGINS = [
+  'https://crm.firstofsolutions.com',
   'http://159.69.83.24:3000',
   'http://159.69.83.24',
   'http://localhost:3000'

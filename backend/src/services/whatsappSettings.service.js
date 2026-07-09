@@ -6,6 +6,16 @@ const NAMESPACE = 'whatsapp';
 const KEY = 'cloud_api';
 const SECRET_FIELDS = ['accessToken', 'appSecret'];
 
+function envValue(name, fallback = '') {
+  const value = process.env[name];
+  if (value == null) return fallback;
+  return String(value).trim();
+}
+
+function clean(value) {
+  return value == null ? '' : String(value).trim();
+}
+
 function encryptionKey() {
   const source = process.env.APP_SETTINGS_ENCRYPTION_KEY || process.env.JWT_REFRESH_SECRET || process.env.JWT_ACCESS_SECRET || '';
   return crypto.createHash('sha256').update(source).digest();
@@ -42,15 +52,15 @@ function maskSecret(value) {
 
 function defaults() {
   return {
-    businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
-    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
-    accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
-    verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || '',
-    appId: process.env.WHATSAPP_APP_ID || '',
-    appSecret: process.env.WHATSAPP_APP_SECRET || '',
-    apiVersion: process.env.WHATSAPP_API_VERSION || 'v17.0',
-    apiBaseUrl: process.env.WHATSAPP_API_BASE_URL || 'https://graph.facebook.com',
-    webhookUrl: process.env.WHATSAPP_WEBHOOK_URL || 'http://localhost:4000/api/webhooks/whatsapp',
+    businessAccountId: envValue('WHATSAPP_BUSINESS_ACCOUNT_ID'),
+    phoneNumberId: envValue('WHATSAPP_PHONE_NUMBER_ID'),
+    accessToken: envValue('WHATSAPP_ACCESS_TOKEN'),
+    verifyToken: envValue('WHATSAPP_VERIFY_TOKEN'),
+    appId: envValue('WHATSAPP_APP_ID'),
+    appSecret: envValue('WHATSAPP_APP_SECRET'),
+    apiVersion: envValue('WHATSAPP_API_VERSION', 'v17.0'),
+    apiBaseUrl: envValue('WHATSAPP_API_BASE_URL', 'https://graph.facebook.com'),
+    webhookUrl: envValue('WHATSAPP_WEBHOOK_URL', 'http://localhost:4000/api/webhooks/whatsapp'),
     status: 'Not Connected',
     lastTestedAt: null,
     webhookVerifiedAt: null,
@@ -171,8 +181,13 @@ class WhatsappSettingsService {
     const resolved = decryptSettings(stored);
     return {
       ...resolved,
-      tokenSource: stored.accessToken ? 'settings' : 'env',
-      phoneNumberIdSource: stored.phoneNumberId ? 'settings' : 'env'
+      accessToken: clean(resolved.accessToken),
+      phoneNumberId: clean(resolved.phoneNumberId),
+      verifyToken: clean(resolved.verifyToken),
+      apiVersion: clean(resolved.apiVersion) || 'v17.0',
+      apiBaseUrl: clean(resolved.apiBaseUrl) || 'https://graph.facebook.com',
+      tokenSource: clean(stored.accessToken) ? 'settings' : 'env',
+      phoneNumberIdSource: clean(stored.phoneNumberId) ? 'settings' : 'env'
     };
   }
 

@@ -118,6 +118,34 @@ function messagePreviewText(message) {
   return message.type || 'Message';
 }
 
+function trimCredential(value) {
+  return value == null ? '' : String(value).trim();
+}
+
+function normalizeConfig(config = {}) {
+  return {
+    ...config,
+    accessToken: trimCredential(config.accessToken),
+    phoneNumberId: trimCredential(config.phoneNumberId),
+    verifyToken: trimCredential(config.verifyToken),
+    apiVersion: trimCredential(config.apiVersion) || 'v17.0',
+    apiBaseUrl: trimCredential(config.apiBaseUrl) || 'https://graph.facebook.com'
+  };
+}
+
+function safeApiError(error) {
+  const metaError = error.response?.data?.error || null;
+  return {
+    message: error.message,
+    status: error.response?.status || null,
+    metaMessage: metaError?.message || null,
+    metaType: metaError?.type || null,
+    metaCode: metaError?.code || null,
+    metaSubcode: metaError?.error_subcode || null,
+    fbtraceId: metaError?.fbtrace_id || null
+  };
+}
+
 const MEDIA_EXTENSIONS = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -147,7 +175,25 @@ class WhatsappService {
       if (whatsappAccountId || options.phoneNumberId) throw error;
     }
     if (accountConfig) {
-      return { ...accountConfig, tokenSource: 'whatsapp_account', phoneNumberIdSource: 'whatsapp_account' };
+      const preferEnvPhoneNumberId = !whatsappAccountId && !options.phoneNumberId && whatsappConfig.phoneNumberId;
+      const config = normalizeConfig({
+        ...accountConfig,
+        accessToken: whatsappConfig.accessToken || accountConfig.accessToken,
+        phoneNumberId: preferEnvPhoneNumberId
+          ? whatsappConfig.phoneNumberId
+          : accountConfig.phoneNumberId || whatsappConfig.phoneNumberId,
+        tokenSource: whatsappConfig.accessToken ? 'env' : 'whatsapp_account',
+        phoneNumberIdSource: preferEnvPhoneNumberId
+          ? 'env'
+          : accountConfig.phoneNumberId ? 'whatsapp_account' : 'env'
+      });
+      logger.info('whatsapp_credentials_resolved', {
+        tokenSource: config.tokenSource,
+        phoneNumberIdSource: config.phoneNumberIdSource,
+        hasToken: Boolean(config.accessToken),
+        phoneNumberId: config.phoneNumberId || null
+      });
+      return config;
     }
     let settings = {};
     try {
@@ -159,21 +205,25 @@ class WhatsappService {
       });
     }
 
-    const config = {
-      accessToken: settings.accessToken || whatsappConfig.accessToken,
-      phoneNumberId: settings.phoneNumberId || whatsappConfig.phoneNumberId,
+    const config = normalizeConfig({
+      accessToken: whatsappConfig.accessToken || settings.accessToken,
+      phoneNumberId: whatsappConfig.phoneNumberId || settings.phoneNumberId,
       verifyToken: settings.verifyToken || whatsappConfig.verifyToken,
       apiVersion: settings.apiVersion || whatsappConfig.apiVersion,
       apiBaseUrl: settings.apiBaseUrl || whatsappConfig.apiBaseUrl,
-      tokenSource: settings.accessToken ? settings.tokenSource || 'settings' : 'env',
-      phoneNumberIdSource: settings.phoneNumberId
+      tokenSource: whatsappConfig.accessToken ? 'env' : (settings.accessToken ? settings.tokenSource || 'settings' : 'env'),
+      phoneNumberIdSource: whatsappConfig.phoneNumberId
+        ? 'env'
+        : settings.phoneNumberId
         ? settings.phoneNumberIdSource || 'settings'
         : 'env'
-    };
+    });
 
     logger.info('whatsapp_credentials_resolved', {
       tokenSource: config.tokenSource,
-      phoneNumberIdSource: config.phoneNumberIdSource
+      phoneNumberIdSource: config.phoneNumberIdSource,
+      hasToken: Boolean(config.accessToken),
+      phoneNumberId: config.phoneNumberId || null
     });
 
     return config;
@@ -184,7 +234,7 @@ class WhatsappService {
   }
 
   async requestClient(resolvedConfig = null) {
-    const config = resolvedConfig || await this.getWhatsAppConfig();
+    const config = normalizeConfig(resolvedConfig || await this.getWhatsAppConfig());
     return {
       config,
       client: axios.create({
@@ -199,13 +249,13 @@ class WhatsappService {
   }
 
   async sendTextMessage({ to, text, recipientType = 'individual', contextMessageId = null, log = true, whatsappAccountId = null }) {
-    const config = await this.getWhatsAppConfig(whatsappAccountId);
+    const config = normalizeConfig(await this.getWhatsAppConfig(whatsappAccountId));
     const payload = {
       messaging_product: 'whatsapp',
-      to,
       recipient_type: recipientType,
+      to,
       type: 'text',
-      text: { body: text }
+      text: { preview_url: false, body: text }
     };
     if (contextMessageId) {
       payload.context = { message_id: contextMessageId };
@@ -214,7 +264,9 @@ class WhatsappService {
     logger.info('whatsapp_outbound_send_attempt', {
       to,
       type: 'text',
-      payload
+      phoneNumberId: config.phoneNumberId,
+      tokenSource: config.tokenSource,
+      phoneNumberIdSource: config.phoneNumberIdSource
     });
 
     let response;
@@ -228,10 +280,10 @@ class WhatsappService {
       const metaError = error.response?.data;
       logger.error('whatsapp_outbound_send_failed', {
         to,
-        message: error.message,
-        stack: error.stack,
-        status: error.response?.status,
-        responseData: metaError
+        phoneNumberId: config.phoneNumberId,
+        tokenSource: config.tokenSource,
+        phoneNumberIdSource: config.phoneNumberIdSource,
+        ...safeApiError(error)
       });
       error.metaError = metaError;
       throw error;

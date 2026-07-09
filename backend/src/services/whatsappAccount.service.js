@@ -34,6 +34,16 @@ function mask(value) {
   return text ? `${text.slice(0, 4)}****${text.slice(-4)}` : '';
 }
 
+function clean(value) {
+  return value == null ? '' : String(value).trim();
+}
+
+function envValue(name, fallback = '') {
+  const value = process.env[name];
+  if (value == null) return fallback;
+  return clean(value);
+}
+
 function serialize(row) {
   const data = row?.toJSON ? row.toJSON() : row;
   if (!data) return null;
@@ -64,20 +74,20 @@ class WhatsAppAccountService {
       return account;
     }
     const legacy = await whatsappSettingsService.getRaw().catch(() => ({}));
-    const phoneNumberId = legacy.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
-    const accessToken = legacy.accessToken || process.env.WHATSAPP_ACCESS_TOKEN;
+    const phoneNumberId = clean(legacy.phoneNumberId) || envValue('WHATSAPP_PHONE_NUMBER_ID');
+    const accessToken = envValue('WHATSAPP_ACCESS_TOKEN') || clean(legacy.accessToken);
     if (!phoneNumberId || !accessToken) return null;
     account = await WhatsAppAccount.create({
       name: legacy.phoneNumber || 'Default WhatsApp Number',
       phoneNumber: legacy.phoneNumber || null,
       phoneNumberId,
-      businessAccountId: legacy.businessAccountId || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || null,
+      businessAccountId: clean(legacy.businessAccountId) || envValue('WHATSAPP_BUSINESS_ACCOUNT_ID') || null,
       accessTokenEncrypted: encrypt(accessToken),
-      webhookVerifyToken: legacy.verifyToken || process.env.WHATSAPP_VERIFY_TOKEN || null,
+      webhookVerifyToken: clean(legacy.verifyToken) || envValue('WHATSAPP_VERIFY_TOKEN') || null,
       appId: legacy.appId || null,
       appSecretEncrypted: legacy.appSecret ? encrypt(legacy.appSecret) : null,
-      apiVersion: legacy.apiVersion || 'v17.0',
-      apiBaseUrl: legacy.apiBaseUrl || 'https://graph.facebook.com',
+      apiVersion: clean(legacy.apiVersion) || envValue('WHATSAPP_API_VERSION', 'v17.0'),
+      apiBaseUrl: clean(legacy.apiBaseUrl) || envValue('WHATSAPP_API_BASE_URL', 'https://graph.facebook.com'),
       status: 'active',
       isDefault: true
     });
@@ -127,14 +137,14 @@ class WhatsAppAccountService {
       whatsappAccountId: row.id,
       name: row.name,
       phoneNumber: row.phoneNumber,
-      phoneNumberId: row.phoneNumberId,
-      businessAccountId: row.businessAccountId,
-      accessToken: decrypt(row.accessTokenEncrypted),
-      verifyToken: row.webhookVerifyToken,
+      phoneNumberId: clean(row.phoneNumberId),
+      businessAccountId: clean(row.businessAccountId),
+      accessToken: envValue('WHATSAPP_ACCESS_TOKEN') || clean(decrypt(row.accessTokenEncrypted)),
+      verifyToken: clean(row.webhookVerifyToken),
       appId: row.appId,
       appSecret: decrypt(row.appSecretEncrypted),
-      apiVersion: row.apiVersion || 'v17.0',
-      apiBaseUrl: row.apiBaseUrl || 'https://graph.facebook.com',
+      apiVersion: clean(row.apiVersion) || envValue('WHATSAPP_API_VERSION', 'v17.0'),
+      apiBaseUrl: clean(row.apiBaseUrl) || envValue('WHATSAPP_API_BASE_URL', 'https://graph.facebook.com'),
       status: row.status,
       isDefault: row.isDefault
     };

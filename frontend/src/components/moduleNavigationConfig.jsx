@@ -41,7 +41,10 @@ export const modules = [
   { id: 'chat', label: 'Inbox / Chat', path: '/chat', icon: <ChatBubbleOutlineIcon />, permission: 'inbox.view', routes: ['/chat', '/inbox'] },
   { id: 'contacts', label: 'Contacts', path: '/contacts', icon: <ContactsIcon />, permission: 'contacts.view', routes: ['/contacts'] },
   { id: 'leads', label: 'Leads', path: '/leads', icon: <TrendingUpIcon />, permission: 'leads.view', routes: ['/leads'] },
+  { id: 'lead-pipeline', label: 'Lead Pipeline', path: '/lead-pipeline', icon: <TrendingUpIcon />, permission: 'lead.view_own', routes: ['/lead-pipeline'] },
+  { id: 'followups', label: 'Follow-ups', path: '/followups', icon: <EventAvailableIcon />, permission: 'followup.view_own', routes: ['/followups'] },
   { id: 'appointments', label: 'Appointments', path: '/appointments', icon: <CalendarMonthIcon />, permission: 'appointments.view', routes: ['/appointments'] },
+  { id: 'commissions', label: 'Commissions', path: '/commissions', icon: <PaymentsIcon />, permission: 'commission.view_own', routes: ['/commissions'] },
   {
     id: 'whatsapp', label: 'WhatsApp', path: '/whatsapp', icon: <WhatsAppIcon />,
     routes: ['/whatsapp', '/whatsapp-dashboard', '/connect-whatsapp', '/whatsapp-accounts', '/whatsapp-templates', '/campaigns', '/compliance', '/auto-replies', '/flow-builder'],

@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
+const logger = require('../config/logger');
 const {
   AttendanceRecord, Batch, Course, FeeInstallment, LmsLesson, LmsLessonMaterial, LmsLiveClassJoin,
   LmsLessonComment, LmsStudentProgress, Student, StudentEnrollment, StudentFee, StudentPortalSession, User
@@ -15,6 +16,18 @@ const portalSecret = process.env.LMS_STUDENT_JWT_SECRET || 'student_portal_secre
 const accessWarning = PAYMENT_BLOCKED_MESSAGE;
 const tokenHash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 const sessionExpiry = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+const otpExpiry = () => new Date(Date.now() + 5 * 60 * 1000);
+
+function portalError(code, message, status = 400) {
+  return Object.assign(new Error(message), { code, status, exposeMessage: true });
+}
+
+function normalizeSriLankanPhone(phone) {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (/^07\d{8}$/.test(digits)) return `94${digits.slice(1)}`;
+  return /^947\d{8}$/.test(digits) ? digits : '';
+}
 
 const lessonInclude = (studentId) => [
   { model: Course, as: 'course', attributes: ['id', 'name', 'code'] },
@@ -124,6 +137,27 @@ class StudentPortalService {
     return student;
   }
 
+  async findStudentForOtp(identifier) {
+    const value = String(identifier || '').trim();
+    const phone = normalizeSriLankanPhone(value);
+    if (!phone && /^\+?\d[\d\s()-]*$/.test(value)) throw portalError('INVALID_PHONE', 'Enter a valid Sri Lankan mobile number.', 422);
+    const candidates = phone
+      ? [phone, `+${phone}`, `0${phone.slice(2)}`]
+      : [];
+    const student = await Student.scope('withPortalPassword').findOne({
+      where: { [Op.or]: [
+        { studentNo: value }, { email: { [Op.iLike]: value } },
+        ...(candidates.length ? [{ phone: { [Op.in]: candidates } }] : [])
+      ] },
+      include: [
+        { model: Course, as: 'course', required: false }, { model: Batch, as: 'batch', required: false },
+        { model: StudentEnrollment, as: 'enrollments', required: false, include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch', required: false }] }
+      ]
+    });
+    if (!student || !['enrolled', 'active'].includes(student.status)) throw portalError('STUDENT_NOT_FOUND', 'Unable to send a code. Check your details or contact the office.', 401);
+    return student;
+  }
+
   feeAccess(fee, installments = []) {
     const access = evaluateFeeAccess(fee, installments);
     return {
@@ -195,7 +229,7 @@ class StudentPortalService {
   }
 
   async login({ identifier, password, method }) {
-    const student = await this.findStudent(identifier);
+    const student = method === 'otp' && !password ? await this.findStudentForOtp(identifier) : await this.findStudent(identifier);
     if (password || method === 'password') {
       if (!password || !await student.verifyPortalPassword(password)) {
         throw Object.assign(new Error('Invalid student login details'), { status: 401 });
@@ -203,38 +237,61 @@ class StudentPortalService {
       return { ...(await this.issueToken(student)), student: publicStudent(student), paymentAccess: await this.paymentAccess(student) };
     }
 
+    const phone = normalizeSriLankanPhone(student.phone);
+    if (!phone) throw portalError('INVALID_PHONE', 'A valid WhatsApp number is not registered for this account.', 422);
+    const now = new Date();
+    const minIntervalSeconds = Math.max(60, Number(process.env.STUDENT_OTP_MIN_INTERVAL_SECONDS || 60));
+    const maxPerHour = Math.max(1, Number(process.env.STUDENT_OTP_MAX_REQUESTS_PER_HOUR || 5));
+    const recent = await StudentPortalSession.findAll({
+      where: { studentId: student.id, createdAt: { [Op.gte]: new Date(now.getTime() - 60 * 60 * 1000) }, otpHash: { [Op.ne]: null } },
+      order: [['created_at', 'DESC']], attributes: ['id', 'createdAt']
+    });
+    if (recent.length >= maxPerHour || (recent[0] && now - new Date(recent[0].createdAt) < minIntervalSeconds * 1000)) {
+      logger.warn('student_otp_send_failed', { studentId: student.id, phone, errorCode: 'OTP_RATE_LIMITED' });
+      throw portalError('OTP_RATE_LIMITED', 'Please wait before requesting another code.', 429);
+    }
+    await StudentPortalSession.update({ revokedAt: now }, { where: { studentId: student.id, otpHash: { [Op.ne]: null }, revokedAt: null, verifiedAt: null } });
+    logger.info('student_otp_requested', { studentId: student.id, phone });
     const otp = String(crypto.randomInt(100000, 1000000));
     const challenge = crypto.randomBytes(24).toString('hex');
     const session = await StudentPortalSession.create({
       studentId: student.id,
       tokenHash: tokenHash(challenge),
       otpHash: await bcrypt.hash(otp, 10),
-      otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      otpExpiresAt: otpExpiry(), expiresAt: otpExpiry()
     });
-    let delivered = false;
+    const templateName = String(process.env.WHATSAPP_OTP_TEMPLATE_NAME || '').trim();
+    const language = String(process.env.WHATSAPP_OTP_TEMPLATE_LANGUAGE || 'en_US').trim();
+    if (!templateName) { await session.update({ revokedAt: new Date() }); throw portalError('OTP_SEND_FAILED', 'WhatsApp OTP is not configured.', 503); }
     try {
-      await whatsappService.sendTextMessage({ to: student.phone, text: `Your student portal OTP is ${otp}. It expires in 10 minutes.`, log: false });
-      delivered = true;
+      const components = [{ type: 'body', parameters: [{ type: 'text', text: otp }] }];
+      if (process.env.WHATSAPP_OTP_COPY_CODE_BUTTON !== 'false') components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: otp }] });
+      logger.info('student_otp_send_attempt', { studentId: student.id, phone, templateName, language });
+      await whatsappService.sendTemplateMessage({ to: phone, templateName, language, components, log: false });
+      logger.info('student_otp_sent', { studentId: student.id, phone, templateName });
     } catch (error) {
-      if (process.env.NODE_ENV === 'production') {
-        await session.destroy();
-        throw Object.assign(new Error('Unable to deliver OTP by WhatsApp. Please use password login or contact office.'), { status: 503 });
-      }
+      const meta = error.response?.data?.error || error.metaError?.error || error.metaError || {};
+      logger.warn('student_otp_send_failed', { studentId: student.id, phone, errorCode: meta.code || 'OTP_SEND_FAILED', errorMessage: meta.message || error.message });
+      await session.update({ revokedAt: new Date() });
+      throw portalError('OTP_SEND_FAILED', 'Unable to deliver the WhatsApp code. Please try again later.', 503);
     }
     return {
       challengeToken: challenge,
       expiresAt: session.otpExpiresAt,
-      delivery: delivered ? 'whatsapp' : 'development',
-      ...(process.env.NODE_ENV !== 'production' ? { developmentOtp: otp } : {})
+      resendAfterSeconds: minIntervalSeconds,
+      delivery: 'whatsapp'
     };
   }
 
   async verifyOtp({ challengeToken, otp }) {
     const session = await StudentPortalSession.findOne({ where: { tokenHash: tokenHash(challengeToken || ''), revokedAt: null } });
-    if (!session || !session.otpHash || new Date(session.otpExpiresAt) <= new Date() || !await bcrypt.compare(String(otp || ''), session.otpHash)) {
-      throw Object.assign(new Error('OTP is invalid or expired'), { status: 401 });
-    }
+    if (!session || !session.otpHash || session.otpUsedAt) throw portalError('OTP_INVALID', 'The code is invalid or has already been used.', 401);
+    if (new Date(session.otpExpiresAt) <= new Date()) { logger.warn('student_otp_verification_failed', { studentId: session.studentId, errorCode: 'OTP_EXPIRED' }); throw portalError('OTP_EXPIRED', 'The code has expired. Request a new one.', 401); }
+    const valid = /^\d{6}$/.test(String(otp || '')) && await bcrypt.compare(String(otp), session.otpHash);
+    if (!valid) { await session.increment('otpAttempts'); logger.warn('student_otp_verification_failed', { studentId: session.studentId, errorCode: 'OTP_INVALID' }); throw portalError('OTP_INVALID', 'The code is incorrect.', 401); }
+    const [claimed] = await StudentPortalSession.update({ otpUsedAt: new Date() }, { where: { id: session.id, otpUsedAt: null, revokedAt: null } });
+    if (claimed !== 1) throw portalError('OTP_INVALID', 'The code is invalid or has already been used.', 401);
+    logger.info('student_otp_verified', { studentId: session.studentId });
     const student = await this.findStudent((await Student.findByPk(session.studentId)).studentNo);
     return { ...(await this.issueToken(student, session)), student: publicStudent(student), paymentAccess: await this.paymentAccess(student) };
   }

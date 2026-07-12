@@ -30,6 +30,13 @@ module.exports = (sequelize, DataTypes) => {
     },
     reminderSentAt: { type: DataTypes.DATE, allowNull: true },
     notes: { type: DataTypes.TEXT, allowNull: true }
+    , recordedByUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
+    , creditedToUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
+    , conversationOwnerUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
+    , recordedAt: { type: DataTypes.DATE, allowNull: true }
+    , attributionSource: { type: DataTypes.STRING(40), allowNull: true }
+    , overrideReason: { type: DataTypes.TEXT, allowNull: true }
+    , overriddenByUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
   }, {
     tableName: 'fee_installments',
     timestamps: true,

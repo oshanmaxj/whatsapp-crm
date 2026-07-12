@@ -39,12 +39,13 @@ class ConversationAccessService {
     return { scope, user };
   }
 
-  async whereForUser(userId) {
+  async whereForUser(userOrId) {
+    const userId = typeof userOrId === 'object' ? userOrId.id : userOrId;
     const [{ scope, user }, accountWhere] = await Promise.all([
       this.getUserScope(userId),
       whatsappAccountAccessService.whereForUser(userId)
     ]);
-    if (scope === 'all') return accountWhere;
+    if (scope === 'all' || (typeof userOrId === 'object' && (userOrId.isSystemAdmin || userOrId.permissions?.includes('conversation.view_assigned_others')))) return accountWhere;
     const roleIds = (user.roles || []).map((role) => role.id).filter(Boolean);
     let conversationWhere;
     if (scope === 'role_only') {
@@ -53,6 +54,7 @@ class ConversationAccessService {
       conversationWhere = {
         [Op.or]: [
           { assignedUserId: user.id },
+          { assignedUserId: null },
           ...(roleIds.length ? [{ assignedRoleId: { [Op.in]: roleIds } }] : [])
         ]
       };
@@ -62,15 +64,15 @@ class ConversationAccessService {
       : conversationWhere;
   }
 
-  async scopedWhere(userId, baseWhere = {}) {
-    const scopeWhere = await this.whereForUser(userId);
+  async scopedWhere(userOrId, baseWhere = {}) {
+    const scopeWhere = await this.whereForUser(userOrId);
     return Object.keys(scopeWhere).length
       ? { [Op.and]: [baseWhere, scopeWhere] }
       : baseWhere;
   }
 
-  async assertConversationAccess(conversationId, userId) {
-    const where = await this.scopedWhere(userId, { id: conversationId });
+  async assertConversationAccess(conversationId, userOrId) {
+    const where = await this.scopedWhere(userOrId, { id: conversationId });
     const accessible = await Conversation.findOne({ where, attributes: ['id'] });
     if (accessible) return accessible;
 

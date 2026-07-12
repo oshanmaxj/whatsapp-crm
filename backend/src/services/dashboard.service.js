@@ -106,6 +106,9 @@ class DashboardService {
       this.getDailyMessageActivity(activityStart)
     ]);
 
+    const todayEnd=addDays(todayStart,1);const monthStart=new Date(todayStart.getFullYear(),todayStart.getMonth(),1);const [followupsDueToday,overdueFollowups,lostLeadsThisMonth,paymentPendingLeads]=await Promise.all([
+      Followup.count({where:{status:'pending',dueDate:{[Op.gte]:todayStart,[Op.lt]:todayEnd}}}),Followup.count({where:{status:'pending',dueDate:{[Op.lt]:new Date()}}}),Lead.count({where:{updatedAt:{[Op.gte]:monthStart}},include:[{model:LeadStatus,as:'status',where:{isLost:true},required:true}]}),Lead.count({include:[{model:LeadStatus,as:'status',where:{code:'payment_pending'},required:true}]})
+    ]);
     return {
       totals: {
         contacts: totalContacts,
@@ -116,6 +119,7 @@ class DashboardService {
         pendingFollowups,
         newLeads,
         convertedLeads,
+        newLeadsToday:await Lead.count({where:{createdAt:{[Op.gte]:todayStart}}}),followupsDueToday,overdueFollowups,lostLeadsThisMonth,paymentPendingLeads,conversionRate:totalLeads?Math.round(convertedLeads/totalLeads*1000)/10:0,
         installmentsDueToday: feeReminderWidgets.dueToday,
         upcomingInstallments: feeReminderWidgets.upcoming,
         overdueInstallments: feeReminderWidgets.overdue,

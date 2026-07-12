@@ -25,6 +25,10 @@ const studentEnrollmentsMigration = require('../../migrations/020_add_student_en
 const courseSchedulerMigration = require('../../migrations/021_add_course_scheduler_and_zoom_recordings');
 const flowRunErrorDetailsMigration = require('../../migrations/022_add_flow_run_error_details');
 const passwordResetTokensMigration = require('../../migrations/023_create_password_reset_tokens');
+const secureStudentPortalOtpMigration = require('../../migrations/024_secure_student_portal_otp');
+const secureConversationOwnershipMigration = require('../../migrations/025_secure_conversation_ownership');
+const commissionManagementMigration = require('../../migrations/026_create_commission_management');
+const leadPipelineMigration = require('../../migrations/027_lead_pipeline_followups');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -145,6 +149,15 @@ async function run() {
 
     await passwordResetTokensMigration.up(queryInterface, Sequelize);
     console.log('Applied: password reset tokens');
+
+    await secureStudentPortalOtpMigration.up(queryInterface, Sequelize);
+    console.log('Applied: secure student portal OTP');
+    await secureConversationOwnershipMigration.up(queryInterface, Sequelize);
+    console.log('Applied: secure conversation ownership and attribution');
+    await commissionManagementMigration.up(queryInterface, Sequelize);
+    console.log('Applied: commission management');
+    await leadPipelineMigration.up(queryInterface, Sequelize);
+    console.log('Applied: lead pipeline and follow-up control');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

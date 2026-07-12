@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Autocomplete, Avatar, Box, Button, Checkbox, Chip, Divider, FormControl, FormControlLabel, IconButton, InputLabel, LinearProgress,
-  MenuItem, Paper, Select, Stack, Tab, Tabs, TextField, Typography
+  Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Paper, Select, Stack, Tab, Tabs, TextField, Typography
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import AssignmentIndOutlinedIcon from '@mui/icons-material/AssignmentIndOutlined';
@@ -15,6 +15,7 @@ import PersonAddAltOutlinedIcon from '@mui/icons-material/PersonAddAltOutlined';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { agentName, contactName, formatDateTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
+import { getAccessPayload } from '../../utils/access';
 
 function DetailRow({ label, value }) {
   return (
@@ -41,6 +42,14 @@ export function ProfileTab({ conversation, agents, roles, labelText, onLabelText
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ firstName: '', lastName: '', tags: '' });
   const [assignment, setAssignment] = useState({ assigned_user_id: '', assigned_role_id: '', notify_assigned_user: true });
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState('');
+  const access = getAccessPayload();
+  const currentUserId = access.id || access.userId;
+  const currentOwnerId = conversation?.assignedUserId || conversation?.assignedTo || null;
+  const canClaim = access.isSystemAdmin || access.permissions?.includes('conversation.claim_unassigned');
+  const canReassign = access.isSystemAdmin || access.permissions?.includes('conversation.reassign');
+  const ownerChanged = String(assignment.assigned_user_id || '') !== String(currentOwnerId || '');
   const selectedAssignee = assignableUsers.find((agent) => String(agent.id) === String(assignment.assigned_user_id)) || null;
 
   useEffect(() => {
@@ -133,6 +142,7 @@ export function ProfileTab({ conversation, agents, roles, labelText, onLabelText
         isOptionEqualToValue={(option, value) => String(option.id) === String(value.id)}
         ListboxProps={{ sx: { maxHeight: 280 } }}
         renderInput={(params) => <TextField {...params} label="Assigned User (Optional)" placeholder="Unassigned" />}
+        disabled={Boolean(currentOwnerId) && !canReassign}
       />
       <FormControl fullWidth size="small">
         <InputLabel>Department</InputLabel>
@@ -145,11 +155,14 @@ export function ProfileTab({ conversation, agents, roles, labelText, onLabelText
         control={<Checkbox checked={assignment.notify_assigned_user} onChange={(event) => setAssignment((current) => ({ ...current, notify_assigned_user: event.target.checked }))} />}
         label="Notify assigned user on WhatsApp"
       />
-      <Button variant="contained" onClick={() => onAssign({
-        assigned_user_id: assignment.assigned_user_id || null,
-        assigned_role_id: assignment.assigned_role_id || null,
-        notify_assigned_user: assignment.notify_assigned_user
-      })}>Save Assignment</Button>
+      {currentOwnerId && !canReassign && <Typography variant="body2" color="text.secondary">Assigned to {agentName(conversation?.assignee)}. Only a manager can reassign this conversation.</Typography>}
+      {!currentOwnerId && canClaim && <Button variant="contained" onClick={() => onAssign({ assigned_user_id: currentUserId, expected_assigned_user_id: null, notify_assigned_user: true })}>Claim conversation</Button>}
+      {canReassign && <Button variant="contained" disabled={!ownerChanged} onClick={() => setConfirming(true)}>Save Assignment</Button>}
+      <Dialog open={confirming} onClose={() => setConfirming(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Confirm conversation reassignment</DialogTitle>
+        <DialogContent><Stack spacing={2} sx={{ pt: 1 }}><Typography>Previous owner: {agentName(conversation?.assignee)}</Typography><Typography>New owner: {agentName(selectedAssignee)}</Typography><TextField required multiline minRows={3} label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} /></Stack></DialogContent>
+        <DialogActions><Button onClick={() => setConfirming(false)}>Cancel</Button><Button variant="contained" disabled={!reason.trim()} onClick={async () => { await onAssign({ assigned_user_id: assignment.assigned_user_id || null, assigned_role_id: assignment.assigned_role_id || null, expected_assigned_user_id: currentOwnerId, reason: reason.trim(), notify_assigned_user: assignment.notify_assigned_user }); setConfirming(false); setReason(''); }}>Confirm reassignment</Button></DialogActions>
+      </Dialog>
         </Stack>
       </Section>
       <Section title="Labels">

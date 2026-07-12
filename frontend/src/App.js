@@ -43,6 +43,8 @@ import {
 import { ModuleLandingPage } from './components/ModuleNavigationView';
 import LmsAdminPage from './pages/LmsAdminPage';
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
+import CommissionPage from './pages/CommissionPage';
+import LeadPipelinePage from './pages/LeadPipelinePage';import FollowupsPage from './pages/FollowupsPage';
 import {
   StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLoginPage, StudentMaterialsPage,
   StudentPaymentsPage, StudentPortalGuard, StudentPortalLayout, StudentProfilePage as StudentPortalProfilePage
@@ -118,6 +120,7 @@ function App() {
             <Route path="/accounting/expenses" element={permit('accounting.view', <AccountingTransactionsPage type="expense" />)} />
             <Route path="/accounting/categories" element={permit('accounting.view', <AccountingCategoriesPage />)} />
             <Route path="/accounting/reports" element={permit('accounting.view', <AccountingReportsPage />)} />
+            <Route path="/commissions" element={permit(['commission.view_own','commission.view_team','commission.view_all'], <CommissionPage />)} />
             <Route path="/fee-reminders" element={permit('fees.view', <FeeRemindersPage />)} />
             <Route path="/class-reminders" element={permit('attendance.view', <ClassRemindersPage />)} />
             <Route path="/automations" element={permit('settings.view', <AutomationCenterPage />)} />
@@ -133,6 +136,8 @@ function App() {
             <Route path="/notifications" element={permit('settings.view', <NotificationsPage />)} />
             <Route path="/reports" element={permit('reports.view', <ReportsPage />)} />
             <Route path="/leads" element={permit('leads.view', <LeadsPage />)} />
+            <Route path="/lead-pipeline" element={permit(['lead.view_own','lead.view_team','lead.view_all'], <LeadPipelinePage />)} />
+            <Route path="/followups" element={permit(['followup.view_own','followup.view_team','followup.view_all'], <FollowupsPage />)} />
             <Route path="/agents" element={permit('agents.view', <AgentsPage />)} />
             <Route path="/chat" element={permit('inbox.view', <ChatPage />)} />
             <Route path="/inbox" element={<Navigate to="/chat" replace />} />

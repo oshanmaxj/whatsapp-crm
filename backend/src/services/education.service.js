@@ -29,6 +29,7 @@ const notificationTemplateService = require('./notificationTemplate.service');
 const logger = require('../config/logger');
 const { canConfirmPayment } = require('../utils/paymentConfirmationAccess');
 const studentMessageAutomationService = require('./studentMessageAutomation.service');
+const auditService = require('./audit.service');
 const { evaluateFeeAccess } = require('./enrollmentAccess.service');
 
 function fullName(contact) {
@@ -724,7 +725,8 @@ class EducationService {
     return { deleted: true, id };
   }
 
-  async convertLeadToStudent(leadId, payload = {}, userId = null) {
+  async convertLeadToStudent(leadId, payload = {}, actor = null) {
+    const userId = actor?.id || null;
     const lead = await Lead.findByPk(leadId, {
       include: [
         { model: Contact, as: 'contact' },
@@ -732,6 +734,14 @@ class EducationService {
       ]
     });
     if (!lead) throw Object.assign(new Error('Lead not found'), { status: 404 });
+    const conversation = await Conversation.findOne({ where: { leadId }, order: [['updated_at', 'DESC']] });
+    const ownerUserId = conversation?.assignedUserId || lead.ownerId || null;
+    const can = (code) => actor?.isSystemAdmin || actor?.permissions?.includes(code);
+    if (!can('student.convert')) throw Object.assign(new Error('Student conversion permission is required.'), { status: 403, code: 'STUDENT_CONVERSION_FORBIDDEN' });
+    const requestedCredit = payload.creditedToUserId ?? payload.credited_to_user_id ?? ownerUserId;
+    const overriding = String(requestedCredit ?? '') !== String(ownerUserId ?? '');
+    if (ownerUserId && String(ownerUserId) !== String(userId) && !can('student.override_conversion_owner')) throw Object.assign(new Error('You cannot convert another agent’s customer.'), { status: 403, code: 'STUDENT_CONVERSION_FORBIDDEN' });
+    if (overriding && (!can('student.override_conversion_owner') || !String(payload.overrideReason || '').trim())) throw Object.assign(new Error('Conversion credit override permission and reason are required.'), { status: 403, code: 'STUDENT_CONVERSION_FORBIDDEN' });
     const existing = await Student.findOne({ where: { leadId } });
     if (existing) return this.studentConversionPayload(await this.getStudent(existing.id));
 
@@ -766,6 +776,10 @@ class EducationService {
       lead.source?.name ? `Lead source: ${lead.source.name}` : null
     ].filter(Boolean).join('\n');
 
+    const owner = ownerUserId ? await User.findByPk(ownerUserId) : null;
+    const actorUser = userId ? await User.findByPk(userId) : null;
+    const credited = requestedCredit ? await User.findByPk(requestedCredit) : null;
+    const attributionNote = conversation ? [`Converted from conversation #${conversation.id}`, `Conversation owner: ${fullName(owner)}`, `Converted by: ${fullName(actorUser)}`, `Conversion credited to: ${fullName(credited)}`, `Converted at: ${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', dateStyle: 'medium', timeStyle: 'medium' }).format(new Date())}`].join('\n') : null;
     const student = await this.createStudent({
       contactId: lead.contactId,
       leadId: lead.id,
@@ -778,8 +792,11 @@ class EducationService {
       dateOfBirth: payload.dateOfBirth || payload.date_of_birth || null,
       status: payload.status || 'enrolled',
       studentPortalPassword: payload.studentPortalPassword ?? payload.portalPassword ?? null,
-      notes: leadNotes || 'Converted from lead'
+      notes: [leadNotes || 'Converted from lead', attributionNote].filter(Boolean).join('\n')
     }, userId);
+    const studentRow = await Student.findByPk(student.id);
+    await studentRow.update({ convertedByUserId: userId, creditedToUserId: requestedCredit || null, convertedAt: new Date(), conversionOverrideReason: overriding ? String(payload.overrideReason).trim() : null, conversionOverriddenByUserId: overriding ? userId : null });
+    await auditService.record({ userId, action: overriding ? 'STUDENT_CONVERSION_CREDIT_OVERRIDDEN' : 'STUDENT_CONVERTED', entityType: 'student', entityId: student.id, method: 'POST', path: `/api/education/leads/${leadId}/convert-to-student`, changes: { conversationId: conversation?.id || null, contactId: lead.contactId, convertedByUserId: userId, creditedToUserId: requestedCredit || null, previousCreditedToUserId: ownerUserId, reason: overriding ? payload.overrideReason : null } });
 
     const converted = await LeadStatus.findOne({ where: { name: 'Converted' } });
     if (converted) await lead.update({ statusId: converted.id, stage: 'converted' });
@@ -947,7 +964,7 @@ class EducationService {
       transactionReference: payload.transactionReference || payload.transaction_reference || null,
       paidDate: payload.paidDate || payload.paid_date || todayDate(),
       notes: payload.paymentNotes || payload.payment_notes || payload.notes || null
-    }, user?.id || null);
+    }, user);
 
     if (canConfirmPayment(user)) {
       const confirmation = await this.confirmInstallmentPayment(installment.id, user?.id || null);
@@ -1003,7 +1020,10 @@ class EducationService {
     return { deleted: true, id };
   }
 
-  async payInstallment(id, payload = {}, userId = null) {
+  async payInstallment(id, payload = {}, actor = null) {
+    const userId = actor?.id || (typeof actor === 'number' ? actor : null);
+    const can = (code) => actor?.isSystemAdmin || actor?.permissions?.includes(code);
+    if (actor && typeof actor === 'object' && !can('payment.record')) throw Object.assign(new Error('Payment recording permission is required.'), { status: 403 });
     const row = await FeeInstallment.findByPk(id, { include: [{ model: StudentFee, as: 'fee' }] });
     if (!row) throw Object.assign(new Error('Installment not found'), { status: 404 });
     if (row.status === 'cancelled') throw Object.assign(new Error('Cannot pay a cancelled installment.'), { status: 400 });
@@ -1014,6 +1034,12 @@ class EducationService {
     const paying = roundMoney(payload.amount === undefined || payload.amount === null ? remaining : payload.amount);
     if (paying <= 0) throw Object.assign(new Error('Payment amount must be greater than 0.'), { status: 400 });
     if (paying > remaining) throw Object.assign(new Error('Payment exceeds installment remaining amount.'), { status: 400 });
+    const student = await Student.findByPk(row.fee.studentId);
+    const conversation = student ? await Conversation.findOne({ where: { contactId: student.contactId }, order: [['updated_at', 'DESC']] }) : null;
+    const ownerUserId = conversation?.assignedUserId || null;
+    const requestedCredit = payload.creditedToUserId ?? payload.credited_to_user_id ?? ownerUserId;
+    const overriding = String(requestedCredit ?? '') !== String(ownerUserId ?? '');
+    if (overriding && (!can('payment.override_credit_owner') || !String(payload.overrideReason || '').trim())) throw Object.assign(new Error('Payment credit override permission and reason are required.'), { status: 403, code: 'PAYMENT_CREDIT_OVERRIDE_FORBIDDEN' });
     await row.update({
       pendingPaymentAmount: paying,
       status: 'pending_confirmation',
@@ -1028,7 +1054,11 @@ class EducationService {
       rejectedBy: null,
       rejectedAt: null,
       rejectionReason: null
+      , recordedByUserId: userId, creditedToUserId: requestedCredit || null, conversationOwnerUserId: ownerUserId
+      , recordedAt: new Date(), attributionSource: overriding ? 'manual_override' : ownerUserId ? 'conversation_owner' : 'system'
+      , overrideReason: overriding ? String(payload.overrideReason).trim() : null, overriddenByUserId: overriding ? userId : null
     });
+    await auditService.record({ userId, action: overriding ? 'PAYMENT_CREDIT_OVERRIDDEN' : 'PAYMENT_RECORDED', entityType: 'fee_installment', entityId: row.id, method: 'POST', path: `/api/education/fees/installments/${row.id}/pay`, changes: { studentId: row.fee.studentId, conversationId: conversation?.id || null, recordedByUserId: userId, conversationOwnerUserId: ownerUserId, creditedToUserId: requestedCredit || null, reason: overriding ? payload.overrideReason : null } });
     const fee = await this.getFee(row.studentFeeId);
     return { fee, payment: fee.installments.find((item) => String(item.id) === String(id)), recordedBy: userId, waitingForConfirmation: true };
   }
@@ -1170,6 +1200,12 @@ class EducationService {
           logger.warn('payment_success_notification_failed', { installmentId: id, error: error.message });
           return { status: 'failed', warning: error.message };
         });
+    if (!alreadyConfirmed) {
+      const commissionService = require('./commission.service');
+      await commissionService.generateForInstallment(id).catch((error) => {
+        logger.warn('commission_generation_failed', { installmentId: id, code: error.code, error: error.message });
+      });
+    }
     return {
       fee: await this.getFee(studentFeeId),
       accountingTransactionId: transactionId,
@@ -1254,6 +1290,7 @@ class EducationService {
       const balance = roundMoney(Math.max(amount(fee.totalAmount) - paidAmount, 0));
       await fee.update({ paidAmount, balance, status: feeStatus(fee.totalAmount, paidAmount, fee.paymentType) }, { transaction });
     });
+    await require('./commission.service').reverseForInstallment(id, cleanText(payload.reason) || 'Payment reversed').catch((error) => logger.warn('commission_reversal_failed', { installmentId: id, error: error.message }));
     return {
       fee: await this.getFee(studentFeeId),
       reversalAccountingTransactionId: reversalTransactionId,

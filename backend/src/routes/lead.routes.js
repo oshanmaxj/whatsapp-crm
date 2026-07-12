@@ -5,9 +5,13 @@ const { validateBody } = require('../middleware/validate.middleware');
 const { createLeadSchema, updateLeadSchema, assignLeadSchema, autoAssignSchema } = require('../validators/lead.validator');
 
 const router = express.Router();
+const pipelineController = require('../controllers/pipeline.controller');
 
 router.use(authMiddleware.authenticate);
 
+router.get('/pipeline', pipelineController.board);
+router.patch('/:id/stage', pipelineController.changeStage);
+router.get('/:id/history', pipelineController.history);
 router.get('/', leadController.list.bind(leadController));
 router.get('/:id', leadController.get.bind(leadController));
 router.post('/', validateBody(createLeadSchema), leadController.create.bind(leadController));

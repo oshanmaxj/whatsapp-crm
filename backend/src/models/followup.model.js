@@ -13,6 +13,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: true
     },
+    conversationId:{type:DataTypes.BIGINT.UNSIGNED,allowNull:true},createdByUserId:{type:DataTypes.BIGINT.UNSIGNED,allowNull:true},followupType:{type:DataTypes.STRING(30),allowNull:false,defaultValue:'general'},outcome:{type:DataTypes.TEXT,allowNull:true},completedByUserId:{type:DataTypes.BIGINT.UNSIGNED,allowNull:true},rescheduledFromId:{type:DataTypes.BIGINT.UNSIGNED,allowNull:true},
     assignedTo: {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: true
@@ -26,12 +27,12 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     status: {
-      type: DataTypes.ENUM('pending', 'completed', 'overdue', 'cancelled'),
+      type: DataTypes.STRING(30),
       allowNull: false,
       defaultValue: 'pending'
     },
     priority: {
-      type: DataTypes.ENUM('low', 'medium', 'high', 'urgent'),
+      type: DataTypes.STRING(30),
       allowNull: false,
       defaultValue: 'medium'
     },

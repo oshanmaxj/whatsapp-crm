@@ -1,0 +1,1 @@
+const r=require('express').Router(),a=require('../middleware/auth.middleware'),c=require('../controllers/followup.controller');r.use(a.authenticate);r.get('/',c.list);r.post('/',c.create);r.patch('/:id/complete',c.complete);r.patch('/:id/reschedule',c.reschedule);r.patch('/:id/cancel',c.cancel);module.exports=r;

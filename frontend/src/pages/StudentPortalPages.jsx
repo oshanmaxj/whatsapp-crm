@@ -33,6 +33,12 @@ export function StudentLoginPage() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [resendSeconds, setResendSeconds] = useState(0);
+  useEffect(() => {
+    if (resendSeconds <= 0) return undefined;
+    const timer = setInterval(() => setResendSeconds((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [resendSeconds]);
   if (localStorage.getItem('studentPortalToken')) return <Navigate to="/student/dashboard" replace />;
 
   const submit = async () => {
@@ -42,9 +48,11 @@ export function StudentLoginPage() {
       const data = response.data.data;
       if (data.token) { saveSession(data); navigate('/student/dashboard'); return; }
       setChallenge(data.challengeToken);
-      setNotice(data.delivery === 'whatsapp' ? 'OTP sent to your WhatsApp number.' : `Development OTP: ${data.developmentOtp}`);
+      setResendSeconds(Number(data.resendAfterSeconds || 60));
+      setNotice('If the account details are valid, a WhatsApp code has been sent.');
     } catch (requestError) {
-      setError(requestError.response?.data?.message || 'Unable to sign in.');
+      const code = requestError.response?.data?.code;
+      setError(code === 'OTP_RATE_LIMITED' ? 'Please wait before requesting another code.' : 'Unable to send a code. Check your details or try again later.');
     } finally { setBusy(false); }
   };
   const verify = async () => {
@@ -70,6 +78,7 @@ export function StudentLoginPage() {
         </> : <>
           <TextField label="6-digit OTP" value={form.otp} onChange={(e) => setForm({ ...form, otp: e.target.value.replace(/\D/g, '').slice(0, 6) })} inputProps={{ inputMode: 'numeric' }} autoFocus />
           <Button variant="contained" size="large" onClick={verify} disabled={busy || form.otp.length !== 6}>Verify OTP</Button>
+          <Button onClick={submit} disabled={busy || resendSeconds > 0}>{resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : 'Resend WhatsApp code'}</Button>
           <Button onClick={() => setChallenge(null)}>Start again</Button>
         </>}
       </Stack>

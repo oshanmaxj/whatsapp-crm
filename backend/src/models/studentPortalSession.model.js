@@ -4,6 +4,8 @@ module.exports = (sequelize, DataTypes) => sequelize.define('StudentPortalSessio
   tokenHash: { type: DataTypes.STRING(64), allowNull: false, unique: true },
   otpHash: { type: DataTypes.STRING(255), allowNull: true },
   otpExpiresAt: { type: DataTypes.DATE, allowNull: true },
+  otpUsedAt: { type: DataTypes.DATE, allowNull: true },
+  otpAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   verifiedAt: { type: DataTypes.DATE, allowNull: true },
   expiresAt: { type: DataTypes.DATE, allowNull: false },
   revokedAt: { type: DataTypes.DATE, allowNull: true }

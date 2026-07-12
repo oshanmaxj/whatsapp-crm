@@ -12,6 +12,7 @@ const { sequelize } = require('./models');
 const messageQueueService = require('./services/messageQueue.service');
 const automationService = require('./services/automation.service');
 const flowService = require('./services/flow.service');
+const pipelineService = require('./services/pipeline.service');
 const { isMissingTableError } = require('./utils/databaseError');
 
 const PORT = process.env.PORT || 4000;
@@ -49,6 +50,7 @@ const startServer = async () => {
     });
     messageQueueService.start();
     flowService.start();
+    pipelineService.start();
   } catch (error) {
     logger.error('server_start_failed', error);
     process.exit(1);

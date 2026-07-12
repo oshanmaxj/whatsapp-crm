@@ -16,6 +16,11 @@ module.exports = (sequelize, DataTypes) => {
     enrolledAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
     notes: { type: DataTypes.TEXT, allowNull: true },
     portalPasswordHash: { type: DataTypes.STRING(255), allowNull: true }
+    , convertedByUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
+    , creditedToUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
+    , convertedAt: { type: DataTypes.DATE, allowNull: true }
+    , conversionOverrideReason: { type: DataTypes.TEXT, allowNull: true }
+    , conversionOverriddenByUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
   }, {
     tableName: 'students',
     defaultScope: { attributes: { exclude: ['portalPasswordHash'] } },

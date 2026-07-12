@@ -13,7 +13,9 @@ const LeadStatus = require('./leadStatus.model');
 const LeadSource = require('./leadSource.model');
 const Lead = require('./lead.model');
 const LeadAssignment = require('./leadAssignment.model');
+const LostReason = require('./lostReason.model'); const LeadActivity = require('./leadActivity.model');
 const Conversation = require('./conversation.model');
+const ConversationAssignmentHistory = require('./conversationAssignmentHistory.model');
 const Followup = require('./followup.model');
 const AutoReply = require('./autoReply.model');
 const Media = require('./media.model');
@@ -78,6 +80,7 @@ const CourseSchedule = require('./courseSchedule.model');
 const ScheduledLesson = require('./scheduledLesson.model');
 const ZoomRecordingImport = require('./zoomRecordingImport.model');
 const LessonAutoPublishLog = require('./lessonAutoPublishLog.model');
+const CommissionRule = require('./commissionRule.model'); const CommissionTier = require('./commissionTier.model'); const AgentCommission = require('./agentCommission.model'); const CommissionAdjustment = require('./commissionAdjustment.model'); const CommissionPayoutBatch = require('./commissionPayoutBatch.model'); const CommissionPayoutItem = require('./commissionPayoutItem.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -92,7 +95,9 @@ const models = {
   LeadSource: LeadSource(sequelize, Sequelize.DataTypes),
   Lead: Lead(sequelize, Sequelize.DataTypes),
   LeadAssignment: LeadAssignment(sequelize, Sequelize.DataTypes),
+  LostReason: LostReason(sequelize, Sequelize.DataTypes), LeadActivity: LeadActivity(sequelize, Sequelize.DataTypes),
   Conversation: Conversation(sequelize, Sequelize.DataTypes),
+  ConversationAssignmentHistory: ConversationAssignmentHistory(sequelize, Sequelize.DataTypes),
   Followup: Followup(sequelize, Sequelize.DataTypes),
   AutoReply: AutoReply(sequelize, Sequelize.DataTypes),
   Media: Media(sequelize, Sequelize.DataTypes),
@@ -156,7 +161,8 @@ const models = {
   CourseSchedule: CourseSchedule(sequelize, Sequelize.DataTypes),
   ScheduledLesson: ScheduledLesson(sequelize, Sequelize.DataTypes),
   ZoomRecordingImport: ZoomRecordingImport(sequelize, Sequelize.DataTypes),
-  LessonAutoPublishLog: LessonAutoPublishLog(sequelize, Sequelize.DataTypes)
+  LessonAutoPublishLog: LessonAutoPublishLog(sequelize, Sequelize.DataTypes),
+  CommissionRule: CommissionRule(sequelize, Sequelize.DataTypes), CommissionTier: CommissionTier(sequelize, Sequelize.DataTypes), AgentCommission: AgentCommission(sequelize, Sequelize.DataTypes), CommissionAdjustment: CommissionAdjustment(sequelize, Sequelize.DataTypes), CommissionPayoutBatch: CommissionPayoutBatch(sequelize, Sequelize.DataTypes), CommissionPayoutItem: CommissionPayoutItem(sequelize, Sequelize.DataTypes)
 };
 
 models.User.belongsToMany(models.Role, {
@@ -203,6 +209,7 @@ models.LeadStatus.hasMany(models.Lead, { foreignKey: 'status_id', as: 'leads' })
 models.LeadSource.hasMany(models.Lead, { foreignKey: 'source_id', as: 'leads' });
 
 models.Lead.hasMany(models.LeadAssignment, { foreignKey: 'lead_id', as: 'assignments' });
+models.Lead.hasMany(models.LeadActivity,{foreignKey:'lead_id',as:'activities'});models.LeadActivity.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.LeadActivity.belongsTo(models.User,{foreignKey:'actor_user_id',as:'actor'});models.Lead.belongsTo(models.LostReason,{foreignKey:'lost_reason_id',as:'lostReason'});
 models.User.hasMany(models.LeadAssignment, { foreignKey: 'assigned_to', as: 'leadAssignments' });
 
 models.Contact.hasMany(models.Conversation, { foreignKey: 'contact_id', as: 'conversations' });
@@ -215,6 +222,14 @@ models.Message.hasMany(models.Message, { foreignKey: 'reply_to_message_id', as: 
 models.Message.belongsTo(models.User, { foreignKey: 'sentByUserId', as: 'sentBy' });
 models.User.hasMany(models.Message, { foreignKey: 'sentByUserId', as: 'sentMessages' });
 models.User.hasMany(models.Conversation, { foreignKey: 'assigned_user_id', as: 'assignedConversations' });
+models.CommissionRule.hasMany(models.CommissionTier,{foreignKey:'commission_rule_id',as:'tiers'}); models.CommissionTier.belongsTo(models.CommissionRule,{foreignKey:'commission_rule_id',as:'rule'});
+models.AgentCommission.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'}); models.AgentCommission.belongsTo(models.Student,{foreignKey:'student_id',as:'student'}); models.AgentCommission.belongsTo(models.Course,{foreignKey:'course_id',as:'course'}); models.AgentCommission.belongsTo(models.CommissionRule,{foreignKey:'commission_rule_id',as:'rule'});
+models.CommissionPayoutBatch.hasMany(models.CommissionPayoutItem,{foreignKey:'payout_batch_id',as:'items'}); models.CommissionPayoutItem.belongsTo(models.CommissionPayoutBatch,{foreignKey:'payout_batch_id',as:'batch'});
+models.Conversation.hasMany(models.ConversationAssignmentHistory, { foreignKey: 'conversation_id', as: 'assignmentHistory' });
+models.ConversationAssignmentHistory.belongsTo(models.Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
+models.ConversationAssignmentHistory.belongsTo(models.User, { foreignKey: 'previous_user_id', as: 'previousUser' });
+models.ConversationAssignmentHistory.belongsTo(models.User, { foreignKey: 'new_user_id', as: 'newUser' });
+models.ConversationAssignmentHistory.belongsTo(models.User, { foreignKey: 'changed_by_user_id', as: 'changedBy' });
 models.Role.hasMany(models.Conversation, { foreignKey: 'assigned_role_id', as: 'assignedConversations' });
 
 models.Conversation.belongsToMany(models.Label, {

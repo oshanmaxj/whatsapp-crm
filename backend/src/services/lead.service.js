@@ -1,5 +1,5 @@
 const { Op, fn, col } = require('sequelize');
-const { sequelize, Contact, Lead, LeadAssignment, LeadStatus, LeadSource, User } = require('../models');
+const { sequelize, Contact, Lead, LeadAssignment, LeadStatus, LeadSource, User, LeadActivity } = require('../models');
 const assignmentService = require('./assignment.service');
 
 const DEFAULT_STATUSES = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
@@ -171,11 +171,12 @@ class LeadService {
     return where;
   }
 
-  async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested, whatsappAccountId } = {}) {
+  async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested, whatsappAccountId } = {}, actor = null) {
     await this.ensureDefaultLookups();
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId });
+    if(actor&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))where[Op.or]=[{ownerId:actor.id},{ownerId:null}];
     const include = this.buildLeadIncludes({ search, status, source });
 
     const { count, rows } = await Lead.findAndCountAll({
@@ -238,7 +239,7 @@ class LeadService {
     return includes;
   }
 
-  async getLeadById(id) {
+  async getLeadById(id, actor = null) {
     const lead = await Lead.findByPk(id, {
       include: this.buildLeadIncludes({ includeHistory: true }),
       order: [[{ model: LeadAssignment, as: 'assignments' }, 'assigned_at', 'DESC']]
@@ -248,10 +249,12 @@ class LeadService {
       error.status = 404;
       throw error;
     }
+    if(actor&&lead.assignedAgent?.id&&String(lead.assignedAgent.id)!==String(actor.id)&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))throw Object.assign(new Error('You do not have access to this lead'),{status:403,code:'LEAD_ACCESS_FORBIDDEN'});
     return serializeLead(lead);
   }
 
-  async createManualLead(payload) {
+  async createManualLead(payload, actor = null) {
+    if(actor&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.assign'))payload={...payload,assignedAgentId:actor.id};
     await this.ensureDefaultLookups();
     const contact = await this.findOrCreateContact(payload);
     const lead = await this.createLead(contact.id, {
@@ -259,6 +262,7 @@ class LeadService {
       ownerId: payload.assignedAgentId || null,
       followUpDate: payload.followUpDate
     });
+    await LeadActivity.create({leadId:lead.id,actorUserId:actor?.id||null,action:'LEAD_CREATED',newValue:{statusId:lead.statusId,ownerId:lead.ownerId},note:lead.notes});
 
     if (payload.assignedAgentId) {
       await assignmentService.assignLead(lead.id, null, {
@@ -270,13 +274,15 @@ class LeadService {
     return this.getLeadById(lead.id);
   }
 
-  async updateLead(id, payload) {
+  async updateLead(id, payload, actor = null) {
     const lead = await Lead.findByPk(id, { include: [{ model: Contact, as: 'contact' }] });
     if (!lead) {
       const error = new Error('Lead not found');
       error.status = 404;
       throw error;
     }
+    if(actor&&lead.ownerId&&String(lead.ownerId)!==String(actor.id)&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.update_all'))throw Object.assign(new Error('You cannot update another agent’s lead'),{status:403,code:'LEAD_OWNED_BY_ANOTHER_AGENT'});
+    if(actor&&payload.assignedAgentId!==undefined&&String(payload.assignedAgentId||'')!==String(lead.ownerId||'')&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.reassign'))throw Object.assign(new Error('Lead reassignment permission required'),{status:403,code:'LEAD_REASSIGN_FORBIDDEN'});
 
     if (payload.phone || payload.email || payload.name || payload.firstName || payload.lastName) {
       const nameParts = payload.name ? splitName(payload.name) : {};
@@ -311,6 +317,7 @@ class LeadService {
     if (payload.assignedAgentId !== undefined) updates.ownerId = payload.assignedAgentId;
 
     await lead.update(updates);
+    if(payload.notes!==undefined)await LeadActivity.create({leadId:id,actorUserId:actor?.id||null,action:'NOTE_ADDED',newValue:{note:payload.notes},note:String(payload.notes||'').trim().slice(0,4000)});
 
     if (payload.assignedAgentId) {
       await assignmentService.assignLead(id, null, {
@@ -333,18 +340,20 @@ class LeadService {
     return { deleted: true, id };
   }
 
-  async assignLead(id, { assignedAgentId, assignedById = null, note }) {
+  async assignLead(id, { assignedAgentId, assignedById = null, note }, actor = null) {
     const lead = await Lead.findByPk(id);
     if (!lead) {
       const error = new Error('Lead not found');
       error.status = 404;
       throw error;
     }
+    const changing=String(lead.ownerId||'')!==String(assignedAgentId||'');if(actor&&changing&&!actor.isSystemAdmin&&!actor.permissions?.includes(lead.ownerId?'lead.reassign':'lead.assign'))throw Object.assign(new Error('Lead assignment permission required'),{status:403,code:'LEAD_REASSIGN_FORBIDDEN'});
 
     await assignmentService.assignLead(id, assignedById, {
       assignedTo: assignedAgentId,
       note
     });
+    if(changing)await LeadActivity.create({leadId:id,actorUserId:actor?.id||assignedById,action:lead.ownerId?'LEAD_REASSIGNED':'LEAD_ASSIGNED',oldValue:{ownerId:lead.ownerId},newValue:{ownerId:assignedAgentId},note:String(note||'').slice(0,4000)});
     return this.getLeadById(id);
   }
 

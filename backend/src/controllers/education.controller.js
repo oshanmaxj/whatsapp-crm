@@ -34,7 +34,7 @@ class EducationController {
   async convertLead(req, res, next) {
     try {
       const payload = { ...req.body, enrollments: req.body.enrollments };
-      return ok(res, await educationService.convertLeadToStudent(req.params.id, payload, req.user?.id || null), 201);
+      return ok(res, await educationService.convertLeadToStudent(req.params.id, payload, req.user), 201);
     } catch (err) { next(err); }
   }
 
@@ -43,7 +43,7 @@ class EducationController {
   async createFee(req, res, next) { try { return ok(res, await educationService.createFee(req.body, req.user), 201); } catch (err) { next(err); } }
   async updateFee(req, res, next) { try { return ok(res, await educationService.updateFee(req.params.id, req.body)); } catch (err) { next(err); } }
   async deleteFee(req, res, next) { try { return ok(res, await educationService.deleteFee(req.params.id)); } catch (err) { next(err); } }
-  async payInstallment(req, res, next) { try { return ok(res, await educationService.payInstallment(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }
+  async payInstallment(req, res, next) { try { return ok(res, await educationService.payInstallment(req.params.id, req.body, req.user)); } catch (err) { next(err); } }
   async confirmInstallment(req, res, next) { try { return ok(res, await educationService.confirmInstallmentPayment(req.params.id, req.user?.id || null)); } catch (err) { next(err); } }
   async rejectInstallment(req, res, next) { try { return ok(res, await educationService.rejectInstallmentPayment(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }
   async reverseInstallment(req, res, next) { try { return ok(res, await educationService.reverseInstallmentPayment(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }

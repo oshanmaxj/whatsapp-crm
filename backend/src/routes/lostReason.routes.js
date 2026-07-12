@@ -1,0 +1,1 @@
+const r=require('express').Router(),a=require('../middleware/auth.middleware'),c=require('../controllers/pipeline.controller');r.use(a.authenticate);r.get('/',c.reasons);r.post('/',c.createReason);r.patch('/:id',c.updateReason);module.exports=r;

@@ -1,0 +1,1 @@
+const r=require('express').Router(),a=require('../middleware/auth.middleware'),c=require('../controllers/pipeline.controller');r.use(a.authenticate);r.get('/stages',c.stages);r.post('/stages',c.createStage);r.patch('/stages/:id',c.updateStage);module.exports=r;

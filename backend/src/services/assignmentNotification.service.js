@@ -7,7 +7,10 @@ const notificationTemplateService = require('./notificationTemplate.service');
 
 function normalizeWhatsAppNumber(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
-  return digits.startsWith('00') ? digits.slice(2) : digits;
+  const normalized = digits.startsWith('00') ? digits.slice(2) : digits;
+  if (/^0?7\d{8}$/.test(normalized)) return `94${normalized.replace(/^0/, '')}`;
+  if (/^947\d{8}$/.test(normalized)) return normalized;
+  return '';
 }
 
 function targetPhone(user) {
@@ -37,7 +40,7 @@ class AssignmentNotificationService {
       path: `/api/conversations/${conversation.id}/assign`,
       changes: {
         recipientUserId: recipient?.id || null,
-        to: recipient?.phone || null,
+        to: normalizeWhatsAppNumber(targetPhone(recipient)) || null,
         reason,
         error: error ? String(error.message || error) : null
       }
@@ -77,49 +80,46 @@ class AssignmentNotificationService {
       }
       const to = normalizeWhatsAppNumber(targetPhone(user));
       if (!to) {
-        await this.record({ assignedBy, conversation, recipient: user, status: 'skipped', reason: 'no_phone' });
+        logger.warn('assignment_whatsapp_notification_failed', {
+          conversationId: conversation.id, assignedUserId: user.id,
+          agentPhone: targetPhone(user) || null, normalizedTargetPhone: null,
+          errorCode: 'AGENT_PHONE_MISSING', errorMessage: 'Assigned user has no valid Sri Lankan phone number'
+        });
+        await this.record({ assignedBy, conversation, recipient: user, status: 'skipped', reason: 'AGENT_PHONE_MISSING' });
         continue;
       }
 
       const contact = conversation.contact || {};
-      const fallbackText = [
-        'New chat assigned to you.',
-        '',
-        `Customer: ${displayName(contact, 'Unknown')}`,
-        `Phone: ${contact.phone || contact.whatsappId || 'Not available'}`,
-        `Department: ${department?.name || 'Not assigned'}`,
-        `Assigned by: ${displayName(assignedBy, 'System')}`,
-        '',
-        'Please check CRM.'
-      ].join('\n');
-      const text = await notificationTemplateService.renderTemplate('assignment_notification', {
+      const fallbackText = `Hi ${displayName(user, 'Agent')}, a new customer conversation has been assigned to you. Please check the CRM.`;
+      const configuredText = await notificationTemplateService.renderTemplate('assignment_notification', {
         student: {
           name: displayName(contact, 'Customer'),
           phone: contact.phone || contact.whatsappId || ''
         },
         batch: { name: department?.name || '' },
         agent: { name: displayName(user, 'Agent') }
-      }).catch(() => fallbackText);
+      }).catch(() => null);
+      const text = configuredText || fallbackText;
 
       try {
-        logger.info('assignment_notification_attempt', {
+        logger.info('assignment_whatsapp_notification_attempt', {
           assignedUserId: user.id,
           conversationId: conversation.id,
-          targetPhone: to
+          agentPhone: targetPhone(user), normalizedTargetPhone: to
         });
-        const response = await whatsappService.sendTextMessage({ to, text, log: false });
+        const response = await whatsappService.sendTextMessage({ to, text, log: false, whatsappAccountId: conversation.whatsappAccountId || null });
         sent += 1;
-        logger.info('assignment_notification_sent', {
+        logger.info('assignment_whatsapp_notification_sent', {
           assignedUserId: user.id,
           conversationId: conversation.id,
-          targetPhone: to,
+          agentPhone: targetPhone(user), normalizedTargetPhone: to,
           whatsappMessageId: response?.id || response?.messages?.[0]?.id || null
         });
         await outboundHistoryService.record({
           conversationId: conversation.id,
           contactId: conversation.contactId,
           leadId: conversation.leadId,
-          phone: conversation.contact?.phone || conversation.contact?.whatsappId,
+          phone: to,
           sentByUserId: assignedBy?.id || null,
           whatsappMessageId: response?.id || response?.messages?.[0]?.id || null,
           type: 'text',
@@ -141,10 +141,10 @@ class AssignmentNotificationService {
         await this.record({ assignedBy, conversation, recipient: user, status: 'sent', reason });
       } catch (error) {
         const metaError = error.response?.data?.error || error.metaError?.error || error.metaError || null;
-        logger.warn('assignment_notification_failed', {
+        logger.warn('assignment_whatsapp_notification_failed', {
           assignedUserId: user.id,
           conversationId: conversation.id,
-          targetPhone: to,
+          agentPhone: targetPhone(user), normalizedTargetPhone: to,
           errorCode: metaError?.code == null ? null : String(metaError.code),
           errorMessage: metaError?.message || error.message
         });

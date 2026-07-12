@@ -34,6 +34,13 @@ const EXTRA_PERMISSION_ACTIONS = {
   Fees: ['Confirm Payment'],
   Accounting: ['Confirm Income']
 };
+const OWNERSHIP_PERMISSIONS = [
+  'conversation.claim_unassigned', 'conversation.view_assigned_others', 'conversation.reassign',
+  'conversation.unassign', 'conversation.override_owner', 'payment.record',
+  'payment.override_credit_owner', 'student.convert', 'student.override_conversion_owner'
+];
+const COMMISSION_PERMISSIONS = ['commission.view_own','commission.view_team','commission.view_all','commission.manage_rules','commission.approve','commission.create_payout','commission.approve_payout','commission.mark_paid','commission.override','commission.export','commission.reverse'];
+const PIPELINE_PERMISSIONS=['lead.view_own','lead.view_team','lead.view_all','lead.update_own','lead.update_all','lead.assign','lead.reassign','followup.create','followup.complete','followup.view_own','followup.view_team','followup.view_all','pipeline.manage','lost_reason.manage'];
 
 function permissionCode(group, action) {
   return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase().replace(/\s+/g, '_')}`;
@@ -189,6 +196,12 @@ class UserService {
         permissions.push(permission);
       }
     }
+    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS]) {
+      let permission = await Permission.findOne({ where: { code }, paranoid: false });
+      if (permission?.deletedAt) await permission.restore();
+      if (!permission) [permission] = await Permission.findOrCreate({ where: { code }, defaults: { name: code, description: `Secure ownership permission: ${code}` } });
+      permissions.push(permission);
+    }
 
     for (const permission of permissions) {
       await RolePermission.findOrCreate({
@@ -212,6 +225,14 @@ class UserService {
         });
       }
     }
+    for (const roleName of ['Manager']) {
+      for (const permission of permissions.filter((item) => OWNERSHIP_PERMISSIONS.includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles[roleName].id, permissionId: permission.id }, defaults: { roleId: roles[roleName].id, permissionId: permission.id } });
+    }
+    for (const permission of permissions.filter((item) => ['conversation.claim_unassigned', 'payment.record', 'student.convert'].includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles.Agent.id, permissionId: permission.id }, defaults: { roleId: roles.Agent.id, permissionId: permission.id } });
+    for (const permission of permissions.filter((item) => item.code === 'commission.view_own')) await RolePermission.findOrCreate({ where: { roleId: roles.Agent.id, permissionId: permission.id }, defaults: { roleId: roles.Agent.id, permissionId: permission.id } });
+    for (const permission of permissions.filter((item) => COMMISSION_PERMISSIONS.includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles.Manager.id, permissionId: permission.id }, defaults: { roleId: roles.Manager.id, permissionId: permission.id } });
+    for(const permission of permissions.filter(item=>['lead.view_own','lead.update_own','followup.create','followup.complete','followup.view_own'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Agent.id,permissionId:permission.id},defaults:{roleId:roles.Agent.id,permissionId:permission.id}});
+    for(const permission of permissions.filter(item=>PIPELINE_PERMISSIONS.includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Manager.id,permissionId:permission.id},defaults:{roleId:roles.Manager.id,permissionId:permission.id}});
 
     return { roles, permissions };
   }

@@ -124,14 +124,21 @@ function normalizePayload(form) {
 function normalizeStudentEnrollments(enrollments = []) {
   return enrollments
     .filter((row) => row.courseId || row.course_id)
-    .map((row) => ({
-      ...(row.id ? { id: row.id } : {}),
-      courseId: row.courseId || row.course_id,
-      batchId: row.batchId || row.batch_id || null,
-      status: row.status || row.enrollmentStatus || row.enrollment_status || 'active',
-      feePlan: row.feePlan || row.fee_plan || row.paymentType || row.payment_type || 'full',
-      installments: Math.max(Number(row.installments || row.installmentCount || row.installment_count || 1), 1)
-    }));
+    .map((row) => {
+      const feePlan = row.feePlan || row.fee_plan || row.paymentType || row.payment_type || 'full';
+      const rawInstallments = row.installments ?? row.installmentCount ?? row.installment_count;
+      const installmentCount = Number(rawInstallments);
+      return {
+        ...(row.id ? { id: row.id } : {}),
+        courseId: row.courseId || row.course_id,
+        batchId: row.batchId || row.batch_id || null,
+        status: row.status || row.enrollmentStatus || row.enrollment_status || 'active',
+        feePlan,
+        installments: feePlan === 'installment' && Number.isFinite(installmentCount) && installmentCount >= 1
+          ? Math.floor(installmentCount)
+          : feePlan === 'installment' ? null : 1
+      };
+    });
 }
 
 function courseLabel(course) {
@@ -140,6 +147,16 @@ function courseLabel(course) {
 
 function batchLabel(batch) {
   return [batch.name, batch.course?.name, batch.schedule].filter(Boolean).join(' - ');
+}
+
+function safeInstallmentCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 1 ? Math.floor(count) : 1;
+}
+
+function courseDefaultInstallments(courses, courseId) {
+  const course = courses.find((item) => String(item.id) === String(courseId));
+  return safeInstallmentCount(course?.defaultInstallmentCount);
 }
 
 function studentLabel(student) {
@@ -239,6 +256,24 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
     ...current,
     enrollments: (current.enrollments || []).map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item)
   }));
+  const updateCourse = (index, courseId) => {
+    const enrollment = enrollments[index] || {};
+    const feePlan = enrollment.feePlan || enrollment.paymentType || 'full';
+    update(index, {
+      courseId,
+      batchId: '',
+      ...(feePlan === 'installment' ? { installments: courseDefaultInstallments(lookups.courses, courseId) } : {})
+    });
+  };
+  const updateFeePlan = (index, feePlan) => {
+    const enrollment = enrollments[index] || {};
+    update(index, {
+      feePlan,
+      installments: feePlan === 'installment'
+        ? courseDefaultInstallments(lookups.courses, enrollment.courseId)
+        : 1
+    });
+  };
   const remove = (index) => setForm((current) => ({
     ...current,
     enrollments: (current.enrollments || []).filter((_, itemIndex) => itemIndex !== index)
@@ -252,23 +287,35 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
       <Stack spacing={1.5}>
         {enrollments.map((enrollment, index) => {
           const batches = lookups.batches.filter((batch) => String(batch.courseId) === String(enrollment.courseId));
-          return <Stack key={enrollment.id || index} direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }}>
-            <TextField select label="Course" value={enrollment.courseId || ''} onChange={(event) => update(index, { courseId: event.target.value, batchId: '' })} fullWidth required>
+          const feePlan = enrollment.feePlan || enrollment.paymentType || 'full';
+          return <Box key={enrollment.id || index} sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: '1fr',
+              md: 'minmax(240px, 2fr) minmax(200px, 1.5fr) minmax(140px, 1fr) minmax(160px, 1fr) minmax(120px, 0.8fr) 40px'
+            },
+            gap: 1.5,
+            alignItems: 'center',
+            minWidth: 0
+          }}>
+            <TextField select label="Course" value={enrollment.courseId || ''} onChange={(event) => updateCourse(index, event.target.value)} fullWidth required sx={{ minWidth: 0 }}>
               {lookups.courses.filter((course) => course.status === 'active' || String(course.id) === String(enrollment.courseId)).map((course) => <MenuItem key={course.id} value={course.id}>{courseLabel(course)}</MenuItem>)}
             </TextField>
-            <TextField select label="Batch (optional)" value={enrollment.batchId || ''} onChange={(event) => update(index, { batchId: event.target.value })} fullWidth disabled={!enrollment.courseId}>
+            <TextField select label="Batch (optional)" value={enrollment.batchId || ''} onChange={(event) => update(index, { batchId: event.target.value })} fullWidth disabled={!enrollment.courseId} sx={{ minWidth: 0 }}>
               <MenuItem value="">All-course lessons</MenuItem>
               {batches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{batchLabel(batch)}</MenuItem>)}
             </TextField>
-            <TextField select label="Status" value={enrollment.status || enrollment.enrollmentStatus || 'active'} onChange={(event) => update(index, { status: event.target.value })} sx={{ minWidth: 170 }}>
+            <TextField select label="Status" value={enrollment.status || enrollment.enrollmentStatus || 'active'} onChange={(event) => update(index, { status: event.target.value })} sx={{ minWidth: { xs: '100%', md: 140 } }}>
               {['active', 'completed', 'suspended', 'cancelled', 'expired'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
             </TextField>
-            <TextField select label="Fee plan" value={enrollment.feePlan || enrollment.paymentType || 'full'} onChange={(event) => update(index, { feePlan: event.target.value })} sx={{ minWidth: 150 }}>
+            <TextField select label="Fee plan" value={feePlan} onChange={(event) => updateFeePlan(index, event.target.value)} sx={{ minWidth: { xs: '100%', md: 150 } }}>
               {paymentTypes.map((type) => <MenuItem value={type} key={type}>{type.replaceAll('_', ' ')}</MenuItem>)}
             </TextField>
-            {(enrollment.feePlan || enrollment.paymentType) === 'installment' && <TextField type="number" label="Installments" value={enrollment.installments || enrollment.installmentCount || 1} onChange={(event) => update(index, { installments: event.target.value })} inputProps={{ min: 1 }} sx={{ width: 120 }} />}
+            {feePlan === 'installment'
+              ? <TextField type="number" label="Installments" value={enrollment.installments || enrollment.installmentCount || 1} onChange={(event) => update(index, { installments: event.target.value })} inputProps={{ min: 1 }} sx={{ minWidth: 110 }} />
+              : <TextField type="number" label="Installments" value={1} disabled sx={{ minWidth: 110 }} />}
             <IconButton color="error" onClick={() => remove(index)} disabled={enrollments.length === 1}><DeleteOutlineIcon /></IconButton>
-          </Stack>;
+          </Box>;
         })}
       </Stack>
     </Paper>
@@ -560,9 +607,15 @@ function EducationModulePage({ moduleKey }) {
       </TableBody></Table></TableContainer>
     </Paper>
 
-    <Dialog open={dialogOpen} onClose={() => { if (!submitting) setDialogOpen(false); }} maxWidth="md" fullWidth>
+    <Dialog
+      open={dialogOpen}
+      onClose={() => { if (!submitting) setDialogOpen(false); }}
+      maxWidth={false}
+      fullWidth
+      PaperProps={{ sx: { width: { xs: '95vw', md: 'min(1100px, 95vw)' }, maxWidth: '95vw', maxHeight: '92vh' } }}
+    >
       <DialogTitle>{editing ? 'Edit Record' : 'Add Record'}</DialogTitle>
-      <DialogContent>{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '' } : {}) }))} /></Grid>)}{moduleKey === 'students' && <StudentEnrollmentFields form={form} setForm={setForm} lookups={lookups} />}</Grid>}</DialogContent>
+      <DialogContent dividers sx={{ overflowY: 'auto' }}>{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '' } : {}) }))} /></Grid>)}{moduleKey === 'students' && <StudentEnrollmentFields form={form} setForm={setForm} lookups={lookups} />}</Grid>}</DialogContent>
       <DialogActions><Button onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button><Button variant="contained" onClick={save} disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button></DialogActions>
     </Dialog>
 

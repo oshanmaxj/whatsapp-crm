@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Avatar, Box, Button, Checkbox, Chip, Divider, FormControl, FormControlLabel, IconButton, InputLabel, LinearProgress,
+  Autocomplete, Avatar, Box, Button, Checkbox, Chip, Divider, FormControl, FormControlLabel, IconButton, InputLabel, LinearProgress,
   MenuItem, Paper, Select, Stack, Tab, Tabs, TextField, Typography
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -37,9 +37,11 @@ function Section({ title, children }) {
 export function ProfileTab({ conversation, agents, roles, labelText, onLabelTextChange, onAddLabel, onAssign, onUpdateContact, engagement }) {
   const contact = conversation?.contact || {};
   const lead = conversation?.lead || {};
+  const assignableUsers = safeArray(agents);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ firstName: '', lastName: '', tags: '' });
   const [assignment, setAssignment] = useState({ assigned_user_id: '', assigned_role_id: '', notify_assigned_user: true });
+  const selectedAssignee = assignableUsers.find((agent) => String(agent.id) === String(assignment.assigned_user_id)) || null;
 
   useEffect(() => {
     setForm({
@@ -122,13 +124,16 @@ export function ProfileTab({ conversation, agents, roles, labelText, onLabelText
       </Section>
       <Section title="Chat assignment">
         <Stack spacing={1.25}>
-      <FormControl fullWidth size="small">
-        <InputLabel>Assigned User (Optional)</InputLabel>
-        <Select label="Assigned User (Optional)" value={assignment.assigned_user_id} onChange={(event) => setAssignment((current) => ({ ...current, assigned_user_id: event.target.value }))}>
-          <MenuItem value="">Unassigned</MenuItem>
-          {safeArray(agents).map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}
-        </Select>
-      </FormControl>
+      <Autocomplete
+        size="small"
+        options={assignableUsers}
+        value={selectedAssignee}
+        onChange={(event, value) => setAssignment((current) => ({ ...current, assigned_user_id: value?.id || '' }))}
+        getOptionLabel={(option) => option ? `${agentName(option)}${option.email ? ` - ${option.email}` : ''}` : ''}
+        isOptionEqualToValue={(option, value) => String(option.id) === String(value.id)}
+        ListboxProps={{ sx: { maxHeight: 280 } }}
+        renderInput={(params) => <TextField {...params} label="Assigned User (Optional)" placeholder="Unassigned" />}
+      />
       <FormControl fullWidth size="small">
         <InputLabel>Department</InputLabel>
         <Select label="Department" value={assignment.assigned_role_id} onChange={(event) => setAssignment((current) => ({ ...current, assigned_role_id: event.target.value }))}>

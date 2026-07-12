@@ -3,6 +3,7 @@ import api from './api';
 const PREFIX = '/chat';
 
 export const getConversations = (params = {}) => api.get('/conversations', { params });
+export const getAssignableUsers = (params = {}) => api.get('/conversations/assignable-users', { params });
 export const getConversation = (id) => api.get(`/conversations/${id}`);
 export const updateConversation = (id, payload) => api.patch(`/conversations/${id}`, payload);
 export const assignConversation = (id, assignment) => api.post(

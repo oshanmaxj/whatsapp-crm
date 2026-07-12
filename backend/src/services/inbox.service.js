@@ -36,10 +36,20 @@ function normalizeWhatsAppNumber(phone) {
 
 function serializeAgent(agent) {
   if (!agent) return null;
+  const roles = agent.roles || [];
+  const primaryRole = roles[0] || null;
   return {
     id: agent.id,
+    firstName: agent.firstName,
+    lastName: agent.lastName,
     name: [agent.firstName, agent.lastName].filter(Boolean).join(' ') || agent.email,
-    email: agent.email
+    email: agent.email,
+    phone: agent.phone || null,
+    status: agent.status,
+    active: agent.status === 'active',
+    role: primaryRole ? { id: primaryRole.id, name: primaryRole.name } : null,
+    department: primaryRole ? { id: primaryRole.id, name: primaryRole.name } : null,
+    roles
   };
 }
 
@@ -254,6 +264,25 @@ class InboxService {
     return unread === 'true'
       ? withInteractionRates.filter((item) => item.unreadCount > 0)
       : withInteractionRates;
+  }
+
+  async listAssignableUsers({ roleId = null, departmentId = null, includeAll = true } = {}) {
+    const requestedRoleId = roleId || departmentId || null;
+    const include = [{
+      model: Role,
+      as: 'roles',
+      attributes: ['id', 'name', 'description'],
+      through: { attributes: [] },
+      required: Boolean(requestedRoleId && !includeAll),
+      ...(requestedRoleId && !includeAll ? { where: { id: requestedRoleId, isActive: true } } : {})
+    }];
+    const users = await User.findAll({
+      where: { status: 'active' },
+      include,
+      attributes: ['id', 'firstName', 'lastName', 'email', 'phone', 'status', 'receiveAssignmentNotifications'],
+      order: [['firstName', 'ASC'], ['lastName', 'ASC'], ['email', 'ASC']]
+    });
+    return users.map(serializeAgent);
   }
 
   async getConversation(id, userId) {

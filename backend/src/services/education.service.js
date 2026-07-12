@@ -422,19 +422,24 @@ class EducationService {
           batchId: payload.batchId || payload.batch_id || null,
           status: 'active',
           feePlan: payload.feePlan || payload.fee_plan || payload.paymentType || payload.payment_type || 'full',
-          installments: payload.installments || payload.installmentCount || payload.installment_count || 1
+          installments: payload.installments ?? payload.installmentCount ?? payload.installment_count
         }]
         : [];
-    return source.map((item) => ({
-      id: optionalId(item.id),
-      courseId: optionalId(item.courseId || item.course_id),
-      batchId: optionalId(item.batchId || item.batch_id),
-      enrollmentStatus: item.status || item.enrollmentStatus || item.enrollment_status || 'active',
-      feePlan: item.feePlan || item.fee_plan || item.paymentType || item.payment_type || 'full',
-      installments: Number(item.installments || item.installmentCount || item.installment_count || 1),
-      enrolledAt: item.enrolledAt || new Date(),
-      completedAt: item.completedAt || null
-    }));
+    return source.map((item) => {
+      const rawInstallments = item.installments ?? item.installmentCount ?? item.installment_count;
+      return {
+        id: optionalId(item.id),
+        courseId: optionalId(item.courseId || item.course_id),
+        batchId: optionalId(item.batchId || item.batch_id),
+        enrollmentStatus: item.status || item.enrollmentStatus || item.enrollment_status || 'active',
+        feePlan: item.feePlan || item.fee_plan || item.paymentType || item.payment_type || 'full',
+        installments: rawInstallments === '' || rawInstallments === undefined || rawInstallments === null
+          ? null
+          : Number(rawInstallments),
+        enrolledAt: item.enrolledAt || new Date(),
+        completedAt: item.completedAt || null
+      };
+    });
   }
 
   async validateEnrollments(enrollments) {
@@ -448,14 +453,20 @@ class EducationService {
       if (!['full', 'installment', 'free_card', 'scholarship'].includes(enrollment.feePlan)) {
         throw Object.assign(new Error('Invalid enrollment fee plan'), { status: 400 });
       }
-      if (!Number.isInteger(enrollment.installments) || enrollment.installments < 1) {
-        throw Object.assign(new Error('Enrollment installments must be at least 1'), { status: 400 });
-      }
       const [course, batch] = await Promise.all([
         Course.findByPk(enrollment.courseId),
         enrollment.batchId ? Batch.findByPk(enrollment.batchId) : null
       ]);
       if (!course) throw Object.assign(new Error('Enrollment course not found'), { status: 400 });
+      if (enrollment.feePlan === 'installment' && (!Number.isInteger(enrollment.installments) || enrollment.installments < 1)) {
+        enrollment.installments = Math.max(Number(course.defaultInstallmentCount) || 1, 1);
+      }
+      if (enrollment.feePlan !== 'installment') {
+        enrollment.installments = 1;
+      }
+      if (!Number.isInteger(enrollment.installments) || enrollment.installments < 1) {
+        throw Object.assign(new Error('Enrollment installments must be at least 1'), { status: 400 });
+      }
       if (enrollment.batchId && (!batch || String(batch.courseId) !== String(enrollment.courseId))) {
         throw Object.assign(new Error('Enrollment batch must belong to its selected course'), { status: 400 });
       }

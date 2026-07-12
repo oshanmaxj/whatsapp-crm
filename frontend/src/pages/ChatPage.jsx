@@ -5,6 +5,7 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import {
   assignConversation,
   createNote,
+  getAssignableUsers,
   createTemplate,
   downloadMedia,
   getConversation,
@@ -20,7 +21,6 @@ import {
   updateConversation,
   uploadMedia
 } from '../services/chat.service';
-import { getAgents } from '../services/agent.service';
 import { getRoles } from '../services/userManagement.service';
 import { updateContact } from '../services/contact.service';
 import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
@@ -213,7 +213,7 @@ function ChatPage() {
 
   useEffect(() => {
     Promise.allSettled([
-      getAgents().then((response) => setAgents(safeArray(response.data?.data))),
+      getAssignableUsers({ includeAll: true }).then((response) => setAgents(safeArray(response.data?.data))),
       getRoles().then((response) => setRoles(safeArray(response.data?.data))),
       getTemplates().then((response) => setTemplates(safeArray(response.data?.data))),
       listWhatsAppTemplates({ status: 'APPROVED' }).then((response) => setWhatsAppTemplates(safeArray(response.data?.data))),

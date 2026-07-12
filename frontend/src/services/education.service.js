@@ -1,13 +1,20 @@
 import api from './api';
 
-const normalizeEnrollment = (row = {}) => ({
-  ...(row.id ? { id: row.id } : {}),
-  courseId: row.courseId || row.course_id,
-  batchId: row.batchId || row.batch_id || null,
-  status: row.status || row.enrollmentStatus || row.enrollment_status || 'active',
-  feePlan: row.feePlan || row.fee_plan || row.paymentType || row.payment_type || 'full',
-  installments: Math.max(Number(row.installments || row.installmentCount || row.installment_count || 1), 1)
-});
+const normalizeEnrollment = (row = {}) => {
+  const feePlan = row.feePlan || row.fee_plan || row.paymentType || row.payment_type || 'full';
+  const rawInstallments = row.installments ?? row.installmentCount ?? row.installment_count;
+  const installmentCount = Number(rawInstallments);
+  return {
+    ...(row.id ? { id: row.id } : {}),
+    courseId: row.courseId || row.course_id,
+    batchId: row.batchId || row.batch_id || null,
+    status: row.status || row.enrollmentStatus || row.enrollment_status || 'active',
+    feePlan,
+    installments: feePlan === 'installment' && Number.isFinite(installmentCount) && installmentCount >= 1
+      ? Math.floor(installmentCount)
+      : feePlan === 'installment' ? null : 1
+  };
+};
 
 const normalizeStudentPayload = (payload = {}) => ({
   ...payload,

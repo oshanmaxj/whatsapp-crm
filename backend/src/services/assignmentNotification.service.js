@@ -10,6 +10,10 @@ function normalizeWhatsAppNumber(phone) {
   return digits.startsWith('00') ? digits.slice(2) : digits;
 }
 
+function targetPhone(user) {
+  return user?.whatsapp || user?.whatsappId || user?.mobile || user?.phone || '';
+}
+
 function displayName(person, fallback = 'Unknown') {
   if (!person) return fallback;
   return [person.firstName, person.lastName].filter(Boolean).join(' ') || person.email || fallback;
@@ -71,7 +75,7 @@ class AssignmentNotificationService {
         await this.record({ assignedBy, conversation, recipient: user, status: 'skipped', reason: 'user_disabled' });
         continue;
       }
-      const to = normalizeWhatsAppNumber(user.phone);
+      const to = normalizeWhatsAppNumber(targetPhone(user));
       if (!to) {
         await this.record({ assignedBy, conversation, recipient: user, status: 'skipped', reason: 'no_phone' });
         continue;
@@ -98,8 +102,19 @@ class AssignmentNotificationService {
       }).catch(() => fallbackText);
 
       try {
-        const response = await whatsappService.sendTextMessage({ to, text, log: false, whatsappAccountId: conversation.whatsappAccountId });
+        logger.info('assignment_notification_attempt', {
+          assignedUserId: user.id,
+          conversationId: conversation.id,
+          targetPhone: to
+        });
+        const response = await whatsappService.sendTextMessage({ to, text, log: false });
         sent += 1;
+        logger.info('assignment_notification_sent', {
+          assignedUserId: user.id,
+          conversationId: conversation.id,
+          targetPhone: to,
+          whatsappMessageId: response?.id || response?.messages?.[0]?.id || null
+        });
         await outboundHistoryService.record({
           conversationId: conversation.id,
           contactId: conversation.contactId,
@@ -125,10 +140,13 @@ class AssignmentNotificationService {
         });
         await this.record({ assignedBy, conversation, recipient: user, status: 'sent', reason });
       } catch (error) {
-        logger.warn('assignment_whatsapp_notification_failed', {
+        const metaError = error.response?.data?.error || error.metaError?.error || error.metaError || null;
+        logger.warn('assignment_notification_failed', {
+          assignedUserId: user.id,
           conversationId: conversation.id,
-          recipientUserId: user.id,
-          error: error.message
+          targetPhone: to,
+          errorCode: metaError?.code == null ? null : String(metaError.code),
+          errorMessage: metaError?.message || error.message
         });
         await this.record({ assignedBy, conversation, recipient: user, status: 'failed', reason, error });
       }

@@ -10,6 +10,19 @@ class ConversationController {
     }
   }
 
+  async assignableUsers(req, res, next) {
+    try {
+      const data = await inboxService.listAssignableUsers({
+        roleId: req.query.roleId,
+        departmentId: req.query.departmentId,
+        includeAll: req.query.includeAll !== 'false'
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   async get(req, res, next) {
     try {
       const data = await inboxService.getConversation(req.params.id, req.user.id);

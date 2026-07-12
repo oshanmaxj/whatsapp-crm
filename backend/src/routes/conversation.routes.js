@@ -7,6 +7,7 @@ const router = express.Router();
 router.use(authMiddleware.authenticate);
 
 router.get('/', conversationController.list.bind(conversationController));
+router.get('/assignable-users', conversationController.assignableUsers.bind(conversationController));
 router.get('/:id', conversationController.get.bind(conversationController));
 router.patch('/:id', conversationController.update.bind(conversationController));
 router.post('/:id/assign', conversationController.assign.bind(conversationController));

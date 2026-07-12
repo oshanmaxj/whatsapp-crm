@@ -29,18 +29,39 @@ function inboundPayloadSummary(message) {
   };
 }
 
+function compactJson(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function interactiveReplyText({ title, payload, fallback }) {
+  const lines = [];
+  if (title) lines.push(`Customer selected: ${title}`);
+  else if (fallback) lines.push(`Customer selected: ${fallback}`);
+  if (payload) lines.push(`Payload: ${payload}`);
+  return lines.join('\n') || fallback || 'Customer selected an option';
+}
+
 function parseInboundContent(message = {}) {
   const rawType = String(message.type || '').toLowerCase();
 
   if (rawType === 'button') {
+    const title = message.button?.text || null;
+    const payload = message.button?.payload || null;
     return {
       supported: true,
       rawType,
       storedType: 'text',
       messageType: 'button_reply',
       interactiveType: 'button',
-      text: message.button?.text || message.button?.payload || null,
-      buttonPayload: message.button?.payload || null
+      text: interactiveReplyText({ title, payload, fallback: title || payload }),
+      buttonPayload: payload,
+      interactiveTitle: title
     };
   }
 
@@ -56,14 +77,22 @@ function parseInboundContent(message = {}) {
     if (!reply) {
       return { supported: false, rawType, interactiveType };
     }
+    const title = reply.title || reply.name || null;
+    const payload = reply.id || reply.name || compactJson(reply.response_json) || compactJson(reply.responseJson) || null;
+    const messageType = interactiveType === 'nfm_reply' ? 'flow_reply' : interactiveType || 'interactive';
     return {
       supported: true,
       rawType,
       storedType: 'text',
-      messageType: 'interactive',
+      messageType,
       interactiveType,
-      text: reply.title || reply.id || (interactiveType === 'nfm_reply' ? 'WhatsApp Flow submitted' : null),
-      buttonPayload: reply.id || reply.name || null
+      text: interactiveReplyText({
+        title,
+        payload,
+        fallback: interactiveType === 'nfm_reply' ? 'WhatsApp Flow submitted' : title || payload
+      }),
+      buttonPayload: payload,
+      interactiveTitle: title
     };
   }
 
@@ -672,6 +701,19 @@ class WhatsappService {
       return null;
     }
 
+    const isInteractiveReply = Boolean(parsed.interactiveType || parsed.messageType === 'button_reply' || parsed.messageType === 'flow_reply');
+    if (isInteractiveReply) {
+      logger.info('whatsapp_interactive_reply_received', {
+        whatsappMessageId: message.id || null,
+        from: message.from || null,
+        rawType: parsed.rawType,
+        messageType: parsed.messageType,
+        interactiveType: parsed.interactiveType || null,
+        title: parsed.interactiveTitle || null,
+        payload: parsed.buttonPayload || null
+      });
+    }
+
     if (message.id) {
       const duplicate = await Message.findOne({ where: { whatsappMessageId: message.id } });
       if (duplicate) {
@@ -779,32 +821,67 @@ class WhatsappService {
         }).catch(() => null)
       : null;
 
-    const messageRecord = await this.logMessage({
-      whatsappMessageId: message.id,
-      conversationId,
-      contactId: assignmentResult?.contact?.id || null,
-      direction: 'inbound',
-      channel: 'whatsapp',
-      type: parsed.storedType,
-      messageType: parsed.messageType,
-      text,
-      buttonPayload: parsed.buttonPayload,
-      interactiveType: parsed.interactiveType,
-      mediaId,
-      mediaUrl,
-      fileName,
-      mimeType,
-      fromNumber: from,
-      toNumber: to,
-      status: 'delivered',
-      whatsappAccountId,
-      statusUpdatedAt: receivedAt,
-      replyToMessageId: replyToMessage?.id || null,
-      replyToWhatsappMessageId,
-      rawPayload: message,
-      createdAt: receivedAt,
-      updatedAt: receivedAt
-    });
+    let messageRecord = null;
+    try {
+      messageRecord = await this.logMessage({
+        whatsappMessageId: message.id,
+        conversationId,
+        contactId: assignmentResult?.contact?.id || null,
+        direction: 'inbound',
+        channel: 'whatsapp',
+        type: parsed.storedType,
+        messageType: parsed.messageType,
+        text,
+        buttonPayload: parsed.buttonPayload,
+        interactiveType: parsed.interactiveType,
+        mediaId,
+        mediaUrl,
+        fileName,
+        mimeType,
+        fromNumber: from,
+        toNumber: to,
+        status: 'delivered',
+        whatsappAccountId,
+        statusUpdatedAt: receivedAt,
+        replyToMessageId: replyToMessage?.id || null,
+        replyToWhatsappMessageId,
+        rawPayload: message,
+        createdAt: receivedAt,
+        updatedAt: receivedAt
+      });
+      if (isInteractiveReply) {
+        if (messageRecord) {
+          logger.info('whatsapp_interactive_reply_saved', {
+            whatsappMessageId: message.id || null,
+            messageId: messageRecord.id || null,
+            conversationId,
+            messageType: parsed.messageType,
+            interactiveType: parsed.interactiveType || null,
+            title: parsed.interactiveTitle || null,
+            payload: parsed.buttonPayload || null
+          });
+        } else {
+          logger.warn('whatsapp_interactive_reply_failed', {
+            whatsappMessageId: message.id || null,
+            conversationId,
+            messageType: parsed.messageType,
+            interactiveType: parsed.interactiveType || null,
+            errorMessage: 'Message was not saved'
+          });
+        }
+      }
+    } catch (error) {
+      if (isInteractiveReply) {
+        logger.warn('whatsapp_interactive_reply_failed', {
+          whatsappMessageId: message.id || null,
+          conversationId,
+          messageType: parsed.messageType,
+          interactiveType: parsed.interactiveType || null,
+          errorMessage: error.message
+        });
+      }
+      throw error;
+    }
 
     if (conversationId && messageRecord) {
       await assignmentResult.conversation.update({

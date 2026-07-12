@@ -119,6 +119,21 @@ function messageBadges(message) {
   return badges;
 }
 
+function messageBodyText(message) {
+  const text = message.text || message.templateName || '';
+  const messageType = message.messageType || message.message_type;
+  const interactiveType = message.interactiveType || message.interactive_type;
+  const payload = message.buttonPayload || message.button_payload;
+  const isInteractiveReply = messageType === 'button_reply'
+    || messageType === 'flow_reply'
+    || interactiveType === 'button'
+    || interactiveType === 'button_reply'
+    || interactiveType === 'list_reply'
+    || interactiveType === 'nfm_reply';
+  if (!isInteractiveReply || !payload || String(text).includes('Payload:')) return text;
+  return [text || 'Customer selected an option', `Payload: ${payload}`].join('\n');
+}
+
 function QuotedPreview({ preview, outbound, onClick }) {
   if (!preview) return null;
   return (
@@ -152,6 +167,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
   const replyPreview = message.replyPreview;
   const repliedBy = repliedByLabel(message);
   const badges = messageBadges(message);
+  const bodyText = messageBodyText(message);
   return (
     <Box sx={{ display: 'flex', justifyContent: internal ? 'center' : (outbound ? 'flex-end' : 'flex-start'), mb: 1 }}>
       <Paper
@@ -188,9 +204,9 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
           onClick={() => replyPreview?.id && onJumpToMessage(replyPreview.id)}
         />
         <MessageMedia message={message} onMediaLoad={onMediaLoad} />
-        {(message.text || message.templateName) && (
+        {bodyText && (
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.45 }}>
-            {message.text || message.templateName}
+            {bodyText}
           </Typography>
         )}
         <Stack direction="row" spacing={0.6} alignItems="center" justifyContent="flex-end" sx={{ mt: 0.35 }}>

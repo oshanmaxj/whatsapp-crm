@@ -14,6 +14,7 @@ const automationService = require('./services/automation.service');
 const flowService = require('./services/flow.service');
 const pipelineService = require('./services/pipeline.service');
 const { isMissingTableError } = require('./utils/databaseError');
+const { ensureUnifiedLeadStatuses } = require('./services/unifiedLeadStatuses.service');
 
 const PORT = process.env.PORT || 4000;
 
@@ -39,6 +40,7 @@ const startServer = async () => {
       await sequelize.sync({ alter: true });
       logger.warn('sequelize_sync_alter_enabled');
     }
+    await ensureUnifiedLeadStatuses();
     await automationService.ensureDefaults();
     logger.info('database_connection_established');
 

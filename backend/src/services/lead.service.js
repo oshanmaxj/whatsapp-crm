@@ -5,7 +5,6 @@ const leadStatusService = require('./leadStatus.service');
 const { LEAD_STATUSES, normalizeLeadStatusCode } = require('../constants/leadStatuses');
 const { normalizeSriLankanPhone } = require('../utils/phone');
 
-const DEFAULT_STATUSES = LEAD_STATUSES.map((status) => status.name);
 const DEFAULT_SOURCES = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 
 function splitName(name = '') {
@@ -107,15 +106,10 @@ function serializeLead(lead) {
 }
 
 class LeadService {
-  async ensureDefaultLookups() {
-    await Promise.all([
-      ...DEFAULT_STATUSES.map((name) => this.ensureStatus(name)),
-      ...DEFAULT_SOURCES.map((name) => this.ensureSource(name))
-    ]);
-  }
-
   async getStatusByName(name) {
-    return LeadStatus.findOne({ where: { name: normalizeStatus(name) } });
+    const definition = LEAD_STATUSES.find((item) => item.code === normalizeLeadStatusCode(name));
+    if (!definition) return null;
+    return LeadStatus.findOne({ where: { code: definition.code } });
   }
 
   async getSourceByName(name) {
@@ -125,10 +119,9 @@ class LeadService {
   async ensureStatus(name) {
     const statusName = normalizeStatus(name);
     const definition = LEAD_STATUSES.find((item) => item.name === statusName);
-    let status = await LeadStatus.findOne({ where: definition ? { code: definition.code } : { name: statusName } });
-    if (!status) {
-      status = await LeadStatus.create({ name: statusName, code: definition?.code || normalizeLeadStatusCode(statusName), active: true, description: `${statusName} lead status` });
-    }
+    if (!definition) throw Object.assign(new Error('Lead status is invalid.'), { status: 422, code: 'INVALID_LEAD_STATUS' });
+    const status = await LeadStatus.findOne({ where: { code: definition.code, active: true } });
+    if (!status) throw Object.assign(new Error('Unified lead statuses are not initialized. Run migrations or restart the backend.'), { status: 503, code: 'LEAD_STATUS_NOT_INITIALIZED' });
     return status;
   }
 
@@ -205,7 +198,6 @@ class LeadService {
   }
 
   async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo } = {}, actor = null) {
-    await this.ensureDefaultLookups();
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo });
@@ -327,7 +319,6 @@ class LeadService {
 
   async createManualLead(payload, actor = null) {
     if(actor&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.assign'))payload={...payload,assignedAgentId:actor.id};
-    await this.ensureDefaultLookups();
     const contact = await this.findOrCreateContact(payload);
     const lead = await this.createLead(contact.id, {
       ...payload,

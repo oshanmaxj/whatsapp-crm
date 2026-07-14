@@ -90,7 +90,7 @@ function serializeLead(lead) {
     stage: lead.stage,
     createdAt: lead.createdAt,
     updatedAt: lead.updatedAt,
-    registeredAt: lead.registeredAt || null,
+    convertedAt: lead.convertedAt || null,
     conversationId: lead.getDataValue ? (lead.getDataValue('resolvedConversationId') || null) : (lead.resolvedConversationId || null),
     whatsappAccountId: lead.whatsappAccountId || null,
     assignmentHistory: lead.assignments
@@ -190,7 +190,7 @@ class LeadService {
     if (whatsappAccountId) where.whatsappAccountId = whatsappAccountId;
     const range = colomboDateRange(dateFrom, dateTo);
     if (range) {
-      const fields = { createdAt: 'createdAt', updatedAt: 'updatedAt', registeredAt: 'registeredAt' };
+      const fields = { createdAt: 'createdAt', updatedAt: 'updatedAt', convertedAt: 'convertedAt' };
       if (!fields[dateType || 'createdAt']) throw Object.assign(new Error('The selected date type is invalid.'), { status: 422, code: 'INVALID_DATE_RANGE' });
       where[fields[dateType || 'createdAt']] = range;
     }
@@ -202,7 +202,8 @@ class LeadService {
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo });
     if(actor&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))where[Op.or]=[{ownerId:actor.id},{ownerId:null}];
-    const include = this.buildLeadIncludes({ search, status, source });
+    const registeredDateFilter = (dateFrom || dateTo) && dateType === 'convertedAt';
+    const include = this.buildLeadIncludes({ search, status: status || (registeredDateFilter ? 'registered' : status), source });
 
     const { count, rows } = await Lead.findAndCountAll({
       where,

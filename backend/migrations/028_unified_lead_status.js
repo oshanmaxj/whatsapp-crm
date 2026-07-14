@@ -22,11 +22,6 @@ function normalized(value) {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-async function add(q, table, column, definition, transaction) {
-  const columns = await q.describeTable(table, { transaction });
-  if (!columns[column]) await q.addColumn(table, column, definition, { transaction });
-}
-
 async function leadReferenceCount(q, statusId, transaction) {
   const [rows] = await q.sequelize.query(
     'SELECT COUNT(*) AS count FROM leads WHERE status_id=:statusId',
@@ -51,7 +46,6 @@ module.exports = {
         );
       }
 
-      await add(q, 'leads', 'registered_at', { type: S.DATE, allowNull: true }, transaction);
       const canonical = {};
       const [preflightRows] = await q.sequelize.query(
         'SELECT id,name,code FROM lead_status ORDER BY id FOR UPDATE',
@@ -137,13 +131,8 @@ module.exports = {
         }
       }
 
-      await q.sequelize.query(
-        'UPDATE leads SET registered_at=COALESCE(registered_at,converted_at,updated_at) WHERE status_id=:id',
-        { replacements: { id: canonical.registered }, transaction }
-      );
       for (const [columns, name] of [
         [['updated_at'], 'leads_updated_at_idx'],
-        [['registered_at'], 'leads_registered_at_idx'],
         [['status_id', 'created_at'], 'leads_status_created_idx'],
         [['owner_id', 'created_at'], 'leads_owner_created_idx']
       ]) {

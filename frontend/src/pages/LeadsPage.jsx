@@ -215,7 +215,7 @@ function LeadsPage() {
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Agent</InputLabel><Select label="Agent" value={filters.assignedAgentId} onChange={setFilter('assignedAgentId')}><MenuItem value="">All</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Course</InputLabel><Select label="Course" value={filters.courseInterested} onChange={setFilter('courseInterested')}><MenuItem value="">All</MenuItem>{courses.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <WhatsAppAccountSelect value={filters.whatsappAccountId} onChange={(value) => { setFilters((current) => ({ ...current, whatsappAccountId: value })); setPagination((current) => ({ ...current, page: 1 })); }} allowAll sx={{ minWidth: 230 }} />
-          <FormControl sx={{ minWidth: 190 }}><InputLabel>Date Type</InputLabel><Select label="Date Type" value={filters.dateType} onChange={setFilter('dateType')}><MenuItem value="createdAt">Lead Created Date</MenuItem><MenuItem value="updatedAt">Last Updated Date</MenuItem><MenuItem value="registeredAt">Registration Date</MenuItem></Select></FormControl>
+          <FormControl sx={{ minWidth: 190 }}><InputLabel>Date Type</InputLabel><Select label="Date Type" value={filters.dateType} onChange={setFilter('dateType')}><MenuItem value="createdAt">Lead Created Date</MenuItem><MenuItem value="updatedAt">Last Updated Date</MenuItem><MenuItem value="convertedAt">Registration Date</MenuItem></Select></FormControl>
           <TextField label="From" type="date" value={filters.dateFrom} onChange={setFilter('dateFrom')} InputLabelProps={{ shrink: true }} sx={{ minWidth: 160 }} />
           <TextField label="To" type="date" value={filters.dateTo} onChange={setFilter('dateTo')} InputLabelProps={{ shrink: true }} sx={{ minWidth: 160 }} />
           <Button variant="outlined" onClick={loadLeads}>Apply</Button>
@@ -226,7 +226,7 @@ function LeadsPage() {
       </Paper>
 
       {(filters.dateFrom || filters.dateTo || filters.status || filters.assignedAgentId) && <Stack direction="row" gap={1} flexWrap="wrap">
-        {(filters.dateFrom || filters.dateTo) && <Chip label={`${filters.dateType === 'registeredAt' ? 'Registration' : filters.dateType === 'updatedAt' ? 'Updated' : 'Created'} Date: ${filters.dateFrom || 'Any'} - ${filters.dateTo || 'Any'}`} />}
+        {(filters.dateFrom || filters.dateTo) && <Chip label={`${filters.dateType === 'convertedAt' ? 'Registration' : filters.dateType === 'updatedAt' ? 'Updated' : 'Created'} Date: ${filters.dateFrom || 'Any'} - ${filters.dateTo || 'Any'}`} />}
         {filters.status && <Chip label={`Status: ${filters.status}`} />}
         {filters.assignedAgentId && <Chip label={`Agent: ${agentName(agents.find((agent) => String(agent.id) === String(filters.assignedAgentId)))}`} />}
       </Stack>}

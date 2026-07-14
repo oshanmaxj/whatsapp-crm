@@ -134,7 +134,7 @@ test('GET leads service path does not create or initialize statuses', async () =
   Lead.findAndCountAll = async () => ({ count: 0, rows: [] });
   LeadStatus.create = async () => { statusCreates += 1; throw new Error('GET attempted a status insert'); };
   try {
-    const result = await leadService.listLeads({ page: 1, limit: 10, dateType: 'createdAt' }, { id: 1, isSystemAdmin: true, permissions: [] });
+    const result = await leadService.listLeads({ page: 1, limit: 10 }, { id: 1, isSystemAdmin: true, permissions: [] });
     assert.equal(result.pagination.total, 0);
     assert.equal(statusCreates, 0);
   } finally {
@@ -152,12 +152,28 @@ test('Leads controller returns 200 when statuses already exist', async () => {
     json(body) { this.body = body; return this; }
   };
   try {
-    await leadController.list({ query: { page: '1', limit: '10', dateType: 'createdAt' }, user: { id: 1 } }, response, (error) => { throw error; });
+    await leadController.list({ query: { page: '1', limit: '10' }, user: { id: 1 } }, response, (error) => { throw error; });
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.success, true);
   } finally {
     leadService.listLeads = originalList;
   }
+});
+
+test('Lead model and default GET selection do not expose a registration-date column', () => {
+  const fields = Object.values(Lead.rawAttributes).map((attribute) => attribute.field);
+  assert.equal(Object.prototype.hasOwnProperty.call(Lead.rawAttributes, 'registeredAt'), false);
+  assert.equal(fields.includes('registered_at'), false);
+  assert.equal(fields.includes('converted_at'), true);
+});
+
+test('registration-date filtering uses convertedAt and the registered status', () => {
+  const where = leadService.buildLeadWhere({ dateType: 'convertedAt', dateFrom: '2026-07-01', dateTo: '2026-07-15' });
+  assert.ok(where.convertedAt);
+  const includes = leadService.buildLeadIncludes({ status: 'registered' });
+  const statusInclude = includes.find((include) => include.as === 'status');
+  assert.deepEqual(statusInclude.where, { code: 'registered' });
+  assert.equal(statusInclude.required, true);
 });
 
 test('pipeline stage creation uses a normalized code instead of a name-only insert', async () => {

@@ -41,7 +41,7 @@ class LeadStatusService {
       await lead.update({
         statusId: status.id,
         stage: code,
-        ...(code === 'registered' ? { registeredAt: lead.registeredAt || now, convertedAt: lead.convertedAt || now, convertedByUserId: lead.convertedByUserId || actorUserId || null } : {})
+        ...(code === 'registered' ? { convertedAt: lead.convertedAt || now, convertedByUserId: lead.convertedByUserId || actorUserId || null } : {})
       }, { transaction: t });
       await LeadActivity.create({
         leadId: lead.id,

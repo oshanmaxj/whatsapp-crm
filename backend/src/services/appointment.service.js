@@ -73,7 +73,7 @@ class AppointmentService {
         customerPhone: appointment.customerPhone,
         customerEmail: appointment.customerEmail,
         requestedAt: appointment.appointmentAt,
-        status: 'Converted',
+        status: 'Registered',
         notes: payload.notes || null
       });
     }

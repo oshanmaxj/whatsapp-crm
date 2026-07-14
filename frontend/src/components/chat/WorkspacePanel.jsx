@@ -16,6 +16,7 @@ import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { agentName, contactName, formatDateTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
 import { getAccessPayload } from '../../utils/access';
+import { LEAD_STATUSES } from '../../constants/leadStatuses';
 
 function DetailRow({ label, value }) {
   return (
@@ -35,7 +36,7 @@ function Section({ title, children }) {
   );
 }
 
-export function ProfileTab({ conversation, agents, roles, labelText, onLabelTextChange, onAddLabel, onAssign, onUpdateContact, engagement }) {
+export function ProfileTab({ conversation, agents, roles, onAssign, onUpdateContact, onLeadStatusChange, leadStatusSaving, engagement }) {
   const contact = conversation?.contact || {};
   const lead = conversation?.lead || {};
   const assignableUsers = safeArray(agents);
@@ -88,10 +89,7 @@ export function ProfileTab({ conversation, agents, roles, labelText, onLabelText
         <Avatar sx={{ width: 64, height: 64, bgcolor: '#dff5ed', color: '#087b67', fontWeight: 900, fontSize: 22 }}>{initials(contact)}</Avatar>
         <Typography fontWeight={900}>{contactName(contact)}</Typography>
         <Typography variant="caption" color="text.secondary">{contact.phone || 'No phone number'}</Typography>
-        <Stack direction="row" gap={0.5} flexWrap="wrap" justifyContent="center">
-          {safeArray(conversation?.labels).map((label) => <Chip key={label.id || label.name} size="small" label={label.name} />)}
-          {safeArray(contact.tags).map((tag) => <Chip key={tag} size="small" variant="outlined" label={tag} />)}
-        </Stack>
+        <Stack direction="row" gap={0.5} flexWrap="wrap" justifyContent="center">{safeArray(contact.tags).map((tag) => <Chip key={tag} size="small" variant="outlined" label={tag} />)}</Stack>
       </Stack>
       <Divider />
       <Section title="Contact profile">
@@ -124,12 +122,18 @@ export function ProfileTab({ conversation, agents, roles, labelText, onLabelText
         </Stack>
       </Section>
       <Section title="Lead information">
-        <Stack spacing={1}>
-          <DetailRow label="Status" value={lead.status?.name || lead.stage} />
+        {lead.id ? <Stack spacing={1}>
+          <FormControl size="small" fullWidth disabled={leadStatusSaving}>
+            <InputLabel>Lead Status</InputLabel>
+            <Select label="Lead Status" value={lead.status?.code || lead.stage || 'new'} onChange={(event) => onLeadStatusChange(event.target.value)}>
+              {LEAD_STATUSES.map((status) => <MenuItem key={status.code} value={status.code}>{status.name}</MenuItem>)}
+            </Select>
+          </FormControl>
+          {leadStatusSaving && <LinearProgress />}
           <DetailRow label="Source" value={lead.source?.name} />
           <DetailRow label="Course interest" value={lead.courseInterested} />
           <DetailRow label="Budget" value={lead.budget ? Number(lead.budget).toLocaleString() : null} />
-        </Stack>
+        </Stack> : <Typography variant="body2" color="text.secondary">No lead linked</Typography>}
       </Section>
       <Section title="Chat assignment">
         <Stack spacing={1.25}>
@@ -163,12 +167,6 @@ export function ProfileTab({ conversation, agents, roles, labelText, onLabelText
         <DialogContent><Stack spacing={2} sx={{ pt: 1 }}><Typography>Previous owner: {agentName(conversation?.assignee)}</Typography><Typography>New owner: {agentName(selectedAssignee)}</Typography><TextField required multiline minRows={3} label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} /></Stack></DialogContent>
         <DialogActions><Button onClick={() => setConfirming(false)}>Cancel</Button><Button variant="contained" disabled={!reason.trim()} onClick={async () => { await onAssign({ assigned_user_id: assignment.assigned_user_id || null, assigned_role_id: assignment.assigned_role_id || null, expected_assigned_user_id: currentOwnerId, reason: reason.trim(), notify_assigned_user: assignment.notify_assigned_user }); setConfirming(false); setReason(''); }}>Confirm reassignment</Button></DialogActions>
       </Dialog>
-        </Stack>
-      </Section>
-      <Section title="Labels">
-        <Stack direction="row" gap={0.75}>
-          <TextField size="small" value={labelText} onChange={(event) => onLabelTextChange(event.target.value)} placeholder="Add a label" fullWidth />
-          <Button variant="outlined" onClick={onAddLabel} disabled={!labelText.trim()}>Add</Button>
         </Stack>
       </Section>
       <Section title="Engagement score">
@@ -308,6 +306,8 @@ export function WorkspacePanel({
   onUpdateContact,
   onDownload,
   onAction,
+  onLeadStatusChange,
+  leadStatusSaving,
   onClose,
   showClose = false
 }) {
@@ -342,7 +342,7 @@ export function WorkspacePanel({
       </Tabs>
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 2 }}>
         {!conversation && <Typography variant="body2" color="text.secondary">Select a conversation to open its workspace.</Typography>}
-        {conversation && tab === 'profile' && <ProfileTab conversation={conversation} agents={agents} roles={roles} labelText={labelText} onLabelTextChange={onLabelTextChange} onAddLabel={onAddLabel} onAssign={onAssign} onUpdateContact={onUpdateContact} engagement={engagement} />}
+        {conversation && tab === 'profile' && <ProfileTab conversation={conversation} agents={agents} roles={roles} onAssign={onAssign} onUpdateContact={onUpdateContact} onLeadStatusChange={onLeadStatusChange} leadStatusSaving={leadStatusSaving} engagement={engagement} />}
         {conversation && tab === 'notes' && <NotesTab notes={notes} noteText={noteText} onNoteTextChange={onNoteTextChange} onAddNote={onAddNote} />}
         {conversation && tab === 'media' && <MediaTab media={media} onDownload={onDownload} />}
         {conversation && tab === 'actions' && <ActionsTab onAction={handleAction} />}

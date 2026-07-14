@@ -40,7 +40,7 @@ const OWNERSHIP_PERMISSIONS = [
   'payment.override_credit_owner', 'student.convert', 'student.override_conversion_owner'
 ];
 const COMMISSION_PERMISSIONS = ['commission.view_own','commission.view_team','commission.view_all','commission.manage_rules','commission.approve','commission.create_payout','commission.approve_payout','commission.mark_paid','commission.override','commission.export','commission.reverse'];
-const PIPELINE_PERMISSIONS=['lead.view_own','lead.view_team','lead.view_all','lead.update_own','lead.update_all','lead.assign','lead.reassign','followup.create','followup.complete','followup.view_own','followup.view_team','followup.view_all','pipeline.manage','lost_reason.manage'];
+const PIPELINE_PERMISSIONS=['lead.view_own','lead.view_team','lead.view_all','lead.update_own','lead.update_all','lead.update_status_own','lead.update_status_all','lead.assign','lead.reassign','followup.create','followup.complete','followup.view_own','followup.view_team','followup.view_all','pipeline.manage','lost_reason.manage'];
 
 function permissionCode(group, action) {
   return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase().replace(/\s+/g, '_')}`;
@@ -231,7 +231,7 @@ class UserService {
     for (const permission of permissions.filter((item) => ['conversation.claim_unassigned', 'payment.record', 'student.convert'].includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles.Agent.id, permissionId: permission.id }, defaults: { roleId: roles.Agent.id, permissionId: permission.id } });
     for (const permission of permissions.filter((item) => item.code === 'commission.view_own')) await RolePermission.findOrCreate({ where: { roleId: roles.Agent.id, permissionId: permission.id }, defaults: { roleId: roles.Agent.id, permissionId: permission.id } });
     for (const permission of permissions.filter((item) => COMMISSION_PERMISSIONS.includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles.Manager.id, permissionId: permission.id }, defaults: { roleId: roles.Manager.id, permissionId: permission.id } });
-    for(const permission of permissions.filter(item=>['lead.view_own','lead.update_own','followup.create','followup.complete','followup.view_own'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Agent.id,permissionId:permission.id},defaults:{roleId:roles.Agent.id,permissionId:permission.id}});
+    for(const permission of permissions.filter(item=>['lead.view_own','lead.update_own','lead.update_status_own','followup.create','followup.complete','followup.view_own'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Agent.id,permissionId:permission.id},defaults:{roleId:roles.Agent.id,permissionId:permission.id}});
     for(const permission of permissions.filter(item=>PIPELINE_PERMISSIONS.includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Manager.id,permissionId:permission.id},defaults:{roleId:roles.Manager.id,permissionId:permission.id}});
 
     return { roles, permissions };

@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Drawer,
+  Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Drawer,
   FormControl, Grid, IconButton, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack,
-  Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Typography
+  Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Tooltip, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
@@ -10,12 +10,14 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import EditIcon from '@mui/icons-material/Edit';
 import PersonAddAltIcon from '@mui/icons-material/PersonAddAlt';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useNavigate } from 'react-router-dom';
 import { getAgents } from '../services/agent.service';
-import { assignLead, autoAssignLeads, createLead, deleteLead, getLeads, updateLead } from '../services/lead.service';
+import { assignLead, autoAssignLeads, createLead, deleteLead, getLeads, updateLead, updateLeadStatus } from '../services/lead.service';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
+import { LEAD_STATUSES } from '../constants/leadStatuses';
 
-const statuses = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
+const statuses = LEAD_STATUSES.map((status) => status.name);
 const sources = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 const priorities = ['low', 'medium', 'high'];
 const courses = ['Forex', 'Crypto', 'Stock Market', 'Home Decoration', 'Other'];
@@ -71,7 +73,8 @@ function LeadsPage() {
   const [leads, setLeads] = useState([]);
   const [agents, setAgents] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
-  const [filters, setFilters] = useState({ search: '', status: '', source: '', assignedAgentId: '', courseInterested: '', whatsappAccountId: '' });
+  const emptyFilters = { search: '', status: '', source: '', assignedAgentId: '', courseInterested: '', whatsappAccountId: '', dateType: 'createdAt', dateFrom: '', dateTo: '' };
+  const [filters, setFilters] = useState(emptyFilters);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -79,6 +82,7 @@ function LeadsPage() {
   const [editing, setEditing] = useState(null);
   const [profile, setProfile] = useState(null);
   const [form, setForm] = useState(initialForm);
+  const [savingStatus, setSavingStatus] = useState({});
 
   const query = useMemo(() => ({
     page: pagination.page,
@@ -88,7 +92,10 @@ function LeadsPage() {
     source: filters.source || undefined,
     assignedAgentId: filters.assignedAgentId || undefined,
     courseInterested: filters.courseInterested || undefined,
-    whatsappAccountId: filters.whatsappAccountId || undefined
+    whatsappAccountId: filters.whatsappAccountId || undefined,
+    dateType: filters.dateType || undefined,
+    dateFrom: filters.dateFrom || undefined,
+    dateTo: filters.dateTo || undefined
   }), [filters, pagination.page, pagination.limit]);
 
   const loadLeads = async () => {
@@ -177,34 +184,63 @@ function LeadsPage() {
     }
   };
 
+  const changeStatus = async (lead, statusCode) => {
+    const previous = { status: lead.status, statusCode: lead.statusCode };
+    const next = LEAD_STATUSES.find((status) => status.code === statusCode);
+    setLeads((rows) => rows.map((row) => row.id === lead.id ? { ...row, status: next.name, statusCode } : row));
+    setSavingStatus((current) => ({ ...current, [lead.id]: true }));
+    try {
+      await updateLeadStatus(lead.id, { statusCode, expectedCurrentStatusCode: previous.statusCode });
+      setSuccess(`Status updated to ${next.name}.`);
+    } catch (err) {
+      setLeads((rows) => rows.map((row) => row.id === lead.id ? { ...row, ...previous } : row));
+      setError(err.response?.data?.message || 'Unable to update lead status.');
+    } finally {
+      setSavingStatus((current) => ({ ...current, [lead.id]: false }));
+    }
+  };
+
+  const resetFilters = () => { setFilters(emptyFilters); setPagination((current) => ({ ...current, page: 1 })); };
+
   return (
     <Stack spacing={2.5}>
       {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
       {success && <Alert severity="success" onClose={() => setSuccess('')}>{success}</Alert>}
 
       <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2}>
+        <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap" alignItems="center">
           <TextField label="Search name, phone, email" value={filters.search} onChange={setFilter('search')} fullWidth />
           <FormControl sx={{ minWidth: 150 }}><InputLabel>Status</InputLabel><Select label="Status" value={filters.status} onChange={setFilter('status')}><MenuItem value="">All</MenuItem>{statuses.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 160 }}><InputLabel>Source</InputLabel><Select label="Source" value={filters.source} onChange={setFilter('source')}><MenuItem value="">All</MenuItem>{sources.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Agent</InputLabel><Select label="Agent" value={filters.assignedAgentId} onChange={setFilter('assignedAgentId')}><MenuItem value="">All</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Course</InputLabel><Select label="Course" value={filters.courseInterested} onChange={setFilter('courseInterested')}><MenuItem value="">All</MenuItem>{courses.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <WhatsAppAccountSelect value={filters.whatsappAccountId} onChange={(value) => { setFilters((current) => ({ ...current, whatsappAccountId: value })); setPagination((current) => ({ ...current, page: 1 })); }} allowAll sx={{ minWidth: 230 }} />
+          <FormControl sx={{ minWidth: 190 }}><InputLabel>Date Type</InputLabel><Select label="Date Type" value={filters.dateType} onChange={setFilter('dateType')}><MenuItem value="createdAt">Lead Created Date</MenuItem><MenuItem value="updatedAt">Last Updated Date</MenuItem><MenuItem value="registeredAt">Registration Date</MenuItem></Select></FormControl>
+          <TextField label="From" type="date" value={filters.dateFrom} onChange={setFilter('dateFrom')} InputLabelProps={{ shrink: true }} sx={{ minWidth: 160 }} />
+          <TextField label="To" type="date" value={filters.dateTo} onChange={setFilter('dateTo')} InputLabelProps={{ shrink: true }} sx={{ minWidth: 160 }} />
+          <Button variant="outlined" onClick={loadLeads}>Apply</Button>
+          <Button variant="text" onClick={resetFilters}>Reset Filters</Button>
           <Button variant="outlined" startIcon={<AutoFixHighIcon />} onClick={runAutoAssign}>Auto Assign</Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} sx={{ bgcolor: '#128c7e' }}>Add Lead</Button>
         </Stack>
       </Paper>
 
+      {(filters.dateFrom || filters.dateTo || filters.status || filters.assignedAgentId) && <Stack direction="row" gap={1} flexWrap="wrap">
+        {(filters.dateFrom || filters.dateTo) && <Chip label={`${filters.dateType === 'registeredAt' ? 'Registration' : filters.dateType === 'updatedAt' ? 'Updated' : 'Created'} Date: ${filters.dateFrom || 'Any'} - ${filters.dateTo || 'Any'}`} />}
+        {filters.status && <Chip label={`Status: ${filters.status}`} />}
+        {filters.assignedAgentId && <Chip label={`Agent: ${agentName(agents.find((agent) => String(agent.id) === String(filters.assignedAgentId)))}`} />}
+      </Stack>}
+
       <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
         {loading && <LinearProgress />}
         <TableContainer>
           <Table>
-            <TableHead><TableRow><TableCell>Lead</TableCell><TableCell>Status</TableCell><TableCell>Source</TableCell><TableCell>Course</TableCell><TableCell>Agent</TableCell><TableCell>Follow-up</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Lead</TableCell><TableCell>Status</TableCell><TableCell>Source</TableCell><TableCell>Course</TableCell><TableCell>Agent</TableCell><TableCell>Created</TableCell><TableCell>Chat</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {leads.map((lead) => (
                 <TableRow key={lead.id} hover>
                   <TableCell><Typography fontWeight={800}>{lead.name || 'Unnamed lead'}</Typography><Typography variant="body2" color="text.secondary">{lead.phone} {lead.email ? `• ${lead.email}` : ''}</Typography></TableCell>
-                  <TableCell><Chip size="small" label={lead.status || '-'} color={lead.status === 'Converted' ? 'success' : 'default'} /></TableCell>
+                  <TableCell><Stack direction="row" alignItems="center" gap={1}><FormControl size="small" sx={{ minWidth: 145 }} disabled={savingStatus[lead.id]}><Select value={lead.statusCode || 'new'} onChange={(event) => changeStatus(lead, event.target.value)}>{LEAD_STATUSES.map((status) => <MenuItem key={status.code} value={status.code}>{status.name}</MenuItem>)}</Select></FormControl>{savingStatus[lead.id] && <CircularProgress size={18} />}</Stack></TableCell>
                   <TableCell>{lead.source || '-'}</TableCell>
                   <TableCell>{lead.courseInterested || '-'}</TableCell>
                   <TableCell>
@@ -215,7 +251,8 @@ function LeadsPage() {
                       </Select>
                     </FormControl>
                   </TableCell>
-                  <TableCell>{lead.followUpDate ? new Date(lead.followUpDate).toLocaleDateString() : '-'}</TableCell>
+                  <TableCell>{lead.createdAt ? new Date(lead.createdAt).toLocaleDateString() : '-'}</TableCell>
+                  <TableCell><Tooltip title={lead.conversationId ? 'Open linked conversation' : 'No chat conversation found'}><span><Button size="small" startIcon={<ChatBubbleOutlineIcon />} disabled={!lead.conversationId} onClick={() => navigate(`/chat?conversationId=${lead.conversationId}`)}>Open Chat</Button></span></Tooltip></TableCell>
                   <TableCell align="right">
                     <IconButton onClick={() => setProfile(lead)}><VisibilityIcon /></IconButton>
                     <IconButton onClick={() => openEdit(lead)}><EditIcon /></IconButton>

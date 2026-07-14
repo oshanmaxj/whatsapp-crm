@@ -496,7 +496,7 @@ export function ReportsPage() {
     courses: [],
     batches: [],
     agents: [],
-    leadStatuses: ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'],
+    leadStatuses: ['New', 'Contacted', 'Interested', 'Ignore', 'Agreed', 'Registered', 'Lost'],
     leadSources: ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'],
     studentStatuses: ['enrolled', 'active', 'pending', 'completed', 'dropped', 'suspended'],
     paymentStatuses: ['paid', 'pending', 'partial', 'overdue', 'cancelled'],

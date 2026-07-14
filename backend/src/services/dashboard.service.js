@@ -64,7 +64,6 @@ class DashboardService {
       activeChats,
       messagesToday,
       newContactsToday,
-      pendingFollowups,
       newLeads,
       convertedLeads,
       feeReminderWidgets,
@@ -85,12 +84,11 @@ class DashboardService {
       Conversation.count({ where: { status: { [Op.in]: ['open', 'pending'] } } }),
       Message.count({ where: { createdAt: { [Op.gte]: todayStart } } }),
       Contact.count({ where: { createdAt: { [Op.gte]: todayStart } } }),
-      Followup.count({ where: { status: 'pending' } }),
       Lead.count({
         include: [{ model: LeadStatus, as: 'status', where: { name: 'New' }, required: true }]
       }),
       Lead.count({
-        include: [{ model: LeadStatus, as: 'status', where: { name: 'Converted' }, required: true }]
+        include: [{ model: LeadStatus, as: 'status', where: { code: 'registered' }, required: true }]
       }),
       this.getFeeReminderWidgets(todayStart),
       this.getClassReminderWidgets(todayStart),
@@ -106,9 +104,8 @@ class DashboardService {
       this.getDailyMessageActivity(activityStart)
     ]);
 
-    const todayEnd=addDays(todayStart,1);const monthStart=new Date(todayStart.getFullYear(),todayStart.getMonth(),1);const [followupsDueToday,overdueFollowups,lostLeadsThisMonth,paymentPendingLeads]=await Promise.all([
-      Followup.count({where:{status:'pending',dueDate:{[Op.gte]:todayStart,[Op.lt]:todayEnd}}}),Followup.count({where:{status:'pending',dueDate:{[Op.lt]:new Date()}}}),Lead.count({where:{updatedAt:{[Op.gte]:monthStart}},include:[{model:LeadStatus,as:'status',where:{isLost:true},required:true}]}),Lead.count({include:[{model:LeadStatus,as:'status',where:{code:'payment_pending'},required:true}]})
-    ]);
+    const monthStart=new Date(todayStart.getFullYear(),todayStart.getMonth(),1);
+    const lostLeadsThisMonth=await Lead.count({where:{updatedAt:{[Op.gte]:monthStart}},include:[{model:LeadStatus,as:'status',where:{isLost:true},required:true}]});
     return {
       totals: {
         contacts: totalContacts,
@@ -116,10 +113,9 @@ class DashboardService {
         activeChats,
         messagesToday,
         newContactsToday,
-        pendingFollowups,
         newLeads,
         convertedLeads,
-        newLeadsToday:await Lead.count({where:{createdAt:{[Op.gte]:todayStart}}}),followupsDueToday,overdueFollowups,lostLeadsThisMonth,paymentPendingLeads,conversionRate:totalLeads?Math.round(convertedLeads/totalLeads*1000)/10:0,
+        newLeadsToday:await Lead.count({where:{createdAt:{[Op.gte]:todayStart}}}),lostLeadsThisMonth,conversionRate:totalLeads?Math.round(convertedLeads/totalLeads*1000)/10:0,
         installmentsDueToday: feeReminderWidgets.dueToday,
         upcomingInstallments: feeReminderWidgets.upcoming,
         overdueInstallments: feeReminderWidgets.overdue,

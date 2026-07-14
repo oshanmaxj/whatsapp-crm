@@ -28,6 +28,7 @@ const automationService = require('./automation.service');
 const attendanceAlertService = require('./attendanceAlert.service');
 const birthdayWishService = require('./birthdayWish.service');
 const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
+const { LEAD_STATUSES: UNIFIED_LEAD_STATUSES } = require('../constants/leadStatuses');
 
 const REPORT_TITLES = {
   overview: 'Overview Report',
@@ -56,7 +57,7 @@ const REPORT_TITLES = {
 };
 
 const STUDENT_STATUSES = ['enrolled', 'active', 'pending', 'completed', 'dropped', 'suspended'];
-const LEAD_STATUSES = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
+const LEAD_STATUSES = UNIFIED_LEAD_STATUSES.map((status) => status.name);
 const LEAD_SOURCES = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 const PAYMENT_STATUSES = ['paid', 'pending', 'partial', 'overdue', 'cancelled'];
 const PAYMENT_METHODS = ['Cash', 'Bank Deposit', 'Bank Transfer', 'Card', 'Online Payment', 'Cheque', 'Free Card', 'Scholarship', 'Other'];
@@ -114,9 +115,21 @@ class ReportService {
     const start = fromDate || from;
     const end = toDate || to;
     if (!start && !end) return {};
+    const valid = (value) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    if ((start && !valid(start)) || (end && !valid(end)) || (start && end && start > end)) {
+      throw Object.assign(new Error('The selected date range is invalid.'), { status: 422, code: 'INVALID_DATE_RANGE' });
+    }
     const range = {};
-    if (start) range[Op.gte] = new Date(start);
-    if (end) range[Op.lte] = new Date(`${end}T23:59:59.999Z`);
+    if (start) range[Op.gte] = new Date(`${start}T00:00:00+05:30`);
+    if (end) {
+      const exclusiveEnd = new Date(`${end}T00:00:00+05:30`);
+      exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
+      range[Op.lt] = exclusiveEnd;
+    }
     return { [field]: range };
   }
 
@@ -125,7 +138,7 @@ class ReportService {
       safeList('courses', () => Course.findAll({ attributes: ['id', 'code', 'name', 'category'], order: [['name', 'ASC']] })),
       safeList('batches', () => Batch.findAll({ attributes: ['id', 'name', 'courseId', 'schedule'], include: [{ model: Course, as: 'course', attributes: ['id', 'code', 'name'] }], order: [['name', 'ASC']] })),
       safeList('agents', () => User.findAll({ where: { status: 'active' }, attributes: ['id', 'firstName', 'lastName', 'email'], include: [{ model: Role, as: 'roles', attributes: ['id', 'name'], through: { attributes: [] }, required: false }], order: [['firstName', 'ASC']] })),
-      safeList('leadStatuses', () => LeadStatus.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] })),
+      safeList('leadStatuses', () => LeadStatus.findAll({ where: { active: true }, attributes: ['id', 'name'], order: [['display_order', 'ASC']] })),
       safeList('leadSources', () => LeadSource.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] })),
       safeList('departments', () => Role.findAll({ where: { isActive: true }, attributes: ['id', 'name'], order: [['name', 'ASC']] })),
       safeList('whatsappAccounts', async () => {
@@ -316,10 +329,10 @@ class ReportService {
 
   async leadReport(filters) {
     const rows = await this.leadRows(filters);
-    const converted = rows.filter((row) => row.status === 'Converted').length;
+    const converted = rows.filter((row) => row.status === 'Registered').length;
     return makeReport('leads', filters, [
       { label: 'Total Leads', value: rows.length },
-      { label: 'Converted', value: converted },
+      ...LEAD_STATUSES.map((status) => ({ label: status, value: rows.filter((row) => row.status === status).length })),
       { label: 'Conversion Rate', value: pct(converted, rows.length) }
     ], [
       { key: 'name', label: 'Lead name' },
@@ -625,7 +638,7 @@ class ReportService {
     ]);
     const rows = agents.map((agent) => {
       const agentLeads = leads.filter((lead) => String(lead.ownerId) === String(agent.id));
-      const converted = agentLeads.filter((lead) => lead.status?.name === 'Converted').length;
+      const converted = agentLeads.filter((lead) => lead.status?.name === 'Registered').length;
       return {
         agent: userName(agent),
         department: agent.roles?.[0]?.name || '',
@@ -640,7 +653,7 @@ class ReportService {
       { key: 'agent', label: 'Agent' },
       { key: 'department', label: 'Department' },
       { key: 'assignedLeads', label: 'Assigned leads' },
-      { key: 'convertedLeads', label: 'Converted leads' },
+      { key: 'convertedLeads', label: 'Registered leads' },
       { key: 'activeChats', label: 'Active chats' },
       { key: 'followUps', label: 'Follow-ups' },
       { key: 'conversionRate', label: 'Conversion rate' }
@@ -762,7 +775,7 @@ class ReportService {
       const source = lead.source?.name || 'Unknown';
       const row = map.get(source) || { leadSource: source, totalLeads: 0, convertedLeads: 0, revenue: 0 };
       row.totalLeads += 1;
-      if (lead.status?.name === 'Converted') row.convertedLeads += 1;
+      if (lead.status?.name === 'Registered') row.convertedLeads += 1;
       row.revenue += amount(lead.value);
       map.set(source, row);
     });
@@ -770,7 +783,7 @@ class ReportService {
     return makeReport('lead-source-conversion', filters, [{ label: 'Lead Sources', value: rows.length }, { label: 'Leads', value: rows.reduce((sum, row) => sum + row.totalLeads, 0) }], [
       { key: 'leadSource', label: 'Lead source' },
       { key: 'totalLeads', label: 'Total leads' },
-      { key: 'convertedLeads', label: 'Converted leads' },
+      { key: 'convertedLeads', label: 'Registered leads' },
       { key: 'conversionRate', label: 'Conversion rate' },
       { key: 'revenue', label: 'Revenue' },
       { key: 'costPerLead', label: 'Cost per lead' }
@@ -1003,7 +1016,7 @@ class ReportService {
     ]);
     const summary = [
       { label: 'Total leads', value: leads.summary[0]?.value || 0 },
-      { label: 'Converted leads', value: leads.summary[1]?.value || 0 },
+      { label: 'Registered leads', value: leads.summary.find((item) => item.label === 'Registered')?.value || 0 },
       { label: 'Active students', value: students.rows.filter((row) => row.status === 'active' || row.status === 'enrolled').length },
       { label: 'Total revenue', value: finance.summary.find((item) => item.label === 'Paid Amount')?.value || '0.00' },
       { label: 'Outstanding amount', value: finance.summary.find((item) => item.label === 'Balance')?.value || '0.00' },

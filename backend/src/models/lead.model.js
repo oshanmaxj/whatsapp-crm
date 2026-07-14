@@ -76,7 +76,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: true
     },
-    lastFollowupAt:{type:DataTypes.DATE,allowNull:true},followupStatus:{type:DataTypes.STRING(30),allowNull:true},lostReasonId:{type:DataTypes.INTEGER.UNSIGNED,allowNull:true},lostReasonText:{type:DataTypes.TEXT,allowNull:true},convertedAt:{type:DataTypes.DATE,allowNull:true},convertedByUserId:{type:DataTypes.BIGINT.UNSIGNED,allowNull:true},
+    lastFollowupAt:{type:DataTypes.DATE,allowNull:true},followupStatus:{type:DataTypes.STRING(30),allowNull:true},lostReasonId:{type:DataTypes.INTEGER.UNSIGNED,allowNull:true},lostReasonText:{type:DataTypes.TEXT,allowNull:true},convertedAt:{type:DataTypes.DATE,allowNull:true},registeredAt:{type:DataTypes.DATE,allowNull:true},convertedByUserId:{type:DataTypes.BIGINT.UNSIGNED,allowNull:true},
     deletedAt: {
       type: DataTypes.DATE,
       allowNull: true
@@ -96,6 +96,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['source_id', 'created_at'] },
       { fields: ['course_interested'] },
       { fields: ['created_at'] }
+      ,{ fields: ['updated_at'] }
+      ,{ fields: ['registered_at'] }
     ]
   });
 

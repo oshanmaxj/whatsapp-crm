@@ -19,7 +19,7 @@ import { getRoles } from '../services/userManagement.service';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const steps = ['Details', 'Template', 'Recipients', 'Variables', 'Schedule', 'Review'];
-const leadStatuses = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
+const leadStatuses = ['New', 'Contacted', 'Interested', 'Ignore', 'Agreed', 'Registered', 'Lost'];
 const statusColors = { Draft: 'default', Scheduled: 'info', Processing: 'warning', Completed: 'success', Failed: 'error', Cancelled: 'default' };
 const blankForm = () => ({
   name: '', description: '', whatsappTemplateId: '', recipientMode: 'all', contactIds: [],

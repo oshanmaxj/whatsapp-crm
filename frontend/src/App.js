@@ -44,7 +44,6 @@ import { ModuleLandingPage } from './components/ModuleNavigationView';
 import LmsAdminPage from './pages/LmsAdminPage';
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
 import CommissionPage from './pages/CommissionPage';
-import LeadPipelinePage from './pages/LeadPipelinePage';import FollowupsPage from './pages/FollowupsPage';
 import {
   StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLoginPage, StudentMaterialsPage,
   StudentPaymentsPage, StudentPortalGuard, StudentPortalLayout, StudentProfilePage as StudentPortalProfilePage
@@ -136,8 +135,8 @@ function App() {
             <Route path="/notifications" element={permit('settings.view', <NotificationsPage />)} />
             <Route path="/reports" element={permit('reports.view', <ReportsPage />)} />
             <Route path="/leads" element={permit('leads.view', <LeadsPage />)} />
-            <Route path="/lead-pipeline" element={permit(['lead.view_own','lead.view_team','lead.view_all'], <LeadPipelinePage />)} />
-            <Route path="/followups" element={permit(['followup.view_own','followup.view_team','followup.view_all'], <FollowupsPage />)} />
+            <Route path="/lead-pipeline" element={<Navigate to="/leads" replace />} />
+            <Route path="/followups" element={<Navigate to="/leads" replace />} />
             <Route path="/agents" element={permit('agents.view', <AgentsPage />)} />
             <Route path="/chat" element={permit('inbox.view', <ChatPage />)} />
             <Route path="/inbox" element={<Navigate to="/chat" replace />} />

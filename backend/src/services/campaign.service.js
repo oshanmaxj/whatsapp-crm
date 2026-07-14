@@ -304,7 +304,7 @@ class CampaignService {
 
   async audienceOptions() {
     const [statuses, sources] = await Promise.all([
-      LeadStatus.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }),
+      LeadStatus.findAll({ where: { active: true }, attributes: ['id', 'name'], order: [['display_order', 'ASC']] }),
       LeadSource.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] })
     ]);
     return { statuses, sources };

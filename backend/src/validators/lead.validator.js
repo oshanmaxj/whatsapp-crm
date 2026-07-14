@@ -1,6 +1,7 @@
 const Joi = require('joi');
+const { LEAD_STATUSES } = require('../constants/leadStatuses');
 
-const statuses = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
+const statuses = LEAD_STATUSES.map((status) => status.name);
 const sources = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 const priorities = ['low', 'medium', 'high'];
 const courses = ['Forex', 'Crypto', 'Stock Market', 'Home Decoration', 'Other'];

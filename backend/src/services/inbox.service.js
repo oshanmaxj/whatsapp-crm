@@ -197,7 +197,8 @@ class InboxService {
     mine,
     status,
     unread,
-    whatsappAccountId
+    whatsappAccountId,
+    leadStatus
   } = {}, userOrId) {
     const userId = typeof userOrId === 'object' ? userOrId.id : userOrId;
     const filters = {};
@@ -230,14 +231,22 @@ class InboxService {
       ];
     }
 
+    const includes = this.conversationIncludes().map((include) => {
+      if (include.as === 'contact') return { ...include, where: contactWhere, required: !!search };
+      if (include.as !== 'lead' || !leadStatus) return include;
+      if (leadStatus === 'none') return { ...include, where: { id: null }, required: false };
+      return {
+        ...include, required: true,
+        include: include.include.map((nested) => nested.as === 'status'
+          ? { ...nested, where: { code: String(leadStatus).toLowerCase() }, required: true }
+          : nested)
+      };
+    });
+    if (leadStatus === 'none') where.leadId = null;
     const conversations = await Conversation.findAll({
       attributes: this.conversationAttributes(),
       where,
-      include: this.conversationIncludes().map((include) =>
-        include.as === 'contact'
-          ? { ...include, where: contactWhere, required: !!search }
-          : include
-      ),
+      include: includes,
       order: [['last_message_at', 'DESC NULLS LAST'], ['updated_at', 'DESC']]
     });
 

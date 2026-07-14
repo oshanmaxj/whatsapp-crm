@@ -37,6 +37,13 @@ class LeadController {
     }
   }
 
+  async updateStatus(req, res, next) {
+    try {
+      const lead = await leadService.updateStatus(req.params.id, req.body, req.user);
+      return res.status(200).json({ success: true, data: lead });
+    } catch (err) { next(err); }
+  }
+
   async remove(req, res, next) {
     try {
       const result = await leadService.deleteLead(req.params.id);

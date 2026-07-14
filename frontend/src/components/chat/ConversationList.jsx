@@ -10,6 +10,7 @@ import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import { agentName, contactName, formatTime, initials, messagePreview, safeArray } from './chatUtils';
 import WhatsAppAccountSelect from '../WhatsAppAccountSelect';
+import { LEAD_STATUSES } from '../../constants/leadStatuses';
 
 export const ConversationItem = memo(function ConversationItem({ conversation, selected, onSelect }) {
   const unread = Number(conversation.unreadCount || 0);
@@ -175,6 +176,14 @@ export function ConversationList({
               </Select>
             </FormControl>
           </Stack>
+          <FormControl size="small" fullWidth sx={{ mt: 1 }}>
+            <InputLabel>Lead Status</InputLabel>
+            <Select label="Lead Status" value={filters.leadStatus || ''} onChange={(event) => onFiltersChange({ ...filters, leadStatus: event.target.value })}>
+              <MenuItem value="">All statuses</MenuItem>
+              {LEAD_STATUSES.map((status) => <MenuItem key={status.code} value={status.code}>{status.name}</MenuItem>)}
+              <MenuItem value="none">No lead/status</MenuItem>
+            </Select>
+          </FormControl>
           <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
             <FormControl size="small" fullWidth>
               <InputLabel>Status</InputLabel>

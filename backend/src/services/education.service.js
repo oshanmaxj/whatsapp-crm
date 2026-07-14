@@ -31,6 +31,8 @@ const { canConfirmPayment } = require('../utils/paymentConfirmationAccess');
 const studentMessageAutomationService = require('./studentMessageAutomation.service');
 const auditService = require('./audit.service');
 const { evaluateFeeAccess } = require('./enrollmentAccess.service');
+const leadStatusService = require('./leadStatus.service');
+const { normalizeSriLankanPhone } = require('../utils/phone');
 
 function fullName(contact) {
   return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || contact?.phone || 'Student';
@@ -595,6 +597,45 @@ class EducationService {
     return { deleted: true, id: row.id, retainedForHistory: true };
   }
 
+  async markRelatedLeadRegistered({ student, payload, userId }) {
+    try {
+      let lead = payload.leadId ? await Lead.findByPk(payload.leadId) : null;
+      let conversation = payload.conversationId ? await Conversation.findByPk(payload.conversationId) : null;
+      if (!lead && conversation?.leadId) lead = await Lead.findByPk(conversation.leadId);
+      if (!lead && student.contactId) {
+        const contactMatches = await Lead.findAll({ where: { contactId: student.contactId }, order: [['created_at', 'DESC']], limit: 2 });
+        if (contactMatches.length === 1) lead = contactMatches[0];
+      }
+      const normalizedPhone = normalizeSriLankanPhone(student.phone);
+      if (!lead && normalizedPhone) {
+        const candidates = await Lead.findAll({ include: [{ model: Contact, as: 'contact', required: true }], order: [['created_at', 'DESC']] });
+        const matches = candidates.filter((row) => normalizeSriLankanPhone(row.contact?.phone) === normalizedPhone);
+        if (matches.length === 1) lead = matches[0];
+        if (matches.length > 1) {
+          logger.warn('DUPLICATE_LEAD_PHONE_MATCH', { studentId: student.id, normalizedPhone, leadIds: matches.map((row) => row.id) });
+          await auditService.record({ userId, action: 'DUPLICATE_LEAD_PHONE_MATCH', entityType: 'student', entityId: student.id, changes: { normalizedPhone, leadIds: matches.map((row) => row.id) } });
+          return null;
+        }
+      }
+      if (!lead) {
+        logger.info('LEAD_NOT_FOUND_FOR_STUDENT_STATUS_UPDATE', { studentId: student.id, normalizedPhone });
+        await auditService.record({ userId, action: 'LEAD_NOT_FOUND_FOR_STUDENT_STATUS_UPDATE', entityType: 'student', entityId: student.id, changes: { normalizedPhone } });
+        return null;
+      }
+      if (!conversation) conversation = await Conversation.findOne({ where: { leadId: lead.id }, order: [['updated_at', 'DESC']] });
+      await leadStatusService.updateLeadStatus({
+        leadId: lead.id, statusCode: 'registered', actorUserId: userId,
+        source: payload.source === 'lead_conversion' ? 'student_conversion' : 'student_registration',
+        auditData: { studentId: student.id, conversationId: conversation?.id || null, normalizedPhone }
+      });
+      if (!student.leadId) await student.update({ leadId: lead.id });
+      return lead;
+    } catch (error) {
+      logger.warn('student_lead_status_update_failed', { studentId: student.id, error: error.message, code: error.code });
+      return null;
+    }
+  }
+
   async createStudent(payload, userId = null) {
     const name = String(payload.name || '').trim();
     const phone = String(payload.phone || '').trim();
@@ -648,6 +689,7 @@ class EducationService {
       notes: payload.notes || null,
       portalPasswordHash: portalPassword || generatedPortalPassword
     });
+    await this.markRelatedLeadRegistered({ student, payload, userId });
     await this.syncEnrollments(student, { enrollments: initialEnrollments }, userId);
     const createdEnrollments = await StudentEnrollment.findAll({ where: { studentId: student.id } });
     for (const enrollment of initialEnrollments.filter((item) => item.enrollmentStatus === 'active')) {
@@ -792,14 +834,14 @@ class EducationService {
       dateOfBirth: payload.dateOfBirth || payload.date_of_birth || null,
       status: payload.status || 'enrolled',
       studentPortalPassword: payload.studentPortalPassword ?? payload.portalPassword ?? null,
-      notes: [leadNotes || 'Converted from lead', attributionNote].filter(Boolean).join('\n')
+      notes: [leadNotes || 'Converted from lead', attributionNote].filter(Boolean).join('\n'),
+      conversationId: conversation?.id || null,
+      source: 'lead_conversion'
     }, userId);
     const studentRow = await Student.findByPk(student.id);
     await studentRow.update({ convertedByUserId: userId, creditedToUserId: requestedCredit || null, convertedAt: new Date(), conversionOverrideReason: overriding ? String(payload.overrideReason).trim() : null, conversionOverriddenByUserId: overriding ? userId : null });
     await auditService.record({ userId, action: overriding ? 'STUDENT_CONVERSION_CREDIT_OVERRIDDEN' : 'STUDENT_CONVERTED', entityType: 'student', entityId: student.id, method: 'POST', path: `/api/education/leads/${leadId}/convert-to-student`, changes: { conversationId: conversation?.id || null, contactId: lead.contactId, convertedByUserId: userId, creditedToUserId: requestedCredit || null, previousCreditedToUserId: ownerUserId, reason: overriding ? payload.overrideReason : null } });
 
-    const converted = await LeadStatus.findOne({ where: { name: 'Converted' } });
-    if (converted) await lead.update({ statusId: converted.id, stage: 'converted' });
     const convertedStudent = this.studentConversionPayload(await this.getStudent(student.id));
     if (student.generatedPortalPassword) convertedStudent.generatedPortalPassword = student.generatedPortalPassword;
     return convertedStudent;

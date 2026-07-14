@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Box, Drawer, Snackbar, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import {
   assignConversation,
   createNote,
@@ -23,6 +23,7 @@ import {
 } from '../services/chat.service';
 import { getRoles } from '../services/userManagement.service';
 import { updateContact } from '../services/contact.service';
+import { updateLeadStatus } from '../services/lead.service';
 import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
 import {
   ChatArea,
@@ -78,6 +79,7 @@ function ChatPage() {
   const { socket, connected } = useOutletContext() || {};
   const theme = useTheme();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const compactLayout = useMediaQuery(theme.breakpoints.down('lg'));
   const inlineWorkspace = useMediaQuery(theme.breakpoints.up('xl'));
   const fileInputRef = useRef(null);
@@ -87,7 +89,7 @@ function ChatPage() {
   const [conversations, setConversations] = useState([]);
   const [agents, setAgents] = useState([]);
   const [roles, setRoles] = useState([]);
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(() => searchParams.get('conversationId') || null);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [media, setMedia] = useState([]);
@@ -100,11 +102,12 @@ function ChatPage() {
   const [newMessage, setNewMessage] = useState('');
   const [noteText, setNoteText] = useState('');
   const [labelText, setLabelText] = useState('');
-  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', unread: '', whatsappAccountId: '' });
+  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', leadStatus: '', unread: '', whatsappAccountId: '' });
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [leadStatusSaving, setLeadStatusSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -115,9 +118,10 @@ function ChatPage() {
     assignedRoleId: filters.assignedRoleId || undefined,
     mine: filters.mine || undefined,
     status: filters.status || undefined,
-    unread: filters.unread || undefined
+    unread: filters.unread || undefined,
+    leadStatus: filters.leadStatus || undefined
     , whatsappAccountId: filters.whatsappAccountId || undefined
-  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.unread, filters.whatsappAccountId]);
+  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.leadStatus, filters.unread, filters.whatsappAccountId]);
 
   const selectedConversation = conversation
     || safeArray(conversations).find((item) => String(item.id) === String(selected))
@@ -315,15 +319,21 @@ function ChatPage() {
     };
 
     const handleSocketError = ({ message } = {}) => setError(message || 'Unable to send WhatsApp message.');
+    const handleLeadStatusUpdate = () => {
+      if (selectedRef.current) loadDetails(selectedRef.current, { silent: true });
+      loadConversations({ silent: true });
+    };
     socket.on('chat:message', handleNewMessage);
     socket.on('whatsapp.message.received', handleNewMessage);
     socket.on('message_status_updated', handleStatusUpdate);
     socket.on('chat:error', handleSocketError);
+    socket.on('lead:status-updated', handleLeadStatusUpdate);
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('whatsapp.message.received', handleNewMessage);
       socket.off('message_status_updated', handleStatusUpdate);
       socket.off('chat:error', handleSocketError);
+      socket.off('lead:status-updated', handleLeadStatusUpdate);
     };
   }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage]);
 
@@ -478,6 +488,19 @@ function ChatPage() {
       setError(requestError.response?.data?.message || 'Unable to update conversation status.');
     }
   }, [selected, loadDetails, loadConversations]);
+
+  const handleLeadStatus = useCallback(async (statusCode) => {
+    const lead = selectedConversation?.lead;
+    if (!lead?.id) return;
+    try {
+      setLeadStatusSaving(true);
+      await updateLeadStatus(lead.id, { statusCode, expectedCurrentStatusCode: lead.status?.code || lead.stage, source: 'chat_workspace' });
+      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+      setNotice('Lead status updated.');
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to update lead status.');
+    } finally { setLeadStatusSaving(false); }
+  }, [selected, selectedConversation, loadDetails, loadConversations]);
 
   const handleAddNote = useCallback(async (type = 'private') => {
     if (!selected || !noteText.trim()) return;
@@ -671,6 +694,8 @@ function ChatPage() {
       onUpdateContact={handleUpdateContact}
       onDownload={handleDownload}
       onAction={handleWorkspaceAction}
+      onLeadStatusChange={handleLeadStatus}
+      leadStatusSaving={leadStatusSaving}
       onClose={() => setWorkspaceOpen(false)}
       showClose={!inlineWorkspace}
     />

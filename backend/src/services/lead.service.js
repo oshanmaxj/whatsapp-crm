@@ -1,8 +1,11 @@
 const { Op, fn, col } = require('sequelize');
-const { sequelize, Contact, Lead, LeadAssignment, LeadStatus, LeadSource, User, LeadActivity } = require('../models');
+const { sequelize, Contact, Conversation, Lead, LeadAssignment, LeadStatus, LeadSource, User, LeadActivity } = require('../models');
 const assignmentService = require('./assignment.service');
+const leadStatusService = require('./leadStatus.service');
+const { LEAD_STATUSES, normalizeLeadStatusCode } = require('../constants/leadStatuses');
+const { normalizeSriLankanPhone } = require('../utils/phone');
 
-const DEFAULT_STATUSES = ['New', 'Contacted', 'Interested', 'Not Interested', 'Converted', 'Lost'];
+const DEFAULT_STATUSES = LEAD_STATUSES.map((status) => status.name);
 const DEFAULT_SOURCES = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 
 function splitName(name = '') {
@@ -15,9 +18,29 @@ function splitName(name = '') {
 
 function normalizeStatus(name) {
   if (!name) return 'New';
-  const normalized = String(name).trim().toLowerCase();
-  const found = DEFAULT_STATUSES.find((status) => status.toLowerCase() === normalized);
+  const code = normalizeLeadStatusCode(name);
+  const found = LEAD_STATUSES.find((status) => status.code === code)?.name;
   return found || name;
+}
+
+function colomboDateRange(dateFrom, dateTo) {
+  if (!dateFrom && !dateTo) return null;
+  const valid = (value) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  if ((dateFrom && !valid(dateFrom)) || (dateTo && !valid(dateTo)) || (dateFrom && dateTo && dateFrom > dateTo)) {
+    throw Object.assign(new Error('The selected date range is invalid.'), { status: 422, code: 'INVALID_DATE_RANGE' });
+  }
+  const range = {};
+  if (dateFrom) range[Op.gte] = new Date(`${dateFrom}T00:00:00+05:30`);
+  if (dateTo) {
+    const end = new Date(`${dateTo}T00:00:00+05:30`);
+    end.setUTCDate(end.getUTCDate() + 1);
+    range[Op.lt] = end;
+  }
+  return range;
 }
 
 function normalizeSource(name) {
@@ -56,6 +79,7 @@ function serializeLead(lead) {
       : null,
     source: lead.source?.name || null,
     status: lead.status?.name || null,
+    statusCode: lead.status?.code || normalizeLeadStatusCode(lead.stage),
     priority: lead.priority,
     assignedAgent: serializeAgent(lead.owner),
     courseInterested: lead.courseInterested,
@@ -67,6 +91,8 @@ function serializeLead(lead) {
     stage: lead.stage,
     createdAt: lead.createdAt,
     updatedAt: lead.updatedAt,
+    registeredAt: lead.registeredAt || null,
+    conversationId: lead.getDataValue ? (lead.getDataValue('resolvedConversationId') || null) : (lead.resolvedConversationId || null),
     whatsappAccountId: lead.whatsappAccountId || null,
     assignmentHistory: lead.assignments
       ? lead.assignments.map((assignment) => ({
@@ -98,9 +124,10 @@ class LeadService {
 
   async ensureStatus(name) {
     const statusName = normalizeStatus(name);
-    let status = await LeadStatus.findOne({ where: { name: statusName } });
+    const definition = LEAD_STATUSES.find((item) => item.name === statusName);
+    let status = await LeadStatus.findOne({ where: definition ? { code: definition.code } : { name: statusName } });
     if (!status) {
-      status = await LeadStatus.create({ name: statusName, description: `${statusName} lead status` });
+      status = await LeadStatus.create({ name: statusName, code: definition?.code || normalizeLeadStatusCode(statusName), active: true, description: `${statusName} lead status` });
     }
     return status;
   }
@@ -163,19 +190,25 @@ class LeadService {
     });
   }
 
-  buildLeadWhere({ status, source, assignedAgentId, courseInterested, whatsappAccountId } = {}) {
+  buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo } = {}) {
     const where = {};
     if (assignedAgentId) where.ownerId = assignedAgentId;
     if (courseInterested) where.courseInterested = courseInterested;
     if (whatsappAccountId) where.whatsappAccountId = whatsappAccountId;
+    const range = colomboDateRange(dateFrom, dateTo);
+    if (range) {
+      const fields = { createdAt: 'createdAt', updatedAt: 'updatedAt', registeredAt: 'registeredAt' };
+      if (!fields[dateType || 'createdAt']) throw Object.assign(new Error('The selected date type is invalid.'), { status: 422, code: 'INVALID_DATE_RANGE' });
+      where[fields[dateType || 'createdAt']] = range;
+    }
     return where;
   }
 
-  async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested, whatsappAccountId } = {}, actor = null) {
+  async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo } = {}, actor = null) {
     await this.ensureDefaultLookups();
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId });
+    const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo });
     if(actor&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))where[Op.or]=[{ownerId:actor.id},{ownerId:null}];
     const include = this.buildLeadIncludes({ search, status, source });
 
@@ -188,6 +221,7 @@ class LeadService {
       offset: (safePage - 1) * safeLimit
     });
 
+    await this.attachConversationIds(rows);
     return {
       leads: rows.map(serializeLead),
       pagination: {
@@ -214,7 +248,7 @@ class LeadService {
         sequelize.where(fn('concat', col('contact.first_name'), ' ', col('contact.last_name')), { [Op.iLike]: term })
       ];
     }
-    if (status) statusWhere.name = normalizeStatus(status);
+    if (status) statusWhere.code = normalizeLeadStatusCode(status);
     if (source) sourceWhere.name = normalizeSource(source);
 
     const includes = [
@@ -249,8 +283,46 @@ class LeadService {
       error.status = 404;
       throw error;
     }
-    if(actor&&lead.assignedAgent?.id&&String(lead.assignedAgent.id)!==String(actor.id)&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))throw Object.assign(new Error('You do not have access to this lead'),{status:403,code:'LEAD_ACCESS_FORBIDDEN'});
+    if(actor&&lead.ownerId&&String(lead.ownerId)!==String(actor.id)&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))throw Object.assign(new Error('You do not have access to this lead'),{status:403,code:'LEAD_ACCESS_FORBIDDEN'});
+    await this.attachConversationIds([lead]);
     return serializeLead(lead);
+  }
+
+  async attachConversationIds(leads) {
+    if (!leads.length) return leads;
+    const leadIds = leads.map((lead) => lead.id);
+    const contactIds = leads.map((lead) => lead.contactId).filter(Boolean);
+    const direct = await Conversation.findAll({
+      where: { [Op.or]: [{ leadId: { [Op.in]: leadIds } }, { contactId: { [Op.in]: contactIds } }] },
+      attributes: ['id', 'leadId', 'contactId', 'updatedAt'], order: [['updated_at', 'DESC']]
+    });
+    for (const lead of leads) {
+      const exact = direct.find((row) => String(row.leadId || '') === String(lead.id));
+      const contactMatch = direct.find((row) => String(row.contactId || '') === String(lead.contactId));
+      if (exact || contactMatch) lead.setDataValue('resolvedConversationId', (exact || contactMatch).id);
+    }
+    const unresolved = leads.filter((lead) => !lead.getDataValue('resolvedConversationId'));
+    if (unresolved.length) {
+      const wanted = new Map(unresolved.map((lead) => [normalizeSriLankanPhone(lead.contact?.phone), lead]).filter(([phone]) => phone));
+      const [candidates, contacts] = await Promise.all([
+        Conversation.findAll({ include: [{ model: Contact, as: 'contact', required: true }], order: [['updated_at', 'DESC']] }),
+        Contact.findAll({ attributes: ['id', 'phone'] })
+      ]);
+      for (const [phone, lead] of wanted) {
+        const matches = candidates.filter((row) => normalizeSriLankanPhone(row.contact?.phone) === phone);
+        const matchingContacts = contacts.filter((contact) => normalizeSriLankanPhone(contact.phone) === phone);
+        if (matches.length === 1 && matchingContacts.length === 1) lead.setDataValue('resolvedConversationId', matches[0].id);
+      }
+    }
+    return leads;
+  }
+
+  async updateStatus(id, payload, actor) {
+    await leadStatusService.updateLeadStatus({
+      leadId: id, statusCode: payload.statusCode, expectedCurrentStatusCode: payload.expectedCurrentStatusCode,
+      actorUserId: actor.id, actor, source: payload.source === 'chat_workspace' ? 'chat_workspace' : 'leads_page'
+    });
+    return this.getLeadById(id, actor);
   }
 
   async createManualLead(payload, actor = null) {
@@ -275,7 +347,7 @@ class LeadService {
   }
 
   async updateLead(id, payload, actor = null) {
-    const lead = await Lead.findByPk(id, { include: [{ model: Contact, as: 'contact' }] });
+    let lead = await Lead.findByPk(id, { include: [{ model: Contact, as: 'contact' }] });
     if (!lead) {
       const error = new Error('Lead not found');
       error.status = 404;
@@ -296,9 +368,8 @@ class LeadService {
 
     const updates = {};
     if (payload.status) {
-      const status = await this.ensureStatus(payload.status);
-      updates.statusId = status.id;
-      updates.stage = String(status.name).toLowerCase();
+      await leadStatusService.updateLeadStatus({ leadId: id, statusCode: payload.status, actorUserId: actor?.id || null, actor, source: actor ? 'leads_page' : 'workflow' });
+      lead = await Lead.findByPk(id, { include: [{ model: Contact, as: 'contact' }] });
     }
     if (payload.source) {
       const source = await this.ensureSource(payload.source);

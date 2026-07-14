@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { createLeadStatusService } = require('../src/services/leadStatus.service');
 const leadService = require('../src/services/lead.service');
 const leadController = require('../src/controllers/lead.controller');
+const { LeadActivity } = require('../src/models');
 
 const definitions = [
   ['new', 'New'], ['contacted', 'Contacted'], ['interested', 'Interested'],
@@ -15,7 +16,7 @@ function environment({ current = 'new', ownerId = 10, missingLead = false, activ
     toJSON() { return { id: this.id, code: this.code, name: this.name }; }
   }));
   const currentStatus = statuses.find((status) => status.code === current);
-  const writes = { lead: [], activity: [], audit: [], statusCreates: 0, leadLookup: null };
+  const writes = { lead: [], activity: [], audit: [], statusCreates: 0, leadLookup: null, rolledBack: false };
   const events = [];
   const lead = missingLead ? null : {
     id: 55, ownerId, statusId: currentStatus.id, stage: current, convertedAt: null, convertedByUserId: null,
@@ -23,7 +24,16 @@ function environment({ current = 'new', ownerId = 10, missingLead = false, activ
   };
   const transaction = { LOCK: { UPDATE: 'UPDATE' } };
   const service = createLeadStatusService({
-    sequelize: { async transaction(callback) { return callback(transaction); } },
+    sequelize: {
+      async transaction(callback) {
+        const snapshot = lead ? { ...lead } : null;
+        try { return await callback(transaction); } catch (error) {
+          if (lead && snapshot) Object.assign(lead, snapshot);
+          writes.rolledBack = true;
+          throw error;
+        }
+      }
+    },
     Lead: {
       async findByPk(id, options) { writes.leadLookup = options; return lead; }
     },
@@ -128,30 +138,48 @@ test('activity and required audit rows use existing model attributes', async () 
   assert.equal(env.writes.activity[0].options.transaction, env.transaction);
   assert.equal(env.writes.audit[0].required, true);
   assert.equal(env.writes.audit[0].transaction, env.transaction);
-  for (const event of ['lead_status_update_attempt', 'lead_status_update_resolved', 'lead_status_update_saved', 'lead_status_activity_saved']) {
+  for (const event of ['lead_status_update_attempt', 'lead_status_update_resolved', 'lead_status_saved', 'lead_status_history_attempt', 'lead_status_history_saved']) {
     assert.ok(env.events.some((item) => item.message === event));
   }
 });
 
 test('required audit failure is explicit and logged', async () => {
-  const env = environment({ auditError: Object.assign(new Error('audit insert failed'), { code: '42703' }) });
+  const databaseError = Object.assign(new Error('audit insert failed'), { code: '42703' });
+  const env = environment({ auditError: databaseError });
   await assert.rejects(
     env.service.updateLeadStatus({ leadId: 55, statusCode: 'contacted', actor: ownActor }),
-    (error) => error.code === 'LEAD_STATUS_AUDIT_FAILED' && error.status === 500
+    (error) => error === databaseError
   );
   const failure = env.events.find((event) => event.message === 'lead_status_update_failed');
   assert.equal(failure.metadata.oldStatusCode, 'new');
   assert.equal(failure.metadata.newStatusCode, 'contacted');
+  assert.equal(env.writes.rolledBack, true);
+  assert.equal(env.lead.statusId, 1);
 });
 
 test('activity failure is explicit, logged, and not swallowed', async () => {
-  const env = environment({ activityError: Object.assign(new Error('activity insert failed'), { code: '42703' }) });
+  const databaseError = Object.assign(new Error('activity insert failed'), { code: '42703' });
+  const env = environment({ activityError: databaseError });
   await assert.rejects(
     env.service.updateLeadStatus({ leadId: 55, statusCode: 'contacted', actor: ownActor }),
-    (error) => error.code === 'LEAD_STATUS_ACTIVITY_FAILED' && error.status === 500
+    (error) => error === databaseError
   );
+  const historyFailure = env.events.find((event) => event.message === 'lead_status_history_failed');
+  assert.equal(historyFailure.metadata.error.code, '42703');
   assert.ok(env.events.some((event) => event.message === 'lead_status_update_failed'));
   assert.equal(env.writes.audit.length, 0);
+  assert.equal(env.writes.rolledBack, true);
+  assert.equal(env.lead.statusId, 1);
+});
+
+test('LeadActivity model maps only canonical production columns', () => {
+  const fields = Object.fromEntries(Object.entries(LeadActivity.rawAttributes).map(([name, attribute]) => [name, attribute.field]));
+  assert.deepEqual(fields, {
+    id: 'id', actorUserId: 'actor_user_id', leadId: 'lead_id', action: 'action',
+    oldValue: 'old_value', newValue: 'new_value', note: 'note', createdAt: 'created_at'
+  });
+  assert.equal(Object.hasOwn(fields, 'metadata'), false);
+  assert.equal(Object.hasOwn(fields, 'updatedAt'), false);
 });
 
 test('payload aliases normalize into one internal status code or id', () => {
@@ -165,8 +193,9 @@ test('payload aliases normalize into one internal status code or id', () => {
 
 test('PATCH controller returns the production-compatible updated lead response', async () => {
   const originalUpdateStatus = leadService.updateStatus;
-  const expected = { id: '55', statusId: '3', status: { id: '3', code: 'interested', name: 'Interested' } };
+  const expected = { id: '10', statusId: '3', status: { id: '3', code: 'interested', name: 'Interested' } };
   leadService.updateStatus = async (id, payload, actor) => {
+    assert.equal(id, '10');
     assert.equal(actor.id, 10);
     assert.equal(payload.statusCode, 'interested');
     return expected;
@@ -178,7 +207,7 @@ test('PATCH controller returns the production-compatible updated lead response',
   };
   try {
     await leadController.updateStatus(
-      { params: { id: '55' }, body: { statusCode: 'interested', expectedCurrentStatusCode: 'new' }, user: ownActor },
+      { params: { id: '10' }, body: { statusCode: 'interested', expectedCurrentStatusCode: 'new' }, user: ownActor },
       response,
       (error) => { throw error; }
     );

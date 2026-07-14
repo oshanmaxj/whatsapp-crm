@@ -20,6 +20,10 @@ function publicStatus(status) {
   return { id: status.id, code: status.code, name: status.name };
 }
 
+function definedObject(values) {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+}
+
 function createLeadStatusService(dependencies = {}) {
   const sequelize = dependencies.sequelize || models.sequelize;
   const Conversation = dependencies.Conversation || models.Conversation;
@@ -90,30 +94,40 @@ function createLeadStatusService(dependencies = {}) {
             convertedByUserId: lead.convertedByUserId || effectiveActorUserId
           } : {})
         }, { transaction: t });
-        log.info('lead_status_update_saved', {
+        log.info('lead_status_saved', {
           leadId: String(leadId), actorUserId: effectiveActorUserId,
           oldStatusCode: currentCode, newStatusCode: requestedCode
         });
 
-        try {
-          await LeadActivity.create({
+        const oldValue = definedObject({ statusCode: currentCode || null, statusId: oldStatusId });
+        const newValue = definedObject({ statusCode: requestedCode, statusId: status.id, source, ...auditData });
+        const historyValues = definedObject({
             leadId: lead.id,
             actorUserId: effectiveActorUserId,
             action: source === 'student_registration' || source === 'student_conversion' ? 'AUTO_REGISTERED' : 'STATUS_CHANGED',
-            oldValue: { statusCode: currentCode, statusId: oldStatusId },
-            newValue: { statusCode: requestedCode, statusId: status.id, source, ...auditData },
+            oldValue,
+            newValue,
             note: source === 'student_registration' || source === 'student_conversion'
               ? 'Lead automatically marked Registered after student registration.'
               : `Lead status changed from ${currentCode || 'unknown'} to ${requestedCode}.`
-          }, { transaction: t });
-          log.info('lead_status_activity_saved', {
+        });
+        log.info('lead_status_history_attempt', {
+          leadId: String(leadId), actorUserId: effectiveActorUserId,
+          oldStatusCode: currentCode, newStatusCode: requestedCode
+        });
+        try {
+          await LeadActivity.create(historyValues, { transaction: t });
+          log.info('lead_status_history_saved', {
             leadId: String(leadId), actorUserId: effectiveActorUserId,
             oldStatusCode: currentCode, newStatusCode: requestedCode
           });
         } catch (error) {
-          throw fail('LEAD_STATUS_ACTIVITY_FAILED', 'Failed to save lead status history.', 500, {
-            causeCode: error.code || error.name
+          log.error('lead_status_history_failed', {
+            leadId: String(leadId), actorUserId: effectiveActorUserId,
+            oldStatusCode: currentCode, newStatusCode: requestedCode,
+            error: { name: error.name, code: error.code, message: error.message }
           });
+          throw error;
         }
 
         try {
@@ -124,9 +138,12 @@ function createLeadStatusService(dependencies = {}) {
             transaction: t, required: true
           });
         } catch (error) {
-          throw fail('LEAD_STATUS_AUDIT_FAILED', 'Failed to save lead status audit log.', 500, {
-            causeCode: error.code || error.name
+          log.error('lead_status_history_failed', {
+            leadId: String(leadId), actorUserId: effectiveActorUserId,
+            oldStatusCode: currentCode, newStatusCode: requestedCode,
+            phase: 'audit', error: { name: error.name, code: error.code, message: error.message }
           });
+          throw error;
         }
         return { lead, status, oldStatusCode: currentCode, changed: true };
       };

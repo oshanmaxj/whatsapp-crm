@@ -209,7 +209,7 @@ models.LeadStatus.hasMany(models.Lead, { foreignKey: 'status_id', as: 'leads' })
 models.LeadSource.hasMany(models.Lead, { foreignKey: 'source_id', as: 'leads' });
 
 models.Lead.hasMany(models.LeadAssignment, { foreignKey: 'lead_id', as: 'assignments' });
-models.Lead.hasMany(models.LeadActivity,{foreignKey:'lead_id',as:'activities'});models.LeadActivity.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.LeadActivity.belongsTo(models.User,{foreignKey:'actor_user_id',as:'actor'});models.Lead.belongsTo(models.LostReason,{foreignKey:'lost_reason_id',as:'lostReason'});
+models.Lead.hasMany(models.LeadActivity,{foreignKey:'leadId',as:'activities'});models.LeadActivity.belongsTo(models.Lead,{foreignKey:'leadId',as:'lead'});models.LeadActivity.belongsTo(models.User,{foreignKey:'actorUserId',as:'actor'});models.Lead.belongsTo(models.LostReason,{foreignKey:'lost_reason_id',as:'lostReason'});
 models.User.hasMany(models.LeadAssignment, { foreignKey: 'assigned_to', as: 'leadAssignments' });
 
 models.Contact.hasMany(models.Conversation, { foreignKey: 'contact_id', as: 'conversations' });

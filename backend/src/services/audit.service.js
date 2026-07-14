@@ -2,7 +2,7 @@ const { AuditLog } = require('../models');
 
 class AuditService {
   async record({ userId, action, entityType, entityId, method, path, ipAddress, userAgent, changes, transaction, required = false }) {
-    const write = AuditLog.create({
+    const values = Object.fromEntries(Object.entries({
       userId: userId || null,
       action,
       entityType: entityType || null,
@@ -12,7 +12,8 @@ class AuditService {
       ipAddress,
       userAgent,
       changes: changes || {}
-    }, { transaction });
+    }).filter(([, value]) => value !== undefined));
+    const write = AuditLog.create(values, { transaction });
     return required ? write : write.catch(() => null);
   }
 

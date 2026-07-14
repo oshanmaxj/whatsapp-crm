@@ -30,6 +30,7 @@ const secureConversationOwnershipMigration = require('../../migrations/025_secur
 const commissionManagementMigration = require('../../migrations/026_create_commission_management');
 const leadPipelineMigration = require('../../migrations/027_lead_pipeline_followups');
 const unifiedLeadStatusMigration = require('../../migrations/028_unified_lead_status');
+const repairLeadActivityHistoryMigration = require('../../migrations/029_repair_lead_activity_history');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -161,6 +162,8 @@ async function run() {
     console.log('Applied: lead pipeline and follow-up control');
     await unifiedLeadStatusMigration.up(queryInterface, Sequelize);
     console.log('Applied: unified lead status system');
+    await repairLeadActivityHistoryMigration.up(queryInterface, Sequelize);
+    console.log('Applied: lead activity history schema repair');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

@@ -48,4 +48,17 @@ exports.autoAssignSchema = Joi.object({
   limit: Joi.number().integer().min(1).max(100).default(25)
 });
 
+exports.updateLeadStatusSchema = Joi.object({
+  statusCode: Joi.string().max(80).optional(),
+  status: Joi.string().max(100).optional(),
+  statusId: Joi.alternatives().try(Joi.number().integer().positive(), Joi.string().max(100)).optional(),
+  leadStatus: Joi.alternatives().try(
+    Joi.string().max(100),
+    Joi.object({ code: Joi.string().max(80).optional(), statusCode: Joi.string().max(80).optional(), id: Joi.alternatives().try(Joi.number().integer().positive(), Joi.string().max(100)).optional() }).or('code', 'statusCode', 'id')
+  ).optional(),
+  code: Joi.string().max(80).optional(),
+  expectedCurrentStatusCode: Joi.string().max(100).optional(),
+  source: Joi.string().valid('leads_page', 'chat_workspace').optional()
+}).or('statusCode', 'status', 'statusId', 'leadStatus', 'code');
+
 exports.leadOptions = { statuses, sources, priorities, courses, studentTypes };

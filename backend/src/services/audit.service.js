@@ -1,8 +1,8 @@
 const { AuditLog } = require('../models');
 
 class AuditService {
-  async record({ userId, action, entityType, entityId, method, path, ipAddress, userAgent, changes, transaction }) {
-    return AuditLog.create({
+  async record({ userId, action, entityType, entityId, method, path, ipAddress, userAgent, changes, transaction, required = false }) {
+    const write = AuditLog.create({
       userId: userId || null,
       action,
       entityType: entityType || null,
@@ -12,7 +12,8 @@ class AuditService {
       ipAddress,
       userAgent,
       changes: changes || {}
-    }, { transaction }).catch(() => null);
+    }, { transaction });
+    return required ? write : write.catch(() => null);
   }
 
   async list(query = {}) {

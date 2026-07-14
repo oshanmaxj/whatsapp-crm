@@ -49,6 +49,19 @@ function normalizeSource(name) {
   return found || name;
 }
 
+function normalizeLeadStatusPayload(payload = {}) {
+  const leadStatusPayload = payload.leadStatus && typeof payload.leadStatus === 'object' ? payload.leadStatus : {};
+  let statusCode = payload.statusCode ?? payload.status ?? leadStatusPayload.statusCode
+    ?? leadStatusPayload.code ?? payload.leadStatus ?? payload.code;
+  let statusId = payload.statusId ?? leadStatusPayload.id;
+  if ((statusCode === undefined || statusCode === null || String(statusCode).trim() === '')
+    && statusId !== undefined && statusId !== null && !/^\d+$/.test(String(statusId).trim())) {
+    statusCode = statusId;
+    statusId = undefined;
+  }
+  return { statusCode, statusId, expectedCurrentStatusCode: payload.expectedCurrentStatusCode };
+}
+
 function serializeAgent(agent) {
   if (!agent) return null;
   return {
@@ -311,11 +324,12 @@ class LeadService {
   }
 
   async updateStatus(id, payload, actor) {
-    await leadStatusService.updateLeadStatus({
-      leadId: id, statusCode: payload.statusCode, expectedCurrentStatusCode: payload.expectedCurrentStatusCode,
+    if (!actor?.id) throw Object.assign(new Error('Authentication is required.'), { status: 401, code: 'AUTH_REQUIRED' });
+    const { statusCode, statusId, expectedCurrentStatusCode } = normalizeLeadStatusPayload(payload);
+    return leadStatusService.updateLeadStatus({
+      leadId: id, statusCode, statusId, expectedCurrentStatusCode,
       actorUserId: actor.id, actor, source: payload.source === 'chat_workspace' ? 'chat_workspace' : 'leads_page'
     });
-    return this.getLeadById(id, actor);
   }
 
   async createManualLead(payload, actor = null) {
@@ -475,3 +489,4 @@ class LeadService {
 }
 
 module.exports = new LeadService();
+module.exports.normalizeLeadStatusPayload = normalizeLeadStatusPayload;

@@ -99,8 +99,11 @@ function createLeadStatusService(dependencies = {}) {
           oldStatusCode: currentCode, newStatusCode: requestedCode
         });
 
-        const oldValue = definedObject({ statusCode: currentCode || null, statusId: oldStatusId });
-        const newValue = definedObject({ statusCode: requestedCode, statusId: status.id, source, ...auditData });
+        const oldValue = definedObject({ statusCode: currentCode || null, oldStatusCode: currentCode || null, statusId: oldStatusId });
+        const newValue = definedObject({
+          statusCode: requestedCode, oldStatusCode: currentCode || null,
+          newStatusCode: requestedCode, statusId: status.id, source, ...auditData
+        });
         const activityType = source === 'student_registration' || source === 'student_conversion'
           ? 'AUTO_REGISTERED' : 'STATUS_CHANGED';
         const historyValues = definedObject({

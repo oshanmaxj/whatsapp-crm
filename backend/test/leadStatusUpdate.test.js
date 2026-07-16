@@ -66,7 +66,7 @@ function environment({ current = 'new', ownerId = 10, missingLead = false, activ
 const ownActor = { id: 10, isSystemAdmin: false, permissions: ['lead.update_status_own'] };
 const managerActor = { id: 20, isSystemAdmin: false, permissions: ['lead.update_status_all'] };
 
-for (const [from, to] of [['new', 'contacted'], ['contacted', 'interested'], ['interested', 'registered']]) {
+for (const [from, to] of [['new', 'contacted'], ['contacted', 'interested'], ['interested', 'registered'], ['registered', 'interested']]) {
   test(`${from} -> ${to} updates statusId by stable code`, async () => {
     const env = environment({ current: from });
     const result = await env.service.updateLeadStatus({
@@ -155,6 +155,34 @@ test('status changes emit the targeted realtime events once', async () => {
   assert.equal(env.socketEvents[1].payload.leadId, '55');
   assert.equal(env.socketEvents[1].payload.statusCode, 'contacted');
   assert.equal(env.socketEvents[1].payload.ownerId, 10);
+});
+
+for (const source of ['leads_page', 'chat_workspace']) {
+  test(`${source} uses the shared status service and records its source`, async () => {
+    const env = environment();
+    await env.service.changeStatus({ leadId: 55, statusCode: 'interested', actor: ownActor, source });
+    assert.equal(env.writes.activity[0].values.activityType, 'STATUS_CHANGED');
+    assert.equal(env.writes.activity[0].values.newValue.source, source);
+    assert.equal(env.writes.activity[0].values.newValue.oldStatusCode, 'new');
+    assert.equal(env.writes.activity[0].values.newValue.newStatusCode, 'interested');
+  });
+}
+
+test('repeated status changes create exactly one activity and audit row per change', async () => {
+  const env = environment();
+  await env.service.changeStatus({ leadId: 55, statusCode: 'contacted', actor: ownActor });
+  await env.service.changeStatus({ leadId: 55, statusCode: 'interested', actor: ownActor });
+  assert.equal(env.writes.activity.length, 2);
+  assert.equal(env.writes.audit.length, 2);
+  assert.deepEqual(env.writes.activity.map((item) => item.values.newValue.newStatusCode), ['contacted', 'interested']);
+});
+
+test('LeadActivity validation rejects records without an activity type or action', async () => {
+  await assert.rejects(
+    LeadActivity.build({ leadId: 55 }).validate(),
+    (error) => error.code === 'LEAD_ACTIVITY_TYPE_REQUIRED'
+      || error.errors?.some((item) => item.path === 'activityType')
+  );
 });
 
 test('required audit failure is explicit and logged', async () => {

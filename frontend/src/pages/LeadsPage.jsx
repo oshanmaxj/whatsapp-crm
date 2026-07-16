@@ -11,7 +11,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import PersonAddAltIcon from '@mui/icons-material/PersonAddAlt';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { getAgents } from '../services/agent.service';
 import { assignLead, autoAssignLeads, createLead, deleteLead, getLeads, updateLead, updateLeadStatus } from '../services/lead.service';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
@@ -70,6 +70,7 @@ function toPayload(form) {
 
 function LeadsPage() {
   const navigate = useNavigate();
+  const { socket } = useOutletContext() || {};
   const [leads, setLeads] = useState([]);
   const [agents, setAgents] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
@@ -118,6 +119,32 @@ function LeadsPage() {
 
   useEffect(() => { loadAgents(); }, []);
   useEffect(() => { loadLeads(); }, [query]);
+  useEffect(() => {
+    if (!socket) return undefined;
+    const applyLeadEvent = (payload = {}) => {
+      if (payload.leadId == null) return;
+      const status = LEAD_STATUSES.find((item) => item.code === payload.statusCode);
+      const owner = payload.ownerId == null
+        ? null
+        : agents.find((agent) => String(agent.id) === String(payload.ownerId));
+      const patchLead = (lead) => String(lead.id) !== String(payload.leadId) ? lead : {
+        ...lead,
+        ...(payload.statusCode ? { statusCode: payload.statusCode, status: payload.status?.name || status?.name || lead.status } : {}),
+        ...(Object.prototype.hasOwnProperty.call(payload, 'ownerId') ? { assignedAgent: owner || null } : {}),
+        updatedAt: payload.updatedAt || lead.updatedAt
+      };
+      setLeads((rows) => rows.map(patchLead));
+      setProfile((current) => current ? patchLead(current) : current);
+    };
+    socket.on('lead.updated', applyLeadEvent);
+    socket.on('lead.status.changed', applyLeadEvent);
+    socket.on('lead.agent.changed', applyLeadEvent);
+    return () => {
+      socket.off('lead.updated', applyLeadEvent);
+      socket.off('lead.status.changed', applyLeadEvent);
+      socket.off('lead.agent.changed', applyLeadEvent);
+    };
+  }, [socket, agents]);
 
   const setFilter = (field) => (event) => {
     setFilters((current) => ({ ...current, [field]: event.target.value }));
@@ -168,10 +195,16 @@ function LeadsPage() {
   };
 
   const reassignLead = async (lead, agentId) => {
-    if (!agentId) return;
-    await assignLead(lead.id, { assignedAgentId: Number(agentId), note: 'Manual reassignment from CRM UI' });
-    setSuccess('Lead assigned.');
-    await loadLeads();
+    try {
+      const assignedAgentId = agentId ? Number(agentId) : null;
+      await assignLead(lead.id, { assignedAgentId, note: assignedAgentId ? 'Manual reassignment from CRM UI' : 'Unassigned from CRM UI' });
+      setLeads((rows) => rows.map((row) => String(row.id) === String(lead.id)
+        ? { ...row, assignedAgent: agents.find((agent) => String(agent.id) === String(assignedAgentId)) || null }
+        : row));
+      setSuccess(assignedAgentId ? 'Lead assigned.' : 'Lead unassigned.');
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to update lead assignment.');
+    }
   };
 
   const runAutoAssign = async () => {

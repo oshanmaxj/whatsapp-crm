@@ -1,6 +1,7 @@
 const { Op, fn, col } = require('sequelize');
 const { sequelize, Contact, Conversation, Lead, LeadAssignment, LeadStatus, LeadSource, User, LeadActivity } = require('../models');
 const assignmentService = require('./assignment.service');
+const leadAssignmentService = require('./leadAssignment.service');
 const leadStatusService = require('./leadStatus.service');
 const { LEAD_STATUSES, normalizeLeadStatusCode } = require('../constants/leadStatuses');
 const { normalizeSriLankanPhone } = require('../utils/phone');
@@ -180,7 +181,7 @@ class LeadService {
 
     return Lead.create({
       contactId,
-      ownerId: options.ownerId || null,
+      ownerId: null,
       statusId: status.id,
       sourceId: source.id,
       priority: options.priority || 'medium',
@@ -326,7 +327,7 @@ class LeadService {
   async updateStatus(id, payload, actor) {
     if (!actor?.id) throw Object.assign(new Error('Authentication is required.'), { status: 401, code: 'AUTH_REQUIRED' });
     const { statusCode, statusId, expectedCurrentStatusCode } = normalizeLeadStatusPayload(payload);
-    return leadStatusService.updateLeadStatus({
+    return leadStatusService.changeStatus({
       leadId: id, statusCode, statusId, expectedCurrentStatusCode,
       actorUserId: actor.id, actor, source: payload.source === 'chat_workspace' ? 'chat_workspace' : 'leads_page'
     });
@@ -340,11 +341,13 @@ class LeadService {
       ownerId: payload.assignedAgentId || null,
       followUpDate: payload.followUpDate
     });
-    await LeadActivity.create({leadId:lead.id,actorUserId:actor?.id||null,action:'LEAD_CREATED',newValue:{statusId:lead.statusId,ownerId:lead.ownerId},note:lead.notes});
+    await LeadActivity.create({leadId:lead.id,actorUserId:actor?.id||null,activityType:'LEAD_CREATED',action:'LEAD_CREATED',newValue:{statusId:lead.statusId,ownerId:lead.ownerId},note:lead.notes});
 
     if (payload.assignedAgentId) {
       await assignmentService.assignLead(lead.id, null, {
         assignedTo: payload.assignedAgentId,
+        actor,
+        source: 'leads_page',
         note: 'Assigned during lead creation'
       });
     }
@@ -374,7 +377,7 @@ class LeadService {
 
     const updates = {};
     if (payload.status) {
-      await leadStatusService.updateLeadStatus({ leadId: id, statusCode: payload.status, actorUserId: actor?.id || null, actor, source: actor ? 'leads_page' : 'workflow' });
+      await leadStatusService.changeStatus({ leadId: id, statusCode: payload.status, actorUserId: actor?.id || null, actor, source: actor ? 'leads_page' : 'workflow' });
       lead = await Lead.findByPk(id, { include: [{ model: Contact, as: 'contact' }] });
     }
     if (payload.source) {
@@ -391,15 +394,13 @@ class LeadService {
     if (payload.studentType !== undefined) updates.studentType = payload.studentType;
     if (payload.notes !== undefined) updates.notes = payload.notes;
     if (payload.followUpDate !== undefined) updates.nextFollowupAt = payload.followUpDate;
-    if (payload.assignedAgentId !== undefined) updates.ownerId = payload.assignedAgentId;
-
     await lead.update(updates);
-    if(payload.notes!==undefined)await LeadActivity.create({leadId:id,actorUserId:actor?.id||null,action:'NOTE_ADDED',newValue:{note:payload.notes},note:String(payload.notes||'').trim().slice(0,4000)});
+    if(payload.notes!==undefined)await LeadActivity.create({leadId:id,actorUserId:actor?.id||null,activityType:'NOTE_ADDED',action:'NOTE_ADDED',newValue:{note:payload.notes},note:String(payload.notes||'').trim().slice(0,4000)});
 
-    if (payload.assignedAgentId) {
-      await assignmentService.assignLead(id, null, {
-        assignedTo: payload.assignedAgentId,
-        note: 'Lead reassigned from edit form'
+    if (payload.assignedAgentId !== undefined) {
+      await leadAssignmentService.assignAgent({
+        leadId: id, ownerId: payload.assignedAgentId || null, actor,
+        source: 'leads_page', reason: 'Lead reassigned from edit form'
       });
     }
 
@@ -424,13 +425,10 @@ class LeadService {
       error.status = 404;
       throw error;
     }
-    const changing=String(lead.ownerId||'')!==String(assignedAgentId||'');if(actor&&changing&&!actor.isSystemAdmin&&!actor.permissions?.includes(lead.ownerId?'lead.reassign':'lead.assign'))throw Object.assign(new Error('Lead assignment permission required'),{status:403,code:'LEAD_REASSIGN_FORBIDDEN'});
-
-    await assignmentService.assignLead(id, assignedById, {
-      assignedTo: assignedAgentId,
-      note
+    await leadAssignmentService.assignAgent({
+      leadId: id, ownerId: assignedAgentId, actor, actorUserId: assignedById,
+      source: 'leads_page', reason: note
     });
-    if(changing)await LeadActivity.create({leadId:id,actorUserId:actor?.id||assignedById,action:lead.ownerId?'LEAD_REASSIGNED':'LEAD_ASSIGNED',oldValue:{ownerId:lead.ownerId},newValue:{ownerId:assignedAgentId},note:String(note||'').slice(0,4000)});
     return this.getLeadById(id);
   }
 
@@ -476,15 +474,8 @@ class LeadService {
   }
 
   async assignOwner(leadId, ownerId) {
-    const lead = await Lead.findByPk(leadId);
-    if (!lead) {
-      const error = new Error('Lead not found');
-      error.status = 404;
-      throw error;
-    }
-
-    await lead.update({ ownerId });
-    return lead;
+    await leadAssignmentService.assignAgent({ leadId, ownerId, source: 'workflow' });
+    return Lead.findByPk(leadId);
   }
 }
 

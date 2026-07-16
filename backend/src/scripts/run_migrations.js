@@ -31,6 +31,7 @@ const commissionManagementMigration = require('../../migrations/026_create_commi
 const leadPipelineMigration = require('../../migrations/027_lead_pipeline_followups');
 const unifiedLeadStatusMigration = require('../../migrations/028_unified_lead_status');
 const repairLeadActivityHistoryMigration = require('../../migrations/029_repair_lead_activity_history');
+const syncLeadActivityTypeMigration = require('../../migrations/030_sync_lead_activity_type');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -164,6 +165,8 @@ async function run() {
     console.log('Applied: unified lead status system');
     await repairLeadActivityHistoryMigration.up(queryInterface, Sequelize);
     console.log('Applied: lead activity history schema repair');
+    await syncLeadActivityTypeMigration.up(queryInterface, Sequelize);
+    console.log('Applied: lead activity type compatibility repair');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

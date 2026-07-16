@@ -6,6 +6,7 @@ const whatsappService = require('./whatsapp.service');
 const assignmentNotificationService = require('./assignmentNotification.service');
 const auditService = require('./audit.service');
 const conversationAccessService = require('./conversationAccess.service');
+const leadAssignmentService = require('./leadAssignment.service');
 const {
   sequelize,
   Contact,
@@ -334,7 +335,7 @@ class InboxService {
     const userId = actor?.id;
     const permissions = new Set(actor?.permissions || []);
     const allowed = (code) => actor?.isSystemAdmin || permissions.has(code);
-    const current = await Conversation.findByPk(id, { attributes: ['id', 'assignedUserId', 'assignedRoleId'] });
+    const current = await Conversation.findByPk(id, { attributes: ['id', 'leadId', 'assignedUserId', 'assignedRoleId'] });
     if (!current) throw Object.assign(new Error('Conversation not found'), { status: 404 });
 
     const updates = {};
@@ -346,17 +347,8 @@ class InboxService {
       throw Object.assign(new Error('Provide assigned_user_id and/or assigned_role_id'), { status: 422 });
     }
 
-    if (hasAssignedUserId) {
-      const assignedUserId = payload.assigned_user_id
-        ?? payload.assignedUserId
-        ?? payload.assigned_to
-        ?? payload.assignedTo
-        ?? null;
-      if (assignedUserId !== null && !await User.findOne({ where: { id: assignedUserId, status: 'active' }, attributes: ['id'] })) {
-        throw Object.assign(new Error('Assigned user not found or inactive'), { status: 422 });
-      }
-      updates.assignedUserId = assignedUserId;
-    }
+    if (hasAssignedUserId) updates.assignedUserId = payload.assigned_user_id
+      ?? payload.assignedUserId ?? payload.assigned_to ?? payload.assignedTo ?? null;
     if (hasAssignedRoleId) {
       const assignedRoleId = payload.assigned_role_id ?? payload.assignedRoleId ?? null;
       if (assignedRoleId !== null && !await Role.findOne({ where: { id: assignedRoleId, isActive: true }, attributes: ['id'] })) {
@@ -365,43 +357,34 @@ class InboxService {
       updates.assignedRoleId = assignedRoleId;
     }
 
-    const assignedUserChanged = Object.prototype.hasOwnProperty.call(updates, 'assignedUserId') && String(current.assignedUserId ?? '') !== String(updates.assignedUserId ?? '');
+    const assignedUserChanged = Object.prototype.hasOwnProperty.call(updates, 'assignedUserId')
+      && String(current.assignedUserId ?? '') !== String(updates.assignedUserId ?? '');
     const departmentChanged = Object.prototype.hasOwnProperty.call(updates, 'assignedRoleId')
       && String(current.assignedRoleId ?? '') !== String(updates.assignedRoleId ?? '');
 
-    const previousOwnerId = current.assignedUserId || null;
-    const newOwnerId = Object.prototype.hasOwnProperty.call(updates, 'assignedUserId') ? updates.assignedUserId : previousOwnerId;
-    const expectedOwner = payload.expected_assigned_user_id ?? payload.expectedAssignedUserId;
-    if (expectedOwner !== undefined && String(expectedOwner ?? '') !== String(previousOwnerId ?? '')) throw Object.assign(new Error('Conversation owner changed; reload and try again.'), { status: 409, code: 'STALE_ASSIGNMENT_UPDATE' });
-    let action = null;
-    if (assignedUserChanged) {
-      if (!previousOwnerId && newOwnerId && String(newOwnerId) === String(userId)) {
-        if (!allowed('conversation.claim_unassigned')) throw Object.assign(new Error('You cannot claim unassigned conversations.'), { status: 403, code: 'REASSIGN_PERMISSION_REQUIRED' });
-        action = 'CLAIMED';
-      } else if (previousOwnerId) {
-        if (!newOwnerId && !allowed('conversation.unassign')) throw Object.assign(new Error('You cannot unassign this conversation.'), { status: 403, code: 'REASSIGN_PERMISSION_REQUIRED' });
-        if (newOwnerId && !allowed('conversation.reassign')) throw Object.assign(new Error('This conversation is owned by another agent.'), { status: 403, code: String(previousOwnerId) === String(userId) ? 'REASSIGN_PERMISSION_REQUIRED' : 'CONVERSATION_OWNED_BY_ANOTHER_AGENT' });
-        action = newOwnerId ? 'REASSIGNED' : 'UNASSIGNED';
-      } else {
-        if (!allowed('conversation.reassign')) throw Object.assign(new Error('Assignment permission is required.'), { status: 403, code: 'REASSIGN_PERMISSION_REQUIRED' });
-        action = 'ASSIGNED';
-      }
-      if (['REASSIGNED', 'UNASSIGNED'].includes(action) && !String(payload.reason || '').trim()) throw Object.assign(new Error('A reassignment reason is required.'), { status: 422, code: 'REASSIGN_REASON_REQUIRED' });
+    if (departmentChanged && current.assignedUserId && String(current.assignedUserId) !== String(userId)
+      && !allowed('conversation.reassign')) {
+      throw Object.assign(new Error('This conversation is owned by another agent.'), { status: 403, code: 'CONVERSATION_OWNED_BY_ANOTHER_AGENT' });
     }
-    if (departmentChanged && previousOwnerId && String(previousOwnerId) !== String(userId) && !allowed('conversation.reassign')) throw Object.assign(new Error('This conversation is owned by another agent.'), { status: 403, code: 'CONVERSATION_OWNED_BY_ANOTHER_AGENT' });
-    await sequelize.transaction(async (transaction) => {
-      const locked = await Conversation.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
-      if (String(locked.assignedUserId ?? '') !== String(previousOwnerId ?? '')) throw Object.assign(new Error(locked.assignedUserId ? 'Conversation is already assigned.' : 'Conversation owner changed.'), { status: 409, code: locked.assignedUserId ? 'CONVERSATION_ALREADY_ASSIGNED' : 'STALE_ASSIGNMENT_UPDATE' });
-      await locked.update(updates, { transaction });
-      if (action) {
-        await ConversationAssignmentHistory.create({ conversationId: id, previousUserId: previousOwnerId, newUserId: newOwnerId, changedByUserId: userId, reason: String(payload.reason || '').trim() || null, action }, { transaction });
-        const names = await User.findAll({ where: { id: [previousOwnerId, newOwnerId, userId].filter(Boolean) }, attributes: ['id','firstName','lastName','email'], transaction });
-        const name = (uid) => { const row = names.find((item) => String(item.id) === String(uid)); return row ? displayName(row, 'Unknown') : 'Unassigned'; };
-        const text = action === 'REASSIGNED' ? `Conversation reassigned from ${name(previousOwnerId)} to ${name(newOwnerId)} by ${name(userId)}. Reason: ${payload.reason}` : `Conversation ${action.toLowerCase()} by ${name(userId)}${payload.reason ? `. Reason: ${payload.reason}` : ''}.`;
-        await Message.create({ conversationId: id, contactId: locked.contactId, whatsappAccountId: locked.whatsappAccountId, sentByUserId: userId, channel: 'system', messageType: 'assignment_event', isInternalNotification: true, direction: 'outbound', type: 'text', text, status: 'sent', statusUpdatedAt: new Date() }, { transaction });
-      }
-    });
-    if (action) await auditService.record({ userId, action: `CONVERSATION_${action}`, entityType: 'conversation', entityId: id, method: 'POST', path: `/api/conversations/${id}/assign`, changes: { contactId: current.contactId, previousAssignedUserId: previousOwnerId, newAssignedUserId: newOwnerId, reason: payload.reason || null } });
+    if (hasAssignedUserId) {
+      await leadAssignmentService.assignAgent({
+        conversationId: id,
+        leadId: current.leadId,
+        ownerId: updates.assignedUserId,
+        actor,
+        source: 'chat_workspace',
+        reason: payload.reason,
+        expectedOwnerId: payload.expected_assigned_user_id ?? payload.expectedAssignedUserId
+      });
+    }
+    if (departmentChanged) {
+      await Conversation.update({ assignedRoleId: updates.assignedRoleId }, { where: { id } });
+      await auditService.record({
+        userId, action: 'CONVERSATION_DEPARTMENT_CHANGED', entityType: 'conversation', entityId: id,
+        method: 'POST', path: `/api/conversations/${id}/assign`,
+        changes: { previousAssignedRoleId: current.assignedRoleId, newAssignedRoleId: updates.assignedRoleId }
+      });
+    }
     const result = await this.getConversation(id, userId);
 
     if (assignedUserChanged || departmentChanged) {

@@ -53,18 +53,17 @@ class AssignmentService {
       throw error;
     }
 
-    const assignment = await LeadAssignment.create({
+    await require('./leadAssignment.service').assignAgent({
       leadId,
-      assignedTo: assignee.id,
-      assignedBy: assignedById,
-      note: options.note || (options.assignedTo ? 'Manual lead assignment' : 'Automated round-robin assignment')
+      ownerId: assignee.id,
+      actor: options.actor || null,
+      actorUserId: assignedById,
+      source: options.source || (options.actor ? 'leads_page' : 'automation'),
+      reason: options.note || (options.assignedTo ? 'Manual lead assignment' : 'Automated round-robin assignment')
     });
 
-    const { Lead } = require('../models');
-    await Lead.update({ ownerId: assignee.id }, { where: { id: leadId } });
-
     await assignee.reload();
-    return { assignment, assignee };
+    return { assignment: null, assignee };
   }
 
   async suggestAgentForLead({ lead, contact, conversationSummary, latestMessage }) {

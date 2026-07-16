@@ -39,7 +39,7 @@ exports.updateLeadSchema = Joi.object({
 }).min(1);
 
 exports.assignLeadSchema = Joi.object({
-  assignedAgentId: Joi.number().integer().positive().required(),
+  assignedAgentId: Joi.number().integer().positive().allow(null).required(),
   note: Joi.string().max(255).allow('', null).optional()
 });
 

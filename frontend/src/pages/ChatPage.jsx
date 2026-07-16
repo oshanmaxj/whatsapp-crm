@@ -319,23 +319,57 @@ function ChatPage() {
     };
 
     const handleSocketError = ({ message } = {}) => setError(message || 'Unable to send WhatsApp message.');
-    const handleLeadStatusUpdate = () => {
-      if (selectedRef.current) loadDetails(selectedRef.current, { silent: true });
-      loadConversations({ silent: true });
+    const applyLeadUpdate = (payload = {}) => {
+      if (payload.leadId == null && payload.conversationId == null) return;
+      const owner = payload.ownerId == null
+        ? null
+        : agents.find((agent) => String(agent.id) === String(payload.ownerId)) || null;
+      const matches = (item) => String(item?.lead?.id ?? '') === String(payload.leadId ?? '')
+        || String(item?.id ?? '') === String(payload.conversationId ?? '')
+        || safeArray(payload.conversationIds).some((id) => String(id) === String(item?.id));
+      const patchConversation = (item) => !item || !matches(item) ? item : {
+        ...item,
+        ...(Object.prototype.hasOwnProperty.call(payload, 'ownerId') ? {
+          assignedUserId: payload.ownerId,
+          assigned_user_id: payload.ownerId,
+          assignedTo: payload.ownerId,
+          assignedUser: owner,
+          assignee: owner
+        } : {}),
+        lead: item.lead ? {
+          ...item.lead,
+          ...(payload.statusCode ? {
+            statusId: payload.statusId,
+            stage: payload.statusCode,
+            status: payload.status || { ...item.lead.status, id: payload.statusId, code: payload.statusCode }
+          } : {}),
+          ...(Object.prototype.hasOwnProperty.call(payload, 'ownerId') ? { ownerId: payload.ownerId, owner } : {}),
+          updatedAt: payload.updatedAt || item.lead.updatedAt
+        } : item.lead
+      };
+      setConversation((current) => patchConversation(current));
+      setConversations((current) => safeArray(current).map(patchConversation));
     };
+    const handleLeadStatusUpdate = applyLeadUpdate;
     socket.on('chat:message', handleNewMessage);
     socket.on('whatsapp.message.received', handleNewMessage);
     socket.on('message_status_updated', handleStatusUpdate);
     socket.on('chat:error', handleSocketError);
     socket.on('lead:status-updated', handleLeadStatusUpdate);
+    socket.on('lead.updated', applyLeadUpdate);
+    socket.on('lead.status.changed', applyLeadUpdate);
+    socket.on('lead.agent.changed', applyLeadUpdate);
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('whatsapp.message.received', handleNewMessage);
       socket.off('message_status_updated', handleStatusUpdate);
       socket.off('chat:error', handleSocketError);
       socket.off('lead:status-updated', handleLeadStatusUpdate);
+      socket.off('lead.updated', applyLeadUpdate);
+      socket.off('lead.status.changed', applyLeadUpdate);
+      socket.off('lead.agent.changed', applyLeadUpdate);
     };
-  }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage]);
+  }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage, agents]);
 
   useEffect(() => {
     if (!socket || !connected || !selected) return;
@@ -472,8 +506,13 @@ function ChatPage() {
   const handleAssign = useCallback(async (assignment) => {
     if (!selected) return;
     try {
-      await assignConversation(selected, assignment);
-      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+      const response = await assignConversation(selected, assignment);
+      const updated = response.data?.data;
+      if (updated) {
+        setConversation(updated);
+        setConversations((current) => safeArray(current).map((item) => String(item.id) === String(updated.id) ? updated : item));
+      }
+      setNotice('Agent assignment updated.');
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Unable to assign this conversation.');
     }
@@ -494,8 +533,13 @@ function ChatPage() {
     if (!lead?.id) return;
     try {
       setLeadStatusSaving(true);
-      await updateLeadStatus(lead.id, { statusCode, expectedCurrentStatusCode: lead.status?.code || lead.stage, source: 'chat_workspace' });
-      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+      const response = await updateLeadStatus(lead.id, { statusCode, expectedCurrentStatusCode: lead.status?.code || lead.stage, source: 'chat_workspace' });
+      const updatedStatus = response.data?.data?.status;
+      const patch = (item) => item?.lead && String(item.lead.id) === String(lead.id)
+        ? { ...item, lead: { ...item.lead, statusId: updatedStatus?.id, stage: statusCode, status: updatedStatus } }
+        : item;
+      setConversation((current) => patch(current));
+      setConversations((current) => safeArray(current).map(patch));
       setNotice('Lead status updated.');
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Unable to update lead status.');

@@ -18,6 +18,7 @@ function environment({ current = 'new', ownerId = 10, missingLead = false, activ
   const currentStatus = statuses.find((status) => status.code === current);
   const writes = { lead: [], activity: [], audit: [], statusCreates: 0, leadLookup: null, rolledBack: false };
   const events = [];
+  const socketEvents = [];
   const lead = missingLead ? null : {
     id: 55, ownerId, statusId: currentStatus.id, stage: current, convertedAt: null, convertedByUserId: null,
     async update(values, options) { Object.assign(this, values); writes.lead.push({ values, options }); return this; }
@@ -49,14 +50,17 @@ function environment({ current = 'new', ownerId = 10, missingLead = false, activ
       async record(values) { if (auditError) throw auditError; writes.audit.push(values); return { id: 88 }; }
     },
     Conversation: { async findAll() { return []; } },
-    socketService: { async emitToConversationAudience() {} },
+    socketService: {
+      emit(name, payload) { socketEvents.push({ name, payload }); },
+      async emitToConversationAudience() {}
+    },
     logger: {
       info(message, metadata) { events.push({ level: 'info', message, metadata }); },
       warn(message, metadata) { events.push({ level: 'warn', message, metadata }); },
       error(message, metadata) { events.push({ level: 'error', message, metadata }); }
     }
   });
-  return { service, lead, statuses, writes, events, transaction };
+  return { service, lead, statuses, writes, events, socketEvents, transaction };
 }
 
 const ownActor = { id: 10, isSystemAdmin: false, permissions: ['lead.update_status_own'] };
@@ -133,7 +137,8 @@ test('missing lead returns 404', async () => {
 test('activity and required audit rows use existing model attributes', async () => {
   const env = environment();
   await env.service.updateLeadStatus({ leadId: 55, statusCode: 'contacted', actor: ownActor });
-  assert.deepEqual(Object.keys(env.writes.activity[0].values).sort(), ['action', 'actorUserId', 'leadId', 'newValue', 'note', 'oldValue']);
+  assert.deepEqual(Object.keys(env.writes.activity[0].values).sort(), ['action', 'activityType', 'actorUserId', 'leadId', 'newValue', 'note', 'oldValue']);
+  assert.equal(env.writes.activity[0].values.activityType, 'STATUS_CHANGED');
   assert.equal(env.writes.activity[0].values.actorUserId, ownActor.id);
   assert.equal(env.writes.activity[0].options.transaction, env.transaction);
   assert.equal(env.writes.audit[0].required, true);
@@ -141,6 +146,15 @@ test('activity and required audit rows use existing model attributes', async () 
   for (const event of ['lead_status_update_attempt', 'lead_status_update_resolved', 'lead_status_saved', 'lead_status_history_attempt', 'lead_status_history_saved']) {
     assert.ok(env.events.some((item) => item.message === event));
   }
+});
+
+test('status changes emit the targeted realtime events once', async () => {
+  const env = environment();
+  await env.service.changeStatus({ leadId: 55, statusCode: 'contacted', actor: ownActor });
+  assert.deepEqual(env.socketEvents.map((event) => event.name), ['lead.updated', 'lead.status.changed']);
+  assert.equal(env.socketEvents[1].payload.leadId, '55');
+  assert.equal(env.socketEvents[1].payload.statusCode, 'contacted');
+  assert.equal(env.socketEvents[1].payload.ownerId, 10);
 });
 
 test('required audit failure is explicit and logged', async () => {
@@ -175,7 +189,7 @@ test('activity failure is explicit, logged, and not swallowed', async () => {
 test('LeadActivity model maps only canonical production columns', () => {
   const fields = Object.fromEntries(Object.entries(LeadActivity.rawAttributes).map(([name, attribute]) => [name, attribute.field]));
   assert.deepEqual(fields, {
-    id: 'id', actorUserId: 'actor_user_id', leadId: 'lead_id', action: 'action',
+    id: 'id', actorUserId: 'actor_user_id', leadId: 'lead_id', activityType: 'activity_type', action: 'action',
     oldValue: 'old_value', newValue: 'new_value', note: 'note', createdAt: 'created_at'
   });
   assert.equal(Object.hasOwn(fields, 'metadata'), false);

@@ -24,6 +24,11 @@ class SocketService {
     io.to(room).emit(event, payload);
   }
 
+  emit(event, payload) {
+    if (!io) return;
+    io.emit(event, payload);
+  }
+
   async emitToConversationAudience(conversationId, event, payload) {
     if (!io || !conversationId) return;
     io.to('inbox_all').emit(event, payload);

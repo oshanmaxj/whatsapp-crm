@@ -11,8 +11,8 @@ function fail(code, message, status, details) {
 function canUpdate(actor, lead, source) {
   if (['student_registration', 'student_conversion', 'migration', 'workflow'].includes(source) && !actor) return true;
   if (!actor?.id) return false;
-  if (actor.isSystemAdmin || actor.permissions?.includes('lead.update_status_all')) return true;
-  return actor.permissions?.includes('lead.update_status_own')
+  if (actor.isSystemAdmin || actor.permissions?.includes('lead.update_status_all') || actor.permissions?.includes('lead.update_all')) return true;
+  return (actor.permissions?.includes('lead.update_status_own') || actor.permissions?.includes('lead.update_own'))
     && String(lead.ownerId || '') === String(actor.id);
 }
 
@@ -34,8 +34,8 @@ function createLeadStatusService(dependencies = {}) {
   const sockets = dependencies.socketService || socketService;
   const log = dependencies.logger || logger;
 
-  return {
-    async updateLeadStatus({ leadId, statusCode, statusId, actorUserId, actor = null, source = 'leads_page', expectedCurrentStatusCode, transaction = null, auditData = {} }) {
+  const service = {
+    async changeStatus({ leadId, statusCode, statusId, actorUserId, actor = null, source = 'leads_page', expectedCurrentStatusCode, transaction = null, auditData = {} }) {
       const effectiveActorUserId = actor?.id || actorUserId || null;
       let requestedCode = normalizeLeadStatusCode(statusCode);
       let observedOldStatusCode = null;
@@ -101,10 +101,13 @@ function createLeadStatusService(dependencies = {}) {
 
         const oldValue = definedObject({ statusCode: currentCode || null, statusId: oldStatusId });
         const newValue = definedObject({ statusCode: requestedCode, statusId: status.id, source, ...auditData });
+        const activityType = source === 'student_registration' || source === 'student_conversion'
+          ? 'AUTO_REGISTERED' : 'STATUS_CHANGED';
         const historyValues = definedObject({
             leadId: lead.id,
             actorUserId: effectiveActorUserId,
-            action: source === 'student_registration' || source === 'student_conversion' ? 'AUTO_REGISTERED' : 'STATUS_CHANGED',
+            activityType,
+            action: activityType,
             oldValue,
             newValue,
             note: source === 'student_registration' || source === 'student_conversion'
@@ -152,9 +155,20 @@ function createLeadStatusService(dependencies = {}) {
         const result = transaction ? await run(transaction) : await sequelize.transaction(run);
         if (result.changed) {
           const conversations = await Conversation.findAll({ where: { leadId }, attributes: ['id'] }).catch(() => []);
+          const payload = {
+            leadId: String(leadId),
+            statusId: result.status.id,
+            statusCode: result.status.code,
+            status: publicStatus(result.status),
+            ownerId: result.lead.ownerId || null,
+            updatedAt: result.lead.updatedAt || new Date().toISOString(),
+            conversationIds: conversations.map((conversation) => String(conversation.id))
+          };
+          sockets.emit?.('lead.updated', payload);
+          sockets.emit?.('lead.status.changed', payload);
           const emissions = await Promise.allSettled(conversations.map((conversation) => (
             sockets.emitToConversationAudience(conversation.id, 'lead:status-updated', {
-              leadId: String(leadId), conversationId: String(conversation.id), status: publicStatus(result.status)
+              ...payload, conversationId: String(conversation.id)
             })
           )));
           if (emissions.some((item) => item.status === 'rejected')) {
@@ -176,6 +190,8 @@ function createLeadStatusService(dependencies = {}) {
       }
     }
   };
+  service.updateLeadStatus = (values) => service.changeStatus(values);
+  return service;
 }
 
 const service = createLeadStatusService();

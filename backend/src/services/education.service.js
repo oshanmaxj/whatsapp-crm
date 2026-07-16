@@ -623,7 +623,7 @@ class EducationService {
         return null;
       }
       if (!conversation) conversation = await Conversation.findOne({ where: { leadId: lead.id }, order: [['updated_at', 'DESC']] });
-      await leadStatusService.updateLeadStatus({
+      await leadStatusService.changeStatus({
         leadId: lead.id, statusCode: 'registered', actorUserId: userId,
         source: payload.source === 'lead_conversion' ? 'student_conversion' : 'student_registration',
         auditData: { studentId: student.id, conversationId: conversation?.id || null, normalizedPhone }

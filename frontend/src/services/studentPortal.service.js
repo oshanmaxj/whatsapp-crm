@@ -20,6 +20,7 @@ export const verifyStudentOtp = (payload) => portalApi.post('/student-portal/ver
 export const getStudentMe = () => portalApi.get('/student-portal/me');
 export const getStudentDashboard = () => portalApi.get('/student-portal/dashboard');
 export const getStudentMyCourses = () => portalApi.get('/student-portal/my-courses');
+export const getStudentCourse = (courseId) => portalApi.get(`/lms/student/courses/${courseId}`);
 export const getStudentUpcomingClasses = () => portalApi.get('/student-portal/upcoming-classes');
 export const getStudentLessons = () => portalApi.get('/student-portal/lessons');
 export const getStudentMaterials = () => portalApi.get('/student-portal/materials');

@@ -80,6 +80,33 @@ The apply mode runs in one database transaction, relinks every table containing 
 `conversation_id` column, archives duplicate conversation rows, and creates the
 active conversation identity unique index. Re-running it is safe.
 
+## LMS curriculum migration
+
+Run the registered additive schema migration first. It extends the existing Course and
+LMS lesson tables and creates topics and batch overrides; it does not delete legacy data.
+
+```bash
+npm run migrate
+```
+
+Then generate the required read-only migration report. Dry-run is the default and the
+transaction is rolled back after inspection.
+
+```bash
+npm run migrate:lms-curriculum
+```
+
+After reviewing and saving that JSON report, apply the curriculum backfill in one
+transaction:
+
+```bash
+npm run migrate:lms-curriculum -- --apply
+```
+
+The apply operation creates “General Lessons” topics, attaches legacy lessons, creates
+batch-specific overrides, merges safely matched recordings, and retains unmatched
+recording imports when no course can be identified. It never deletes a legacy row.
+
 ## Notes
 - The migration runner uses the same DB connection settings as `src/config/database.js`.
 - If you prefer to run SQL manually, connect to your MySQL server and run equivalent ALTER TABLE statements.

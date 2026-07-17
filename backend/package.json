@@ -14,6 +14,7 @@
     "reports:smoke": "node src/scripts/smoke_reports.js",
     "commissions:backfill": "node src/scripts/backfill_commissions.js",
     "repair:conversations": "node src/scripts/repair_duplicate_conversations.js",
+    "migrate:lms-curriculum": "node src/scripts/migrate_lms_curriculum.js",
     "test:lead-status": "node --test"
   },
   "dependencies": {

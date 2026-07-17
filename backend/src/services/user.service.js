@@ -41,6 +41,12 @@ const OWNERSHIP_PERMISSIONS = [
 ];
 const COMMISSION_PERMISSIONS = ['commission.view_own','commission.view_team','commission.view_all','commission.manage_rules','commission.approve','commission.create_payout','commission.approve_payout','commission.mark_paid','commission.override','commission.export','commission.reverse'];
 const PIPELINE_PERMISSIONS=['lead.view_own','lead.view_team','lead.view_all','lead.update_own','lead.update_all','lead.update_status_own','lead.update_status_all','lead.assign','lead.reassign','followup.create','followup.complete','followup.view_own','followup.view_team','followup.view_all','pipeline.manage','lost_reason.manage'];
+const LMS_PERMISSIONS = [
+  'lms.course.view', 'lms.course.create', 'lms.course.update', 'lms.course.archive',
+  'lms.curriculum.manage', 'lms.topic.manage', 'lms.lesson.view', 'lms.lesson.create',
+  'lms.lesson.update', 'lms.lesson.archive', 'lms.lesson.publish',
+  'lms.live_class.manage', 'lms.progress.view', 'lms.progress.manage'
+];
 
 function permissionCode(group, action) {
   return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase().replace(/\s+/g, '_')}`;
@@ -196,7 +202,7 @@ class UserService {
         permissions.push(permission);
       }
     }
-    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS]) {
+    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS]) {
       let permission = await Permission.findOne({ where: { code }, paranoid: false });
       if (permission?.deletedAt) await permission.restore();
       if (!permission) [permission] = await Permission.findOrCreate({ where: { code }, defaults: { name: code, description: `Secure ownership permission: ${code}` } });
@@ -233,6 +239,15 @@ class UserService {
     for (const permission of permissions.filter((item) => COMMISSION_PERMISSIONS.includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles.Manager.id, permissionId: permission.id }, defaults: { roleId: roles.Manager.id, permissionId: permission.id } });
     for(const permission of permissions.filter(item=>['lead.view_own','lead.update_own','lead.update_status_own','followup.create','followup.complete','followup.view_own'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Agent.id,permissionId:permission.id},defaults:{roleId:roles.Agent.id,permissionId:permission.id}});
     for(const permission of permissions.filter(item=>PIPELINE_PERMISSIONS.includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Manager.id,permissionId:permission.id},defaults:{roleId:roles.Manager.id,permissionId:permission.id}});
+    for (const permission of permissions.filter((item) => LMS_PERMISSIONS.includes(item.code))) {
+      await RolePermission.findOrCreate({ where: { roleId: roles.Manager.id, permissionId: permission.id }, defaults: { roleId: roles.Manager.id, permissionId: permission.id } });
+    }
+    for (const permission of permissions.filter((item) => [
+      'lms.course.view', 'lms.curriculum.manage', 'lms.topic.manage', 'lms.lesson.view',
+      'lms.lesson.create', 'lms.lesson.update', 'lms.lesson.publish', 'lms.live_class.manage', 'lms.progress.view'
+    ].includes(item.code))) {
+      await RolePermission.findOrCreate({ where: { roleId: roles.Lecturer.id, permissionId: permission.id }, defaults: { roleId: roles.Lecturer.id, permissionId: permission.id } });
+    }
 
     return { roles, permissions };
   }

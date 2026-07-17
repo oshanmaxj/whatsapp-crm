@@ -5,7 +5,8 @@ const { Op } = require('sequelize');
 const logger = require('../config/logger');
 const {
   AttendanceRecord, Batch, Course, FeeInstallment, LmsLesson, LmsLessonMaterial, LmsLiveClassJoin,
-  LmsLessonComment, LmsStudentProgress, Student, StudentEnrollment, StudentFee, StudentPortalSession, User
+  LmsLessonBatchOverride, LmsLessonComment, LmsStudentProgress, LmsTopic, Student, StudentEnrollment,
+  StudentFee, StudentPortalSession, User
 } = require('../models');
 const whatsappService = require('./whatsapp.service');
 const {
@@ -94,7 +95,8 @@ function serializeLesson(row, detailed = false, paymentAllowed = true) {
   const progress = lesson.progress?.[0] || null;
   const liveAccess = liveClassAccess(lesson, paymentAllowed);
   const data = {
-    id: lesson.id, title: lesson.title, description: lesson.description, lessonOrder: lesson.lessonOrder,
+    id: lesson.id, topicId: lesson.topicId, title: lesson.title, description: lesson.description, summary: lesson.summary,
+    lessonType: lesson.lessonType, lessonOrder: lesson.lessonOrder, sortOrder: lesson.sortOrder,
     liveClassAt: lesson.liveClassAt, classStatus: liveAccess.classStatus,
     canJoin: liveAccess.canJoin, joinStatus: liveAccess.reason, joinMessage: liveAccess.message || null,
     joinButtonLabel: lesson.joinButtonLabel || 'Join Live Class', hasLiveClass: Boolean(lesson.liveClassAt && lesson.zoomLink),
@@ -112,8 +114,45 @@ function serializeLesson(row, detailed = false, paymentAllowed = true) {
   if (detailed) {
     data.materials = paymentAllowed ? (lesson.materials || []).filter((item) => item.status === 'published') : [];
     data.comments = lesson.comments || [];
+    data.contentHtml = paymentAllowed ? lesson.contentHtml : null;
+    data.externalUrl = paymentAllowed ? lesson.externalUrl : null;
+    data.externalButtonLabel = lesson.externalButtonLabel;
+    data.openInNewTab = lesson.openInNewTab;
+    data.documentUrl = paymentAllowed ? lesson.documentUrl : null;
+    data.documentPreviewEnabled = lesson.documentPreviewEnabled;
+    data.downloadAllowed = paymentAllowed && lesson.downloadAllowed;
   }
   return data;
+}
+
+function applyBatchOverride(lesson, override) {
+  if (!override) return lesson;
+  return {
+    ...lesson,
+    liveClassAt: override.liveClassAt ?? lesson.liveClassAt,
+    zoomLink: override.zoomLink ?? lesson.zoomLink,
+    zoomMeetingId: override.zoomMeetingId ?? lesson.zoomMeetingId,
+    zoomPassword: override.zoomPassword ?? lesson.zoomPassword,
+    dripReleaseAt: override.dripReleaseAt ?? lesson.dripReleaseAt,
+    status: override.status || lesson.status
+  };
+}
+
+function lessonReleaseState(lesson, enrollment, previousCompleted, courseDripEnabled = true, now = new Date()) {
+  if (!courseDripEnabled || lesson.dripType === 'immediate' || !lesson.dripType) return { locked: false, reason: null, releaseAt: null };
+  if (lesson.dripType === 'manual') return { locked: true, reason: 'manual_release', releaseAt: null };
+  if (lesson.dripType === 'days_after_previous_completion') {
+    return previousCompleted
+      ? { locked: false, reason: null, releaseAt: null }
+      : { locked: true, reason: 'previous_lesson_incomplete', releaseAt: null };
+  }
+  let releaseAt = lesson.dripReleaseAt || lesson.releaseAt || null;
+  if (lesson.dripType === 'days_after_enrollment' && enrollment?.enrolledAt) {
+    releaseAt = new Date(new Date(enrollment.enrolledAt).getTime() + Number(lesson.dripValue || 0) * 86400000);
+  }
+  if (!releaseAt) return { locked: false, reason: null, releaseAt: null };
+  const locked = new Date(releaseAt) > now;
+  return { locked, reason: locked ? 'scheduled_release' : null, releaseAt };
 }
 
 class StudentPortalService {
@@ -336,6 +375,60 @@ class StudentPortalService {
     });
   }
 
+  async courseCurriculum(student, courseId, paymentAccess = null) {
+    const access = paymentAccess || await this.paymentAccess(student);
+    const enrollment = (await this.activeEnrollments(student)).find((item) => String(item.courseId) === String(courseId));
+    if (!enrollment) throw portalError('COURSE_UNAVAILABLE', 'Course is unavailable for this enrollment.', 404);
+    const enrollmentAccess = (access.enrollments || []).find((item) => String(item.enrollmentId) === String(enrollment.id));
+    const course = await Course.findByPk(courseId, {
+      attributes: ['id', 'name', 'code', 'category', 'description', 'shortDescription', 'thumbnailUrl', 'introVideoUrl',
+        'difficultyLevel', 'durationMinutes', 'lmsStatus', 'dripEnabled', 'certificateEnabled',
+        'completionPercentageRequired', 'allowLessonDownloads', 'allowComments'],
+      include: [{ model: User, as: 'instructor', required: false, attributes: ['id', 'firstName', 'lastName'] }]
+    });
+    if (!course || course.lmsStatus !== 'published') throw portalError('COURSE_UNAVAILABLE', 'Course is unavailable.', 404);
+    const topics = await LmsTopic.findAll({
+      where: { courseId, status: 'published' },
+      include: [{
+        model: LmsLesson, as: 'lessons', required: false,
+        where: { [Op.or]: [{ status: 'published' }, { isPublished: true }] },
+        include: [
+          { model: LmsStudentProgress, as: 'progress', required: false, where: { studentId: student.id } },
+          { model: LmsLessonBatchOverride, as: 'batchOverrides', required: false, where: enrollment.batchId ? { batchId: enrollment.batchId } : { id: null } }
+        ]
+      }],
+      order: [['sortOrder', 'ASC'], [{ model: LmsLesson, as: 'lessons' }, 'sortOrder', 'ASC']]
+    });
+    let previousCompleted = true;
+    let completedCount = 0;
+    const safeTopics = topics.map((topicRow) => {
+      const topic = topicRow.toJSON();
+      const lessons = (topic.lessons || []).map((raw) => {
+        const lesson = applyBatchOverride(raw, raw.batchOverrides?.[0]);
+        if (lesson.status === 'hidden' || lesson.status === 'archived') return null;
+        const progress = lesson.progress?.[0] || null;
+        const release = lessonReleaseState(lesson, enrollment, previousCompleted, course.dripEnabled);
+        previousCompleted = Boolean(progress?.isCompleted);
+        if (progress?.isCompleted && !release.locked) completedCount += 1;
+        return {
+          id: lesson.id, topicId: lesson.topicId, title: lesson.title, summary: lesson.summary || lesson.description,
+          lessonType: lesson.lessonType, durationMinutes: lesson.durationMinutes, sortOrder: lesson.sortOrder,
+          thumbnailUrl: lesson.thumbnailUrl, liveClassAt: lesson.liveClassAt, hasLiveClass: Boolean(lesson.liveClassAt),
+          hasRecording: Boolean(lesson.recordingUrl || safeBunnyUrl(lesson)), locked: release.locked,
+          lockReason: release.reason, releaseAt: release.releaseAt, accessStatus: enrollmentAccess?.allowed ? 'available' : 'payment_blocked',
+          progress: progress || { watchedPercentage: 0, isCompleted: false, status: 'not_started' }
+        };
+      }).filter(Boolean);
+      return { id: topic.id, title: topic.title, summary: topic.summary, sortOrder: topic.sortOrder, lessons };
+    });
+    const totalLessons = safeTopics.reduce((sum, topic) => sum + topic.lessons.filter((lesson) => !lesson.locked).length, 0);
+    return {
+      course: course.toJSON(), enrollment: { id: enrollment.id, batchId: enrollment.batchId, enrolledAt: enrollment.enrolledAt },
+      enrollmentAccess, topics: safeTopics,
+      progress: { completedLessons: completedCount, totalLessons, percentage: totalLessons ? Math.round(completedCount / totalLessons * 100) : 0 }
+    };
+  }
+
   matchingAccess(lesson, paymentAccess) {
     const matches = (paymentAccess.enrollments || []).filter((item) => (
       String(item.courseId) === String(lesson.courseId)
@@ -360,10 +453,21 @@ class StudentPortalService {
     const row = await LmsLesson.findOne({ where: { ...this.lessonWhere(enrollments), id }, include: lessonInclude(student.id) });
     if (!row) throw Object.assign(new Error('Lesson is unavailable for this enrollment'), { status: 404 });
     const enrollmentAccess = this.matchingAccess(row, access);
+    let navigation = { previousLessonId: null, nextLessonId: null };
+    if (row.topicId) {
+      const outline = await this.courseCurriculum(student, row.courseId, access);
+      const allLessons = outline.topics.flatMap((topic) => topic.lessons);
+      const outlineLesson = allLessons.find((item) => String(item.id) === String(row.id));
+      if (!outlineLesson) throw portalError('LESSON_UNAVAILABLE', 'Lesson is unavailable.', 404);
+      if (outlineLesson.locked) throw portalError('LESSON_LOCKED', 'This lesson is not available yet.', 423);
+      const accessibleLessons = allLessons.filter((item) => !item.locked);
+      const lessonIndex = accessibleLessons.findIndex((item) => String(item.id) === String(row.id));
+      navigation = { previousLessonId: accessibleLessons[lessonIndex - 1]?.id || null, nextLessonId: accessibleLessons[lessonIndex + 1]?.id || null };
+    }
     await LmsStudentProgress.findOrCreate({ where: { studentId: student.id, lessonId: row.id }, defaults: { openedAt: new Date() } });
     return {
       ...serializeLesson(await LmsLesson.findByPk(row.id, { include: lessonInclude(student.id) }), true, Boolean(enrollmentAccess?.allowed)),
-      enrollmentAccess
+      enrollmentAccess, ...navigation
     };
   }
 
@@ -374,6 +478,10 @@ class StudentPortalService {
     const percentage = Math.max(Number(row.watchedPercentage || 0), Math.min(100, Math.max(0, Number(payload.watchedPercentage || 0))));
     const complete = Boolean(payload.isCompleted) || percentage >= 90;
     await row.update({
+      courseId: lesson.course?.id || row.courseId,
+      topicId: lesson.topicId || row.topicId,
+      status: complete ? 'completed' : percentage > 0 ? 'in_progress' : 'not_started',
+      startedAt: row.startedAt || new Date(),
       openedAt: row.openedAt || new Date(),
       lastWatchedSeconds: Math.max(Number(row.lastWatchedSeconds || 0), Number(payload.lastWatchedSeconds || 0)),
       watchedPercentage: percentage,
@@ -422,7 +530,12 @@ class StudentPortalService {
     const enrollmentAccess = enrollmentCheck?.hasEnrollment
       ? { ...enrollmentCheck, allowed: enrollmentCheck.accessAllowed, enrollmentId: enrollmentCheck.enrollment.id, batchId: enrollmentCheck.enrollment.batchId }
       : null;
-    let access = rawLesson ? liveClassAccess(rawLesson.toJSON(), Boolean(enrollmentAccess?.allowed)) : { canJoin: false, reason: 'lesson_unavailable' };
+    const override = rawLesson && enrollmentAccess?.batchId
+      ? await LmsLessonBatchOverride.findOne({ where: { lessonId: rawLesson.id, batchId: enrollmentAccess.batchId } })
+      : null;
+    const effectiveLesson = rawLesson ? applyBatchOverride(rawLesson.toJSON(), override?.toJSON()) : null;
+    let access = effectiveLesson ? liveClassAccess(effectiveLesson, Boolean(enrollmentAccess?.allowed)) : { canJoin: false, reason: 'lesson_unavailable' };
+    if (['hidden', 'archived'].includes(effectiveLesson?.status)) access = { canJoin: false, reason: 'lesson_unavailable', message: 'Lesson is unavailable for this batch.' };
     if (!rawLesson) access = { canJoin: false, reason: 'lesson_unavailable', message: 'Lesson is unavailable for this enrollment.' };
     await LmsLiveClassJoin.create({
       studentId: student.id, lessonId,
@@ -434,7 +547,7 @@ class StudentPortalService {
       const status = access.reason === 'lesson_unavailable' ? 404 : access.reason === 'payment_blocked' ? 403 : 400;
       throw Object.assign(new Error(access.message || 'This live class is not available to join.'), { status });
     }
-    const attendanceDate = new Date(rawLesson.liveClassAt).toISOString().slice(0, 10);
+    const attendanceDate = new Date(effectiveLesson.liveClassAt).toISOString().slice(0, 10);
     const [attendance, created] = await AttendanceRecord.findOrCreate({
       where: { studentId: student.id, lessonId: rawLesson.id },
       defaults: {
@@ -449,7 +562,7 @@ class StudentPortalService {
       status: 'present', source: 'lms_join', markedAt: attendance.markedAt || new Date(), joinedAt: new Date()
     });
     await LmsStudentProgress.findOrCreate({ where: { studentId: student.id, lessonId: rawLesson.id }, defaults: { openedAt: new Date() } });
-    return { liveClassUrl: rawLesson.zoomLink, zoomLink: rawLesson.zoomLink, attendanceMarked: true };
+    return { liveClassUrl: effectiveLesson.zoomLink, zoomLink: effectiveLesson.zoomLink, attendanceMarked: true };
   }
 
   async dashboard(student, paymentAccess) {
@@ -472,7 +585,7 @@ class StudentPortalService {
         enrollmentId: item.enrollmentId, course: item.course, batch: item.batch,
         enrollmentStatus: 'active', paymentStatus: item.paymentStatus,
         accessAllowed: item.allowed, accessReason: item.reason,
-        viewLessonsUrl: `/student/lessons?enrollmentId=${item.enrollmentId}`,
+        viewLessonsUrl: `/student/courses/${item.courseId}`,
         nextClass: lessons.find((lesson) => (
           String(lesson.course?.id) === String(item.courseId)
           && (!lesson.batch?.id || String(lesson.batch.id) === String(item.batchId || ''))
@@ -497,3 +610,4 @@ class StudentPortalService {
 }
 
 module.exports = new StudentPortalService();
+module.exports.lessonReleaseState = lessonReleaseState;

@@ -68,6 +68,8 @@ const AccountingCategory = require('./accountingCategory.model');
 const AccountingTransaction = require('./accountingTransaction.model');
 const NotificationMessageTemplate = require('./notificationMessageTemplate.model');
 const LmsLesson = require('./lmsLesson.model');
+const LmsTopic = require('./lmsTopic.model');
+const LmsLessonBatchOverride = require('./lmsLessonBatchOverride.model');
 const LmsLessonMaterial = require('./lmsLessonMaterial.model');
 const LmsLessonComment = require('./lmsLessonComment.model');
 const LmsStudentProgress = require('./lmsStudentProgress.model');
@@ -150,6 +152,8 @@ const models = {
   AccountingTransaction: AccountingTransaction(sequelize, Sequelize.DataTypes),
   NotificationMessageTemplate: NotificationMessageTemplate(sequelize, Sequelize.DataTypes),
   LmsLesson: LmsLesson(sequelize, Sequelize.DataTypes),
+  LmsTopic: LmsTopic(sequelize, Sequelize.DataTypes),
+  LmsLessonBatchOverride: LmsLessonBatchOverride(sequelize, Sequelize.DataTypes),
   LmsLessonMaterial: LmsLessonMaterial(sequelize, Sequelize.DataTypes),
   LmsLessonComment: LmsLessonComment(sequelize, Sequelize.DataTypes),
   LmsStudentProgress: LmsStudentProgress(sequelize, Sequelize.DataTypes),
@@ -283,6 +287,11 @@ models.StudentEnrollment.hasMany(models.Certificate, { foreignKey: 'enrollment_i
 models.Student.hasMany(models.StudentNote, { foreignKey: 'student_id', as: 'profileNotes' });
 models.Student.hasMany(models.StudentDocument, { foreignKey: 'student_id', as: 'documents' });
 models.Course.hasMany(models.LmsLesson, { foreignKey: 'course_id', as: 'lmsLessons' });
+models.Course.hasMany(models.LmsTopic, { foreignKey: 'course_id', as: 'topics' });
+models.LmsTopic.belongsTo(models.Course, { foreignKey: 'course_id', as: 'course' });
+models.LmsTopic.hasMany(models.LmsLesson, { foreignKey: 'topic_id', as: 'lessons' });
+models.LmsLessonBatchOverride.belongsTo(models.LmsLesson, { foreignKey: 'lesson_id', as: 'lesson' });
+models.LmsLessonBatchOverride.belongsTo(models.Batch, { foreignKey: 'batch_id', as: 'batch' });
 models.Batch.hasMany(models.LmsLesson, { foreignKey: 'batch_id', as: 'lmsLessons' });
 models.LmsLesson.hasMany(models.LmsLessonMaterial, { foreignKey: 'lesson_id', as: 'materials' });
 models.LmsLesson.hasMany(models.LmsLessonComment, { foreignKey: 'lesson_id', as: 'comments' });

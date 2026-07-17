@@ -76,6 +76,7 @@ router.use('/accounting', accountingRoutes);
 router.use('/commissions', commissionRoutes);
 router.use('/pipeline',pipelineRoutes);router.use('/followups',followupRoutes);router.use('/lost-reasons',lostReasonRoutes);
 router.use('/notification-templates', notificationTemplateRoutes);
+router.use('/lms/student', studentPortalRoutes);
 router.use('/lms', lmsRoutes);
 router.use('/student-portal', studentPortalRoutes);
 router.use('/student-message-templates', studentMessageTemplateRoutes);

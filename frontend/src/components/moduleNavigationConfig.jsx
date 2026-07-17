@@ -33,8 +33,6 @@ import StorageIcon from '@mui/icons-material/Storage';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
-import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
-import AttachFileIcon from '@mui/icons-material/AttachFile';
 
 export const modules = [
   { id: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, permission: 'dashboard.view', routes: ['/dashboard'] },
@@ -58,7 +56,7 @@ export const modules = [
   },
   {
     id: 'education', label: 'Education', path: '/education', icon: <SchoolIcon />,
-    routes: ['/education', '/courses', '/batches', '/students', '/fees', '/attendance', '/certificates', '/course-scheduler', '/lms-lessons', '/lms-recordings', '/lms-materials'],
+    routes: ['/education', '/courses', '/batches', '/students', '/fees', '/attendance', '/certificates', '/course-scheduler', '/lms/courses'],
     items: [
       { label: 'Courses', path: '/courses', icon: <MenuBookIcon />, permission: 'courses.view' },
       { label: 'Batches', path: '/batches', icon: <SchoolIcon />, permission: 'batches.view' },
@@ -67,9 +65,7 @@ export const modules = [
       { label: 'Attendance', path: '/attendance', icon: <FactCheckIcon />, permission: 'attendance.view' },
       { label: 'Certificates', path: '/certificates', icon: <WorkspacePremiumIcon />, permission: 'certificates.view' },
       { label: 'Scheduler', path: '/course-scheduler', icon: <CalendarMonthIcon />, permission: 'courses.view' },
-      { label: 'LMS Lessons', path: '/lms-lessons', icon: <MenuBookIcon />, permission: 'courses.view' },
-      { label: 'Recordings', path: '/lms-recordings', icon: <VideoLibraryIcon />, permission: 'courses.view' },
-      { label: 'Materials', path: '/lms-materials', icon: <AttachFileIcon />, permission: 'courses.view' }
+      { label: 'LMS Courses', path: '/lms/courses', icon: <MenuBookIcon />, permission: 'courses.view' }
     ]
   },
   {

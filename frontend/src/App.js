@@ -41,11 +41,11 @@ import {
   AccountingTransactionsPage
 } from './pages/AccountingPages';
 import { ModuleLandingPage } from './components/ModuleNavigationView';
-import LmsAdminPage from './pages/LmsAdminPage';
+import LmsCourseBuilderPage, { LmsCoursesPage } from './pages/LmsCourseBuilderPage';
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
 import CommissionPage from './pages/CommissionPage';
 import {
-  StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLoginPage, StudentMaterialsPage,
+  StudentCoursePage, StudentCoursesPage, StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLoginPage, StudentMaterialsPage,
   StudentPaymentsPage, StudentPortalGuard, StudentPortalLayout, StudentProfilePage as StudentPortalProfilePage
 } from './pages/StudentPortalPages';
 
@@ -85,6 +85,8 @@ function App() {
             <Route element={<StudentPortalLayout />}>
               <Route path="/student" element={<Navigate to="/student/dashboard" replace />} />
               <Route path="/student/dashboard" element={<StudentDashboardPage />} />
+              <Route path="/student/courses" element={<StudentCoursesPage />} />
+              <Route path="/student/courses/:courseId" element={<StudentCoursePage />} />
               <Route path="/student/lessons" element={<StudentLessonsPage />} />
               <Route path="/student/lessons/:id" element={<StudentLessonPage />} />
               <Route path="/student/materials" element={<StudentMaterialsPage />} />
@@ -128,9 +130,11 @@ function App() {
             <Route path="/attendance" element={permit('attendance.view', <AttendancePage />)} />
             <Route path="/certificates" element={permit('certificates.view', <CertificatesPage />)} />
             <Route path="/course-scheduler" element={permit('courses.view', <CourseSchedulerPage />)} />
-            <Route path="/lms-lessons" element={permit('courses.view', <LmsAdminPage view="lessons" />)} />
-            <Route path="/lms-recordings" element={permit('courses.view', <LmsAdminPage view="recordings" />)} />
-            <Route path="/lms-materials" element={permit('courses.view', <LmsAdminPage view="materials" />)} />
+            <Route path="/lms/courses" element={permit(['lms.course.view', 'courses.view'], <LmsCoursesPage />)} />
+            <Route path="/lms/courses/:courseId/builder" element={permit(['lms.course.view', 'courses.view'], <LmsCourseBuilderPage />)} />
+            <Route path="/lms-lessons" element={<Navigate to="/lms/courses" replace />} />
+            <Route path="/lms-recordings" element={<Navigate to="/lms/courses" replace />} />
+            <Route path="/lms-materials" element={<Navigate to="/lms/courses" replace />} />
             <Route path="/queue" element={permit('settings.view', <QueuePage />)} />
             <Route path="/notifications" element={permit('settings.view', <NotificationsPage />)} />
             <Route path="/reports" element={permit('reports.view', <ReportsPage />)} />

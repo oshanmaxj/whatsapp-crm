@@ -1,4 +1,5 @@
 const lmsService = require('../services/lms.service');
+const builder = require('../services/lmsCourseBuilder.service');
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
 
 exports.list = async (req, res, next) => { try { return ok(res, await lmsService.listLessons(req.query)); } catch (error) { next(error); } };
@@ -11,3 +12,23 @@ exports.unpublish = async (req, res, next) => { try { return ok(res, await lmsSe
 exports.addMaterial = async (req, res, next) => { try { return ok(res, await lmsService.addMaterial(req.params.id, req.body), 201); } catch (error) { next(error); } };
 exports.uploadMaterial = async (req, res, next) => { try { return ok(res, await lmsService.uploadMaterialFile(req.body, req.get('x-file-name'), req.get('content-type')), 201); } catch (error) { next(error); } };
 exports.deleteMaterial = async (req, res, next) => { try { return ok(res, await lmsService.deleteMaterial(req.params.id)); } catch (error) { next(error); } };
+exports.listCourses = async (req, res, next) => { try { return ok(res, await builder.listCourses(req.query, req.user)); } catch (error) { next(error); } };
+exports.getCourse = async (req, res, next) => { try { return ok(res, await builder.getCourse(req.params.courseId, req.user)); } catch (error) { next(error); } };
+exports.createCourse = async (req, res, next) => { try { return ok(res, await builder.createCourse(req.body, req.user), 201); } catch (error) { next(error); } };
+exports.updateCourse = async (req, res, next) => { try { return ok(res, await builder.updateCourse(req.params.courseId, req.body, req.user)); } catch (error) { next(error); } };
+exports.archiveCourse = async (req, res, next) => { try { return ok(res, await builder.archiveCourse(req.params.courseId, req.user)); } catch (error) { next(error); } };
+exports.duplicateCourse = async (req, res, next) => { try { return ok(res, await builder.duplicateCourse(req.params.courseId, req.user), 201); } catch (error) { next(error); } };
+exports.curriculum = async (req, res, next) => { try { return ok(res, await builder.curriculum(req.params.courseId, {}, req.user)); } catch (error) { next(error); } };
+exports.createTopic = async (req, res, next) => { try { return ok(res, await builder.createTopic(req.params.courseId, req.body, req.user), 201); } catch (error) { next(error); } };
+exports.updateTopic = async (req, res, next) => { try { return ok(res, await builder.updateTopic(req.params.topicId, req.body, req.user)); } catch (error) { next(error); } };
+exports.deleteTopic = async (req, res, next) => { try { return ok(res, await builder.archiveTopic(req.params.topicId, req.user)); } catch (error) { next(error); } };
+exports.reorderTopics = async (req, res, next) => { try { return ok(res, await builder.reorderTopics(req.body.items || [], req.user)); } catch (error) { next(error); } };
+exports.duplicateTopic = async (req, res, next) => { try { return ok(res, await builder.duplicateTopic(req.params.topicId, req.user), 201); } catch (error) { next(error); } };
+exports.createTopicLesson = async (req, res, next) => { try { return ok(res, await builder.createLesson(req.params.topicId, req.body, req.user), 201); } catch (error) { next(error); } };
+exports.getBuilderLesson = async (req, res, next) => { try { return ok(res, await builder.getLesson(req.params.lessonId, { privateFields: true }, req.user)); } catch (error) { next(error); } };
+exports.getCurriculumLesson = async (req, res, next) => { try { return ok(res, await builder.getLesson(req.params.lessonId, {}, req.user)); } catch (error) { next(error); } };
+exports.updateBuilderLesson = async (req, res, next) => { try { return ok(res, await builder.updateLesson(req.params.lessonId, req.body, req.user)); } catch (error) { next(error); } };
+exports.deleteBuilderLesson = async (req, res, next) => { try { return ok(res, await builder.archiveLesson(req.params.lessonId, req.user)); } catch (error) { next(error); } };
+exports.reorderLessons = async (req, res, next) => { try { return ok(res, await builder.reorderLessons(req.body.items || [], req.user)); } catch (error) { next(error); } };
+exports.moveLesson = async (req, res, next) => { try { return ok(res, await builder.moveLesson(req.params.lessonId, req.body.topicId, req.body.sortOrder, req.user)); } catch (error) { next(error); } };
+exports.duplicateLesson = async (req, res, next) => { try { return ok(res, await builder.duplicateLesson(req.params.lessonId, req.user), 201); } catch (error) { next(error); } };

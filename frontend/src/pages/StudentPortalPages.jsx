@@ -14,7 +14,7 @@ import FolderCopyIcon from '@mui/icons-material/FolderCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import {
   addStudentLessonComment, getStudentDashboard, getStudentLesson, getStudentLessons, getStudentMaterials,
-  getStudentMe, getStudentPayments, joinStudentLiveClass, studentLogin, updateStudentProgress, verifyStudentOtp
+  getStudentCourse, getStudentMe, getStudentPayments, joinStudentLiveClass, studentLogin, updateStudentProgress, verifyStudentOtp
 } from '../services/studentPortal.service';
 import { API_ORIGIN } from '../config/apiConfig';
 
@@ -92,6 +92,7 @@ export function StudentPortalGuard() {
 
 const nav = [
   ['/student/dashboard', 'Dashboard', <DashboardIcon />],
+  ['/student/courses', 'Courses', <SchoolIcon />],
   ['/student/lessons', 'Lessons', <MenuBookIcon />],
   ['/student/materials', 'Materials', <FolderCopyIcon />],
   ['/student/payments', 'Payments', <PaymentsIcon />],
@@ -154,6 +155,24 @@ export function StudentDashboardPage() {
     <Box><Typography variant="h5" fontWeight={900} sx={{ mb: 1.5 }}>Recent Lessons</Typography><LessonCards lessons={data.recentLessons} /></Box>
     <Box><Typography variant="h5" fontWeight={900} sx={{ mb: 1.5 }}>Recent Recordings</Typography><LessonCards lessons={data.latestRecordings} empty="No recordings available yet." /></Box>
   </Stack>;
+}
+
+export function StudentCoursesPage() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { getStudentDashboard().then((res) => setData(res.data.data)).catch((e) => setError(e.response?.data?.message || 'Unable to load courses.')); }, []);
+  if (!data && !error) return <PageLoading />;
+  return <Stack spacing={2.5} sx={{ ml: { sm: 20 } }}><Box><Typography variant="h3" fontWeight={950}>My Courses</Typography><Typography color="text.secondary">Continue your enrolled learning paths.</Typography></Box>{error && <Alert severity="error">{error}</Alert>}<PaymentBanner access={data?.paymentAccess} /><Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' }, gap: 2 }}>{(data?.myCourses || []).map((item) => <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }} key={item.enrollmentId}><Stack spacing={1.5}><Typography variant="h5" fontWeight={900}>{item.course?.name}</Typography><Typography color="text.secondary">{item.batch?.name || 'All batches'}</Typography><Chip sx={{ alignSelf: 'flex-start' }} color={item.accessAllowed ? 'success' : 'warning'} label={item.accessAllowed ? 'Access allowed' : 'Payment access limited'} /><Button component={Link} to={`/student/courses/${item.course?.id}`} variant="contained">Open course</Button></Stack></Paper>)}</Box></Stack>;
+}
+
+export function StudentCoursePage() {
+  const { courseId } = useParams();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { getStudentCourse(courseId).then((res) => setData(res.data.data)).catch((e) => setError(e.response?.data?.message || 'Unable to load course.')); }, [courseId]);
+  if (!data && !error) return <PageLoading />;
+  if (error) return <Alert severity="error">{error}</Alert>;
+  return <Stack spacing={2.5} sx={{ ml: { sm: 20 } }}><Box><Button component={Link} to="/student/courses">← My courses</Button><Typography variant="h3" fontWeight={950}>{data.course.name}</Typography><Typography color="text.secondary">{data.course.shortDescription || data.course.description}</Typography></Box><Paper variant="outlined" sx={{ p: 2 }}><Stack direction="row" justifyContent="space-between"><Typography fontWeight={850}>Course progress</Typography><Typography>{data.progress.percentage}%</Typography></Stack><LinearProgress variant="determinate" value={data.progress.percentage} sx={{ mt: 1 }} /><Typography variant="caption">{data.progress.completedLessons} of {data.progress.totalLessons} lessons complete</Typography></Paper>{!data.enrollmentAccess?.allowed && <Alert severity="warning">{data.enrollmentAccess?.warning || paymentWarning}</Alert>}{data.topics.map((topic) => <Paper variant="outlined" key={topic.id} sx={{ overflow: 'hidden' }}><Box sx={{ px: 2.5, py: 2, bgcolor: 'action.hover' }}><Typography variant="h6" fontWeight={900}>{topic.title}</Typography><Typography variant="body2" color="text.secondary">{topic.summary}</Typography></Box><Stack divider={<Divider />}>{topic.lessons.map((lesson, index) => <Box key={lesson.id} sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2 }}><Chip size="small" label={lesson.progress?.isCompleted ? '✓' : index + 1} color={lesson.progress?.isCompleted ? 'success' : 'default'} /><Box sx={{ flex: 1 }}><Typography fontWeight={750}>{lesson.title}</Typography><Typography variant="caption" color="text.secondary">{lesson.lessonType} {lesson.durationMinutes ? `· ${lesson.durationMinutes} min` : ''}{lesson.releaseAt ? ` · Releases ${new Date(lesson.releaseAt).toLocaleString()}` : ''}</Typography></Box>{lesson.locked || lesson.accessStatus === 'payment_blocked' ? <Chip label="Locked" /> : <Button component={Link} to={`/student/lessons/${lesson.id}`} variant="outlined" size="small">Open</Button>}</Box>)}</Stack></Paper>)}</Stack>;
 }
 
 function LessonCards({ lessons, empty = 'No lessons available.' }) {
@@ -246,6 +265,7 @@ export function StudentLessonPage() {
     <Box><Typography variant="h5" fontWeight={900} sx={{ mb: 1 }}>Recording</Typography>{lesson.bunnyEmbedUrl && <Box sx={{ position: 'relative', pt: '56.25%', bgcolor: '#000', borderRadius: 3, overflow: 'hidden' }}><iframe title={lesson.title} src={lesson.bunnyEmbedUrl} allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture" allowFullScreen onLoad={() => updateStudentProgress(id, { watchedPercentage: 1 })} style={{ position: 'absolute', inset: 0, border: 0, width: '100%', height: '100%' }} /></Box>}{!lesson.bunnyEmbedUrl && lesson.recordingUrl && <Box component="video" controls src={lesson.recordingUrl} onTimeUpdate={updateVideo} sx={{ width: '100%', maxHeight: 620, bgcolor: '#000', borderRadius: 3 }} />}{!lesson.hasRecording && <Paper variant="outlined" sx={{ p: 3 }}><Typography color="text.secondary">No recording is available yet.</Typography></Paper>}</Box>
     <Paper id="materials" elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider', borderRadius: 3 }}><Typography variant="h5" fontWeight={900}>Materials & Downloads</Typography><Stack divider={<Divider />} sx={{ mt: 1 }}>{(lesson.materials || []).map((item) => <Button key={item.id} component="a" href={assetUrl(item.fileUrl)} target="_blank" rel="noopener noreferrer" download startIcon={<DownloadIcon />} sx={{ justifyContent: 'flex-start', py: 1.5 }}>{item.title} {item.materialType || item.fileType ? `(${item.materialType || item.fileType})` : ''}</Button>)}{!lesson.materials?.length && <Typography color="text.secondary" sx={{ py: 2 }}>No materials for this lesson.</Typography>}</Stack></Paper>
     {lesson.accessStatus === 'available' && <Button sx={{ alignSelf: 'flex-start' }} variant="outlined" onClick={async () => { await updateStudentProgress(id, { watchedPercentage: 100, isCompleted: true }); setLesson({ ...lesson, progress: { ...lesson.progress, watchedPercentage: 100, isCompleted: true } }); }}>Mark lesson complete</Button>}
+    <Stack direction="row" justifyContent="space-between"><Button disabled={!lesson.previousLessonId} component={lesson.previousLessonId ? Link : 'button'} to={lesson.previousLessonId ? `/student/lessons/${lesson.previousLessonId}` : undefined}>← Previous lesson</Button><Button disabled={!lesson.nextLessonId} component={lesson.nextLessonId ? Link : 'button'} to={lesson.nextLessonId ? `/student/lessons/${lesson.nextLessonId}` : undefined}>Next lesson →</Button></Stack>
     <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider', borderRadius: 3 }}><Typography variant="h5" fontWeight={900}>Comments / Q&A</Typography><Stack spacing={1.5} sx={{ mt: 2 }}>{(lesson.comments || []).map((item) => <Box key={item.id} sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}><Typography fontWeight={800}>{item.student?.name || 'Student'}</Typography><Typography>{item.comment}</Typography><Typography variant="caption" color="text.secondary">{new Date(item.createdAt).toLocaleString()}</Typography></Box>)}{!lesson.comments?.length && <Typography color="text.secondary">No questions yet. Start the conversation.</Typography>}<TextField label="Ask a question or leave a comment" value={comment} onChange={(e) => setComment(e.target.value)} multiline minRows={2} /><Button variant="contained" disabled={!comment.trim()} onClick={async () => { await addStudentLessonComment(id, { comment }); setComment(''); await loadLesson(); }} sx={{ alignSelf: 'flex-start' }}>Post Comment</Button></Stack></Paper>
   </Stack>;
 }

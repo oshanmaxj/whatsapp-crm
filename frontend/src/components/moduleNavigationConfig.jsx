@@ -31,6 +31,7 @@ import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StorageIcon from '@mui/icons-material/Storage';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 

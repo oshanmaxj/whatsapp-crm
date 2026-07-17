@@ -45,7 +45,7 @@ import LmsCourseBuilderPage, { LmsCoursesPage } from './pages/LmsCourseBuilderPa
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
 import CommissionPage from './pages/CommissionPage';
 import {
-  StudentCoursePage, StudentCoursesPage, StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLoginPage, StudentMaterialsPage,
+  StudentCoursePage, StudentCoursesPage, StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLiveClassesPage, StudentLoginPage, StudentMaterialsPage,
   StudentPaymentsPage, StudentPortalGuard, StudentPortalLayout, StudentProfilePage as StudentPortalProfilePage
 } from './pages/StudentPortalPages';
 
@@ -87,6 +87,7 @@ function App() {
               <Route path="/student/dashboard" element={<StudentDashboardPage />} />
               <Route path="/student/courses" element={<StudentCoursesPage />} />
               <Route path="/student/courses/:courseId" element={<StudentCoursePage />} />
+              <Route path="/student/live-classes" element={<StudentLiveClassesPage />} />
               <Route path="/student/lessons" element={<StudentLessonsPage />} />
               <Route path="/student/lessons/:id" element={<StudentLessonPage />} />
               <Route path="/student/materials" element={<StudentMaterialsPage />} />

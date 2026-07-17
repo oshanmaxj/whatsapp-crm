@@ -2,6 +2,7 @@ module.exports = (sequelize, DataTypes) => {
   const LmsLesson = sequelize.define('LmsLesson', {
     id: { type: DataTypes.BIGINT, autoIncrement: true, primaryKey: true },
     courseId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+    lmsCourseId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     topicId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     batchId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     title: { type: DataTypes.STRING(255), allowNull: false },
@@ -34,6 +35,7 @@ module.exports = (sequelize, DataTypes) => {
     bunnyEmbedUrl: { type: DataTypes.TEXT, allowNull: true },
     embedCode: { type: DataTypes.TEXT, allowNull: true },
     lecturerId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    instructorName: { type: DataTypes.STRING(180), allowNull: true },
     isPublished: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     releaseAt: { type: DataTypes.DATE, allowNull: true },
     durationMinutes: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
@@ -42,6 +44,7 @@ module.exports = (sequelize, DataTypes) => {
     scheduledLessonId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     scheduledStartAt: { type: DataTypes.DATE, allowNull: true },
     scheduledEndAt: { type: DataTypes.DATE, allowNull: true },
+    timezone: { type: DataTypes.STRING(80), allowNull: false, defaultValue: 'Asia/Colombo' },
     publishedAt: { type: DataTypes.DATE, allowNull: true },
     createdBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
     , updatedBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }

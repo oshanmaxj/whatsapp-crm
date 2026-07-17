@@ -14,7 +14,7 @@ import FolderCopyIcon from '@mui/icons-material/FolderCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import {
   addStudentLessonComment, getStudentDashboard, getStudentLesson, getStudentLessons, getStudentMaterials,
-  getStudentCourse, getStudentMe, getStudentPayments, joinStudentLiveClass, studentLogin, updateStudentProgress, verifyStudentOtp
+  getStudentCourse, getStudentLiveClasses, getStudentMe, getStudentPayments, joinStudentLiveClass, studentLogin, updateStudentProgress, verifyStudentOtp
 } from '../services/studentPortal.service';
 import { API_ORIGIN } from '../config/apiConfig';
 
@@ -93,6 +93,7 @@ export function StudentPortalGuard() {
 const nav = [
   ['/student/dashboard', 'Dashboard', <DashboardIcon />],
   ['/student/courses', 'Courses', <SchoolIcon />],
+  ['/student/live-classes', 'Live Classes', <VideoCallIcon />],
   ['/student/lessons', 'Lessons', <MenuBookIcon />],
   ['/student/materials', 'Materials', <FolderCopyIcon />],
   ['/student/payments', 'Payments', <PaymentsIcon />],
@@ -154,6 +155,32 @@ export function StudentDashboardPage() {
     <EnrollmentDashboardSections data={data} />
     <Box><Typography variant="h5" fontWeight={900} sx={{ mb: 1.5 }}>Recent Lessons</Typography><LessonCards lessons={data.recentLessons} /></Box>
     <Box><Typography variant="h5" fontWeight={900} sx={{ mb: 1.5 }}>Recent Recordings</Typography><LessonCards lessons={data.latestRecordings} empty="No recordings available yet." /></Box>
+  </Stack>;
+}
+
+export function StudentLiveClassesPage() {
+  const [lessons, setLessons] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    getStudentLiveClasses().then((res) => setLessons(res.data.data || []))
+      .catch((requestError) => setError(requestError.response?.data?.message || 'Unable to load live classes.'));
+  }, []);
+  if (!lessons && !error) return <PageLoading />;
+  return <Stack spacing={2.5} sx={{ ml: { sm: 20 } }}>
+    <Box><Typography variant="h3" fontWeight={950}>Live Classes</Typography><Typography color="text.secondary">Upcoming and currently available classes from your LMS curriculum.</Typography></Box>
+    {error && <Alert severity="error">{error}</Alert>}
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, 1fr)' }, gap: 2 }}>
+      {(lessons || []).map((lesson) => { const starts = new Date(lesson.liveClassAt); return <Card variant="outlined" key={lesson.id} sx={{ borderRadius: 3 }}><CardContent><Stack spacing={1.5}>
+        <Stack direction="row" justifyContent="space-between" spacing={2}><Box><Typography variant="h5" fontWeight={900}>{lesson.title}</Typography><Typography color="text.secondary">{lesson.course?.name} · {lesson.batch?.name || 'All batches'}</Typography></Box><ClassStatusChip lesson={lesson} /></Stack>
+        <Divider />
+        <Typography><strong>Topic:</strong> {lesson.topic?.title || 'Live Classes'}</Typography>
+        <Typography><strong>Date:</strong> {starts.toLocaleDateString()}</Typography>
+        <Typography><strong>Start:</strong> {starts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {lesson.timezone ? `(${lesson.timezone})` : ''}</Typography>
+        <Typography><strong>Instructor:</strong> {[lesson.lecturer?.firstName, lesson.lecturer?.lastName].filter(Boolean).join(' ') || lesson.instructorName || 'To be announced'}</Typography>
+        <JoinButton lesson={lesson} />
+      </Stack></CardContent></Card>; })}
+      {!error && !lessons?.length && <Paper variant="outlined" sx={{ p: 4, borderRadius: 3 }}><Typography color="text.secondary">No upcoming live classes.</Typography></Paper>}
+    </Box>
   </Stack>;
 }
 

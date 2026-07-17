@@ -32,6 +32,7 @@ function normalizeSriLankanPhone(phone) {
 
 const lessonInclude = (studentId) => [
   { model: Course, as: 'course', attributes: ['id', 'name', 'code'] },
+  { model: LmsTopic, as: 'topic', required: false, attributes: ['id', 'title'] },
   { model: Batch, as: 'batch', required: false, attributes: ['id', 'name', 'code'] },
   { model: User, as: 'lecturer', required: false, attributes: ['id', 'firstName', 'lastName'] },
   { model: LmsLessonMaterial, as: 'materials', required: false },
@@ -104,7 +105,8 @@ function serializeLesson(row, detailed = false, paymentAllowed = true) {
     bunnyVideoId: paymentAllowed ? lesson.bunnyVideoId : null,
     bunnyEmbedUrl: paymentAllowed ? safeBunnyUrl(lesson) : null,
     hasRecording: paymentAllowed && Boolean(lesson.recordingUrl || safeBunnyUrl(lesson)),
-    durationMinutes: lesson.durationMinutes, course: lesson.course, batch: lesson.batch, lecturer: lesson.lecturer,
+    durationMinutes: lesson.durationMinutes, timezone: lesson.timezone, course: lesson.course,
+    batch: lesson.batch, topic: lesson.topic, lecturer: lesson.lecturer, instructorName: lesson.instructorName,
     scheduledStartAt: lesson.scheduledStartAt, scheduledEndAt: lesson.scheduledEndAt,
     source: lesson.source,
     accessStatus: paymentAllowed ? 'available' : 'payment_blocked', accessWarning: paymentAllowed ? null : accessWarning,
@@ -361,6 +363,7 @@ class StudentPortalService {
     }));
     return {
       isPublished: true,
+      status: { [Op.notIn]: ['hidden', 'archived', 'cancelled'] },
       [Op.and]: [
         { [Op.or]: enrollmentPairs.length ? enrollmentPairs : [{ id: null }] },
         { [Op.or]: [{ releaseAt: null }, { releaseAt: { [Op.lte]: new Date() } }] }
@@ -391,7 +394,12 @@ class StudentPortalService {
       where: { courseId, status: 'published' },
       include: [{
         model: LmsLesson, as: 'lessons', required: false,
-        where: { [Op.or]: [{ status: 'published' }, { isPublished: true }] },
+        where: {
+          [Op.and]: [
+            { [Op.or]: [{ status: 'published' }, { isPublished: true }] },
+            { [Op.or]: enrollment.batchId ? [{ batchId: null }, { batchId: enrollment.batchId }] : [{ batchId: null }] }
+          ]
+        },
         include: [
           { model: LmsStudentProgress, as: 'progress', required: false, where: { studentId: student.id } },
           { model: LmsLessonBatchOverride, as: 'batchOverrides', required: false, where: enrollment.batchId ? { batchId: enrollment.batchId } : { id: null } }
@@ -445,6 +453,18 @@ class StudentPortalService {
       const enrollmentAccess = this.matchingAccess(row, access);
       return { ...serializeLesson(row, false, Boolean(enrollmentAccess?.allowed)), enrollmentAccess };
     });
+  }
+
+  liveClassesFromLessons(lessons, { includeCompleted = false } = {}) {
+    return lessons.filter((item) => (
+      String(item.lessonType || '').toUpperCase() === 'LIVE_CLASS'
+      && item.liveClassAt
+      && (includeCompleted || item.classStatus !== 'completed')
+    )).sort((a, b) => new Date(a.liveClassAt) - new Date(b.liveClassAt));
+  }
+
+  async liveClasses(student, paymentAccess = null, options = {}) {
+    return this.liveClassesFromLessons(await this.lessons(student, paymentAccess), options);
   }
 
   async lesson(student, id, paymentAccess = null) {
@@ -567,8 +587,9 @@ class StudentPortalService {
 
   async dashboard(student, paymentAccess) {
     const lessons = await this.lessons(student, paymentAccess);
+    const upcomingClasses = this.liveClassesFromLessons(lessons);
     const now = Date.now();
-    const nextLiveClass = lessons.filter((item) => item.hasLiveClass && new Date(item.liveClassAt).getTime() + 3 * 60 * 60 * 1000 >= now)
+    const nextLiveClass = upcomingClasses.filter((item) => new Date(item.liveClassAt).getTime() + 3 * 60 * 60 * 1000 >= now)
       .sort((a, b) => new Date(a.liveClassAt) - new Date(b.liveClassAt))[0] || null;
     const recordings = lessons.filter((item) => item.recordingUrl || item.bunnyEmbedUrl).slice(-4).reverse();
     const attendance = await AttendanceRecord.findAll({ where: { studentId: student.id } });
@@ -594,8 +615,7 @@ class StudentPortalService {
         )) || null
       })),
       myBatches: (paymentAccess.enrollments || []).filter((item) => item.batch).map((item) => item.batch),
-      upcomingClasses: lessons.filter((item) => item.hasLiveClass && item.classStatus !== 'completed')
-        .sort((a, b) => new Date(a.liveClassAt) - new Date(b.liveClassAt)),
+      upcomingClasses,
       announcements: []
     };
   }
@@ -605,9 +625,11 @@ class StudentPortalService {
   }
 
   async upcomingClasses(student, paymentAccess) {
-    return (await this.dashboard(student, paymentAccess)).upcomingClasses;
+    return this.liveClasses(student, paymentAccess);
   }
 }
 
 module.exports = new StudentPortalService();
 module.exports.lessonReleaseState = lessonReleaseState;
+module.exports.liveClassAccess = liveClassAccess;
+module.exports.serializeLesson = serializeLesson;

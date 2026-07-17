@@ -35,6 +35,7 @@ const syncLeadActivityTypeMigration = require('../../migrations/030_sync_lead_ac
 const canonicalConversationIdentityMigration = require('../../migrations/031_canonical_conversation_identity');
 const studentRegistrationSequenceMigration = require('../../migrations/032_student_registration_sequence');
 const lmsCourseBuilderMigration = require('../../migrations/033_lms_course_builder');
+const canonicalScheduledLessonLmsMigration = require('../../migrations/034_canonical_scheduled_lesson_lms_sync');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -176,6 +177,8 @@ async function run() {
     console.log('Applied: sequential student registration numbers');
     await lmsCourseBuilderMigration.up(queryInterface, Sequelize);
     console.log('Applied: hierarchical LMS course builder');
+    await canonicalScheduledLessonLmsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: canonical scheduled lesson LMS synchronization');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

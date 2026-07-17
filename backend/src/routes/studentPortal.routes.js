@@ -12,6 +12,7 @@ router.get('/my-courses', controller.myCourses);
 router.get('/courses', controller.myCourses);
 router.get('/courses/:courseId', controller.courseCurriculum);
 router.get('/upcoming-classes', controller.upcomingClasses);
+router.get('/live-classes', controller.liveClasses);
 router.get('/payments', controller.payments);
 router.get('/lessons', controller.lessons);
 router.get('/materials', controller.materials);

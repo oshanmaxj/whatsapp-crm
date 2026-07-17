@@ -22,6 +22,7 @@ export const getStudentDashboard = () => portalApi.get('/student-portal/dashboar
 export const getStudentMyCourses = () => portalApi.get('/student-portal/my-courses');
 export const getStudentCourse = (courseId) => portalApi.get(`/lms/student/courses/${courseId}`);
 export const getStudentUpcomingClasses = () => portalApi.get('/student-portal/upcoming-classes');
+export const getStudentLiveClasses = () => portalApi.get('/student-portal/live-classes');
 export const getStudentLessons = () => portalApi.get('/student-portal/lessons');
 export const getStudentMaterials = () => portalApi.get('/student-portal/materials');
 export const getStudentLesson = (id) => portalApi.get(`/student-portal/lessons/${id}`);

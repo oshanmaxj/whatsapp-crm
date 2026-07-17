@@ -1,6 +1,6 @@
 const { Op } = require('sequelize');
 const {
-  sequelize, Batch, Course, LmsTopic, LmsLesson, LmsLessonBatchOverride,
+  sequelize, Batch, Course, LmsCourse, LmsTopic, LmsLesson, LmsLessonBatchOverride,
   LmsLessonMaterial, User
 } = require('../models');
 const audit = require('./audit.service');
@@ -65,6 +65,7 @@ class LmsCourseBuilderService {
     const courses = await Course.findAll({
       where, include: [
         { model: Batch, as: 'batches', required: false, attributes: ['id', 'name', 'code', 'status'] },
+        { model: LmsCourse, as: 'lmsCourseScopes', required: false, attributes: ['id', 'batchId', 'title', 'status', 'isPublished'] },
         { model: User, as: 'instructor', required: false, attributes: ['id', 'firstName', 'lastName'] }
       ], order: [['course_order', 'ASC'], ['name', 'ASC']]
     });
@@ -78,6 +79,7 @@ class LmsCourseBuilderService {
   async getCourse(id, actor = null) {
     const course = await Course.findByPk(id, { include: [
       { model: Batch, as: 'batches', required: false },
+      { model: LmsCourse, as: 'lmsCourseScopes', required: false, attributes: ['id', 'batchId', 'title', 'description', 'instructorId', 'status', 'isPublished'] },
       { model: User, as: 'instructor', required: false, attributes: ['id', 'firstName', 'lastName'] }
     ] });
     if (!course) throw Object.assign(new Error('Course not found.'), { status: 404 });
@@ -137,13 +139,16 @@ class LmsCourseBuilderService {
     await this.getCourse(courseId, actor);
     const topics = await LmsTopic.findAll({
       where: { courseId },
-      include: [{
+      include: [
+        { model: LmsCourse, as: 'lmsCourse', required: false, attributes: ['id', 'batchId', 'title', 'status', 'isPublished'] },
+        {
         model: LmsLesson, as: 'lessons', required: false,
         include: [
           { model: User, as: 'lecturer', required: false, attributes: ['id', 'firstName', 'lastName'] },
           { model: LmsLessonBatchOverride, as: 'batchOverrides', required: false, include: [{ model: Batch, as: 'batch', required: false }] }
         ]
-      }],
+        }
+      ],
       order: [['sort_order', 'ASC'], [{ model: LmsLesson, as: 'lessons' }, 'sort_order', 'ASC']]
     });
     return topics.map((topic) => ({ ...topic.toJSON(), lessons: topic.lessons.map((lesson) => safeLesson(lesson, options)) }));

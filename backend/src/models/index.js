@@ -67,6 +67,7 @@ const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
 const AccountingCategory = require('./accountingCategory.model');
 const AccountingTransaction = require('./accountingTransaction.model');
 const NotificationMessageTemplate = require('./notificationMessageTemplate.model');
+const LmsCourse = require('./lmsCourse.model');
 const LmsLesson = require('./lmsLesson.model');
 const LmsTopic = require('./lmsTopic.model');
 const LmsLessonBatchOverride = require('./lmsLessonBatchOverride.model');
@@ -151,6 +152,7 @@ const models = {
   AccountingCategory: AccountingCategory(sequelize, Sequelize.DataTypes),
   AccountingTransaction: AccountingTransaction(sequelize, Sequelize.DataTypes),
   NotificationMessageTemplate: NotificationMessageTemplate(sequelize, Sequelize.DataTypes),
+  LmsCourse: LmsCourse(sequelize, Sequelize.DataTypes),
   LmsLesson: LmsLesson(sequelize, Sequelize.DataTypes),
   LmsTopic: LmsTopic(sequelize, Sequelize.DataTypes),
   LmsLessonBatchOverride: LmsLessonBatchOverride(sequelize, Sequelize.DataTypes),
@@ -286,10 +288,19 @@ models.Student.hasMany(models.Certificate, { foreignKey: 'student_id', as: 'cert
 models.StudentEnrollment.hasMany(models.Certificate, { foreignKey: 'enrollment_id', as: 'certificates' });
 models.Student.hasMany(models.StudentNote, { foreignKey: 'student_id', as: 'profileNotes' });
 models.Student.hasMany(models.StudentDocument, { foreignKey: 'student_id', as: 'documents' });
+models.Course.hasMany(models.LmsCourse, { foreignKey: 'course_id', as: 'lmsCourseScopes' });
+models.Batch.hasMany(models.LmsCourse, { foreignKey: 'batch_id', as: 'lmsCourseScopes' });
+models.LmsCourse.belongsTo(models.Course, { foreignKey: 'course_id', as: 'course' });
+models.LmsCourse.belongsTo(models.Batch, { foreignKey: 'batch_id', as: 'batch' });
+models.LmsCourse.belongsTo(models.User, { foreignKey: 'instructor_id', as: 'instructor' });
+models.LmsCourse.hasMany(models.LmsTopic, { foreignKey: 'lms_course_id', as: 'topics' });
+models.LmsCourse.hasMany(models.LmsLesson, { foreignKey: 'lms_course_id', as: 'lessons' });
 models.Course.hasMany(models.LmsLesson, { foreignKey: 'course_id', as: 'lmsLessons' });
 models.Course.hasMany(models.LmsTopic, { foreignKey: 'course_id', as: 'topics' });
 models.LmsTopic.belongsTo(models.Course, { foreignKey: 'course_id', as: 'course' });
+models.LmsTopic.belongsTo(models.LmsCourse, { foreignKey: 'lms_course_id', as: 'lmsCourse' });
 models.LmsTopic.hasMany(models.LmsLesson, { foreignKey: 'topic_id', as: 'lessons' });
+models.LmsLesson.belongsTo(models.LmsCourse, { foreignKey: 'lms_course_id', as: 'lmsCourse' });
 models.LmsLessonBatchOverride.belongsTo(models.LmsLesson, { foreignKey: 'lesson_id', as: 'lesson' });
 models.LmsLessonBatchOverride.belongsTo(models.Batch, { foreignKey: 'batch_id', as: 'batch' });
 models.Batch.hasMany(models.LmsLesson, { foreignKey: 'batch_id', as: 'lmsLessons' });

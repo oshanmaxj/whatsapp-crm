@@ -21,8 +21,9 @@ import { publishLmsLesson } from '../services/lms.service';
 const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const emptySchedule = {
   courseId: '', batchId: '', titlePrefix: '', startDate: '', endDate: '', classDays: [],
-  startTime: '20:30', endTime: '22:30', timezone: 'Asia/Colombo', instructorName: '',
-  meetingProvider: 'zoom', zoomMeetingId: '', zoomJoinUrl: '', autoCreateLessons: true,
+  startTime: '20:30', endTime: '22:30', timezone: 'Asia/Colombo', instructorName: '', topicName: 'Live Classes',
+  meetingProvider: 'zoom', zoomMeetingId: '', zoomJoinUrl: '', zoomPassword: '',
+  joinButtonLabel: 'Join Live Class', allowJoinBeforeMinutes: 30, allowJoinAfterMinutes: 150, autoCreateLessons: true,
   autoImportRecordings: true, reminderEnabled: true, status: 'active'
 };
 const emptyZoom = {
@@ -184,12 +185,23 @@ export default function CourseSchedulerPage({ settingsOnly = false }) {
           <TextField type="time" label="End Time" value={String(form.endTime || '').slice(0, 5)} onChange={(e) => setForm({ ...form, endTime: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
           <TextField label="Timezone" value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} fullWidth />
         </Stack>
-        <TextField label="Instructor Name" value={form.instructorName || ''} onChange={(e) => setForm({ ...form, instructorName: e.target.value })} />
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <TextField label="Curriculum Topic" value={form.topicName || 'Live Classes'} onChange={(e) => setForm({ ...form, topicName: e.target.value })} helperText="Reuses the same topic for this course and batch." fullWidth />
+          <TextField label="Instructor Name" value={form.instructorName || ''} onChange={(e) => setForm({ ...form, instructorName: e.target.value })} fullWidth />
+        </Stack>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
           <TextField select label="Meeting Provider" value={form.meetingProvider} onChange={(e) => setForm({ ...form, meetingProvider: e.target.value })} fullWidth><MenuItem value="zoom">Zoom</MenuItem><MenuItem value="manual">Manual</MenuItem></TextField>
           <TextField label="Zoom Meeting ID" value={form.zoomMeetingId || ''} onChange={(e) => setForm({ ...form, zoomMeetingId: e.target.value })} fullWidth />
         </Stack>
         <TextField label="Zoom Join URL" value={form.zoomJoinUrl || ''} onChange={(e) => setForm({ ...form, zoomJoinUrl: e.target.value })} helperText="Students only receive this URL through the access-controlled Join Class endpoint." />
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <TextField type="password" label="Zoom Password" value={form.zoomPassword || ''} onChange={(e) => setForm({ ...form, zoomPassword: e.target.value })} fullWidth />
+          <TextField label="Join Button Label" value={form.joinButtonLabel || 'Join Live Class'} onChange={(e) => setForm({ ...form, joinButtonLabel: e.target.value })} fullWidth />
+        </Stack>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <TextField type="number" label="Allow Join Before (minutes)" value={form.allowJoinBeforeMinutes ?? 30} onChange={(e) => setForm({ ...form, allowJoinBeforeMinutes: Number(e.target.value) })} inputProps={{ min: 0 }} fullWidth />
+          <TextField type="number" label="Allow Join After (minutes)" value={form.allowJoinAfterMinutes ?? 150} onChange={(e) => setForm({ ...form, allowJoinAfterMinutes: Number(e.target.value) })} inputProps={{ min: 0 }} fullWidth />
+        </Stack>
         <Stack direction={{ xs: 'column', md: 'row' }}>
           <FormControlLabel control={<Switch checked={Boolean(form.autoCreateLessons)} onChange={(e) => setForm({ ...form, autoCreateLessons: e.target.checked })} />} label="Auto create LMS lessons" />
           <FormControlLabel control={<Switch checked={Boolean(form.autoImportRecordings)} onChange={(e) => setForm({ ...form, autoImportRecordings: e.target.checked })} />} label="Auto import recordings" />

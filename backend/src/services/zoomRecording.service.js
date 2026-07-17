@@ -4,9 +4,9 @@ const fs = require('fs/promises');
 const path = require('path');
 const { Op } = require('sequelize');
 const {
-  AppSetting, CourseSchedule, LessonAutoPublishLog, LmsLesson, ScheduledLesson, ZoomRecordingImport
+  sequelize, AppSetting, CourseSchedule, LessonAutoPublishLog, LmsLesson, ScheduledLesson, ZoomRecordingImport
 } = require('../models');
-const lmsService = require('./lms.service');
+const { syncScheduledLessonToLms } = require('./scheduledLessonLmsSync.service');
 const studentMessageAutomationService = require('./studentMessageAutomation.service');
 
 const secretKeys = ['accountId', 'clientId', 'clientSecret', 'verificationToken', 'bunnyApiKey', 'bunnyLibraryId'];
@@ -252,27 +252,17 @@ class ZoomRecordingService {
         const stored = await this.storeRecording(buffer, { ...meeting, ...file }, settings);
         let lesson = scheduled.lessonId ? await LmsLesson.findByPk(scheduled.lessonId) : null;
         if (!lesson) {
-          lesson = await lmsService.createLesson({
-            courseId: scheduled.courseId, batchId: scheduled.batchId,
-            title: scheduled.title || `${meeting.topic || 'Course'} - Recording ${dateOnly(meeting.start_time)}`,
-            liveClassAt: scheduled.scheduledStartAt, scheduledStartAt: scheduled.scheduledStartAt,
-            scheduledEndAt: scheduled.scheduledEndAt, zoomMeetingId: String(meeting.id),
-            recordingUrl: stored.provider === 'bunny' ? null : stored.storageUrl,
-            bunnyVideoId: stored.bunnyVideoId || null, bunnyEmbedUrl: stored.provider === 'bunny' ? stored.storageUrl : null,
-            embedCode: stored.embedCode, durationMinutes: meeting.duration, isPublished: true,
-            source: 'zoom_recording_import', scheduleId: scheduled.scheduleId,
-            scheduledLessonId: scheduled.id, publishedAt: new Date()
-          }, userId);
-          await scheduled.update({ lessonId: lesson.id });
-        } else {
-          await lesson.update({
-            recordingUrl: stored.provider === 'bunny' ? null : stored.storageUrl,
-            bunnyVideoId: stored.bunnyVideoId || null, bunnyEmbedUrl: stored.provider === 'bunny' ? stored.storageUrl : null,
-            embedCode: stored.embedCode, durationMinutes: meeting.duration || lesson.durationMinutes,
-            isPublished: true, publishedAt: new Date()
-          });
-          await studentMessageAutomationService.dispatchRecording(lesson, userId).catch(() => null);
+          lesson = await sequelize.transaction(async (transaction) => (
+            syncScheduledLessonToLms({ scheduledLesson: scheduled, transaction, actorUserId: userId })
+          )).then((result) => result.lesson);
         }
+        await lesson.update({
+          recordingUrl: stored.provider === 'bunny' ? null : stored.storageUrl,
+          bunnyVideoId: stored.bunnyVideoId || null, bunnyEmbedUrl: stored.provider === 'bunny' ? stored.storageUrl : null,
+          embedCode: stored.embedCode, durationMinutes: meeting.duration || lesson.durationMinutes,
+          isPublished: true, publishedAt: new Date()
+        });
+        await studentMessageAutomationService.dispatchRecording(lesson, userId).catch(() => null);
         await importRow.update({
           lessonId: lesson.id, status: 'imported', storageProvider: stored.provider,
           storageUrl: stored.storageUrl, embedCode: stored.embedCode, downloadUrl: null

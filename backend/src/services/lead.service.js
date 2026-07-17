@@ -4,7 +4,7 @@ const assignmentService = require('./assignment.service');
 const leadAssignmentService = require('./leadAssignment.service');
 const leadStatusService = require('./leadStatus.service');
 const { LEAD_STATUSES, normalizeLeadStatusCode } = require('../constants/leadStatuses');
-const { normalizeSriLankanPhone } = require('../utils/phone');
+const { normalizeSriLankanPhone, requireNormalizedPhone } = require('../utils/phone');
 
 const DEFAULT_SOURCES = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 
@@ -149,16 +149,20 @@ class LeadService {
   }
 
   async findOrCreateContact(payload) {
+    const normalizedPhone = requireNormalizedPhone(payload.phone);
     const nameParts = payload.name ? splitName(payload.name) : {};
     const contactPayload = {
       firstName: payload.firstName || nameParts.firstName || null,
       lastName: payload.lastName || nameParts.lastName || null,
-      phone: payload.phone,
+      phone: normalizedPhone,
+      normalizedPhone,
       email: payload.email || null,
       status: 'new'
     };
 
-    let contact = await Contact.findOne({ where: { phone: payload.phone } });
+    let contact = await Contact.findOne({
+      where: { [Op.or]: [{ normalizedPhone }, { phone: normalizedPhone }, { whatsappId: normalizedPhone }] }
+    });
     if (!contact) {
       return Contact.create(contactPayload);
     }

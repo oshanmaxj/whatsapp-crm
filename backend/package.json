@@ -13,6 +13,7 @@
     "db:seed:access": "node src/scripts/seed_access_defaults.js",
     "reports:smoke": "node src/scripts/smoke_reports.js",
     "commissions:backfill": "node src/scripts/backfill_commissions.js",
+    "repair:conversations": "node src/scripts/repair_duplicate_conversations.js",
     "test:lead-status": "node --test"
   },
   "dependencies": {

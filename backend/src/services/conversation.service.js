@@ -1,4 +1,5 @@
-const { Conversation } = require('../models');
+const { Contact, Conversation } = require('../models');
+const conversationIdentityService = require('./conversationIdentity.service');
 
 class ConversationService {
   async findByThreadId(threadId) {
@@ -6,14 +7,13 @@ class ConversationService {
   }
 
   async createConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId = null }) {
-    return Conversation.create({
-      contactId,
-      leadId,
-      whatsappThreadId,
-      assignedUserId: assignedTo,
-      lastMessageAt,
-      whatsappAccountId
+    const contact = await Contact.findByPk(contactId);
+    if (!contact) throw Object.assign(new Error('Conversation contact not found.'), { status: 404 });
+    const result = await conversationIdentityService.findOrCreateByPhoneAndAccount({
+      contactId, phone: contact.phone, whatsappId: contact.whatsappId, leadId,
+      whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId
     });
+    return result.conversation;
   }
 
   async updateSummary(conversationId, summary, suggestedAgent = null) {
@@ -27,25 +27,13 @@ class ConversationService {
   }
 
   async upsertConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId = null }) {
-    let conversation = await this.findByThreadId(whatsappThreadId);
-    if (!conversation && contactId) {
-      conversation = await Conversation.findOne({
-        where: { contactId, whatsappAccountId },
-        order: [['last_message_at', 'DESC'], ['updated_at', 'DESC']]
-      });
-    }
-    if (conversation) {
-      return conversation.update({
-        contactId,
-        leadId: leadId || conversation.leadId,
-        whatsappThreadId,
-        assignedUserId: assignedTo ?? conversation.assignedUserId,
-        lastMessageAt
-        , whatsappAccountId: whatsappAccountId ?? conversation.whatsappAccountId
-      });
-    }
-
-    return this.createConversation({ contactId, leadId, whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId });
+    const contact = await Contact.findByPk(contactId);
+    if (!contact) throw Object.assign(new Error('Conversation contact not found.'), { status: 404 });
+    const result = await conversationIdentityService.findOrCreateByPhoneAndAccount({
+      contactId, phone: contact.phone, whatsappId: contact.whatsappId, leadId,
+      whatsappThreadId, assignedTo, lastMessageAt, whatsappAccountId
+    });
+    return result.conversation;
   }
 }
 

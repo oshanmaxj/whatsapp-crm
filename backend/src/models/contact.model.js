@@ -18,6 +18,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       unique: true
     },
+    normalizedPhone: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: 'normalized_phone'
+    },
     whatsappId: {
       type: DataTypes.STRING(255),
       allowNull: true,
@@ -57,6 +62,7 @@ module.exports = (sequelize, DataTypes) => {
     underscored: true,
     indexes: [
       { fields: ['phone'] },
+      { fields: ['normalized_phone'] },
       { fields: ['whatsapp_id'] },
       { fields: ['status'] },
       { fields: ['status', 'created_at'] },

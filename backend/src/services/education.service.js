@@ -32,7 +32,8 @@ const studentMessageAutomationService = require('./studentMessageAutomation.serv
 const auditService = require('./audit.service');
 const { evaluateFeeAccess } = require('./enrollmentAccess.service');
 const leadStatusService = require('./leadStatus.service');
-const { normalizeSriLankanPhone } = require('../utils/phone');
+const { normalizeSriLankanPhone, requireNormalizedPhone } = require('../utils/phone');
+const studentRegistrationNumberService = require('./studentRegistrationNumber.service');
 
 function fullName(contact) {
   return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || contact?.phone || 'Student';
@@ -40,10 +41,6 @@ function fullName(contact) {
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function studentNo() {
-  return `STU-${Date.now()}`;
 }
 
 function registrationNumber(student) {
@@ -638,7 +635,7 @@ class EducationService {
 
   async createStudent(payload, userId = null) {
     const name = String(payload.name || '').trim();
-    const phone = String(payload.phone || '').trim();
+    const phone = requireNormalizedPhone(payload.phone);
     const email = String(payload.email || '').trim() || null;
     const portalPassword = payload.studentPortalPassword ?? payload.portalPassword;
 
@@ -652,7 +649,10 @@ class EducationService {
     let contactId = optionalId(payload.contactId);
     if (!contactId) {
       const [firstName, ...rest] = name.split(/\s+/).filter(Boolean);
-      let contact = await Contact.findOne({ where: { phone }, paranoid: false });
+      let contact = await Contact.findOne({
+        where: { [Op.or]: [{ normalizedPhone: phone }, { phone }, { whatsappId: phone }] },
+        paranoid: false
+      });
       if (contact?.deletedAt) {
         await contact.restore();
       }
@@ -661,6 +661,7 @@ class EducationService {
           firstName: firstName || name,
           lastName: rest.join(' ') || null,
           phone,
+          normalizedPhone: phone,
           email,
           status: 'active'
         });
@@ -674,20 +675,23 @@ class EducationService {
     const initialEnrollments = this.normalizeEnrollments(payload);
     await this.validateEnrollments(initialEnrollments);
     const primaryEnrollment = initialEnrollments.find((item) => item.enrollmentStatus === 'active') || initialEnrollments[0];
-    const student = await Student.create({
-      studentNo: payload.studentNo || studentNo(),
-      contactId,
-      leadId: optionalId(payload.leadId),
-      courseId: primaryEnrollment?.courseId || null,
-      batchId: primaryEnrollment?.batchId || null,
-      name,
-      phone,
-      email,
-      dateOfBirth: payload.dateOfBirth || null,
-      status: payload.status || 'enrolled',
-      enrolledAt: payload.enrolledAt || new Date(),
-      notes: payload.notes || null,
-      portalPasswordHash: portalPassword || generatedPortalPassword
+    const student = await sequelize.transaction(async (transaction) => {
+      const generatedStudentNo = await studentRegistrationNumberService.next({ transaction });
+      return Student.create({
+        studentNo: generatedStudentNo,
+        contactId,
+        leadId: optionalId(payload.leadId),
+        courseId: primaryEnrollment?.courseId || null,
+        batchId: primaryEnrollment?.batchId || null,
+        name,
+        phone,
+        email,
+        dateOfBirth: payload.dateOfBirth || null,
+        status: payload.status || 'enrolled',
+        enrolledAt: payload.enrolledAt || new Date(),
+        notes: payload.notes || null,
+        portalPasswordHash: portalPassword || generatedPortalPassword
+      }, { transaction });
     });
     await this.markRelatedLeadRegistered({ student, payload, userId });
     await this.syncEnrollments(student, { enrollments: initialEnrollments }, userId);
@@ -879,7 +883,12 @@ class EducationService {
     const requestedStudentId = payload.studentId || payload.student_id || existing?.studentId;
     if (!requestedStudentId) throw Object.assign(new Error('Student is required'), { status: 400 });
     const student = await this.getStudent(requestedStudentId);
-    if (!registrationNumber(student)) await student.update({ studentNo: studentNo() });
+    if (!registrationNumber(student)) {
+      await sequelize.transaction(async (transaction) => {
+        const generatedStudentNo = await studentRegistrationNumberService.next({ transaction });
+        await student.update({ studentNo: generatedStudentNo }, { transaction });
+      });
+    }
     const requestedEnrollmentId = optionalId(payload.enrollmentId || payload.enrollment_id);
     const selectedEnrollment = requestedEnrollmentId
       ? (student.enrollments || []).find((item) => String(item.id) === String(requestedEnrollmentId) && item.enrollmentStatus === 'active')
@@ -1134,7 +1143,10 @@ class EducationService {
       fee.enrollmentId ? StudentEnrollment.findByPk(fee.enrollmentId, { transaction }) : null
     ]);
     if (!student) throw Object.assign(new Error('Student not found for fee payment'), { status: 404 });
-    if (!registrationNumber(student)) await student.update({ studentNo: studentNo() }, { transaction });
+    if (!registrationNumber(student)) {
+      const generatedStudentNo = await studentRegistrationNumberService.next({ transaction });
+      await student.update({ studentNo: generatedStudentNo }, { transaction });
+    }
     const regNo = registrationNumber(student);
     return {
       fee,

@@ -16,18 +16,14 @@ const {
 const messageQueueService = require('./messageQueue.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
+const { normalizePhone } = require('../utils/phone');
 
 function fullName(person) {
   return [person?.firstName, person?.lastName].filter(Boolean).join(' ') || person?.name || person?.phone || 'Unknown';
 }
 
-function normalizePhone(phone) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  return digits.startsWith('00') ? digits.slice(2) : digits;
-}
-
 function validWhatsAppPhone(phone) {
-  return /^\d{7,15}$/.test(normalizePhone(phone));
+  return Boolean(normalizePhone(phone));
 }
 
 function parseDateBoundary(value, endOfDay = false) {

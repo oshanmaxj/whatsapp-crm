@@ -3,11 +3,7 @@ const whatsappService = require('./whatsapp.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappTemplateService = require('./whatsappTemplate.service');
 const conversationAccessService = require('./conversationAccess.service');
-
-function normalizeWhatsAppNumber(phone) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  return digits.startsWith('00') ? digits.slice(2) : digits;
-}
+const { normalizePhone: normalizeWhatsAppNumber } = require('../utils/phone');
 
 function previewText(message) {
   if (!message) return null;
@@ -59,6 +55,19 @@ function serializeMessage(message) {
 }
 
 class ChatService {
+  async canonicalConversation(conversationId, include = []) {
+    const requested = await Conversation.findByPk(conversationId, { include });
+    if (!requested?.normalizedPhone) return requested;
+    return (await Conversation.findOne({
+      where: { normalizedPhone: requested.normalizedPhone, whatsappAccountId: requested.whatsappAccountId },
+      include,
+      order: [
+        [require('../models').sequelize.literal("CASE WHEN status = 'open' THEN 0 WHEN status = 'pending' THEN 1 ELSE 2 END"), 'ASC'],
+        ['created_at', 'ASC']
+      ]
+    })) || requested;
+  }
+
   async resolveReplyContext(conversationId, replyToMessageId) {
     if (!replyToMessageId) return { replyToMessageId: null, replyToWhatsappMessageId: null };
     const original = await Message.findOne({
@@ -83,9 +92,9 @@ class ChatService {
 
   async sendChatMessage({ conversationId, senderId, text, replyToMessageId = null }) {
     await conversationAccessService.assertConversationAccess(conversationId, senderId);
-    const conversation = await Conversation.findByPk(conversationId, {
-      include: [{ model: Contact, as: 'contact', attributes: ['id', 'phone', 'whatsappId'] }]
-    });
+    const conversation = await this.canonicalConversation(conversationId, [
+      { model: Contact, as: 'contact', attributes: ['id', 'phone', 'whatsappId'] }
+    ]);
     if (!conversation) {
       const error = new Error('Conversation not found');
       error.status = 404;
@@ -111,6 +120,7 @@ class ChatService {
     }
 
     const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
+    conversationId = conversation.id;
     const replyContext = await this.resolveReplyContext(conversationId, replyToMessageId);
     const message = await Message.create({
       conversationId,
@@ -171,9 +181,9 @@ class ChatService {
     replyToMessageId = null
   }) {
     await conversationAccessService.assertConversationAccess(conversationId, senderId);
-    const conversation = await Conversation.findByPk(conversationId, {
-      include: [{ model: Contact, as: 'contact', attributes: ['id', 'phone', 'whatsappId'] }]
-    });
+    const conversation = await this.canonicalConversation(conversationId, [
+      { model: Contact, as: 'contact', attributes: ['id', 'phone', 'whatsappId'] }
+    ]);
     if (!conversation) throw Object.assign(new Error('Conversation not found'), { status: 404 });
 
     const toNumber = normalizeWhatsAppNumber(
@@ -195,6 +205,7 @@ class ChatService {
       throw error;
     }
 
+    conversationId = conversation.id;
     const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
     const replyContext = await this.resolveReplyContext(conversationId, replyToMessageId);
     const message = await Message.create({
@@ -344,8 +355,15 @@ class ChatService {
 
   async getConversationMessages(conversationId, userId) {
     await conversationAccessService.assertConversationAccess(conversationId, userId);
+    const conversation = await Conversation.findByPk(conversationId, { attributes: ['id', 'normalizedPhone', 'whatsappAccountId'] });
+    const conversationIds = conversation?.normalizedPhone
+      ? (await Conversation.findAll({
+          where: { normalizedPhone: conversation.normalizedPhone, whatsappAccountId: conversation.whatsappAccountId },
+          attributes: ['id']
+        })).map((item) => item.id)
+      : [conversationId];
     const messages = await Message.findAll({
-      where: { conversationId },
+      where: { conversationId: { [require('sequelize').Op.in]: conversationIds } },
       include: [
         {
           model: Message,

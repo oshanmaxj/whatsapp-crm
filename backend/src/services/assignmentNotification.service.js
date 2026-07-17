@@ -4,14 +4,7 @@ const auditService = require('./audit.service');
 const whatsappService = require('./whatsapp.service');
 const outboundHistoryService = require('./outboundHistory.service');
 const notificationTemplateService = require('./notificationTemplate.service');
-
-function normalizeWhatsAppNumber(phone) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  const normalized = digits.startsWith('00') ? digits.slice(2) : digits;
-  if (/^0?7\d{8}$/.test(normalized)) return `94${normalized.replace(/^0/, '')}`;
-  if (/^947\d{8}$/.test(normalized)) return normalized;
-  return '';
-}
+const { normalizePhone: normalizeWhatsAppNumber } = require('../utils/phone');
 
 function targetPhone(user) {
   return user?.whatsapp || user?.whatsappId || user?.mobile || user?.phone || '';

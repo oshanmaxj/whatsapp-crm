@@ -7,6 +7,7 @@ const assignmentNotificationService = require('./assignmentNotification.service'
 const auditService = require('./audit.service');
 const conversationAccessService = require('./conversationAccess.service');
 const leadAssignmentService = require('./leadAssignment.service');
+const { normalizePhone } = require('../utils/phone');
 const {
   sequelize,
   Contact,
@@ -32,10 +33,7 @@ function ensureUploadDir() {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-function normalizeWhatsAppNumber(phone) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  return digits.startsWith('00') ? digits.slice(2) : digits;
-}
+const normalizeWhatsAppNumber = normalizePhone;
 
 function serializeAgent(agent) {
   if (!agent) return null;
@@ -251,7 +249,22 @@ class InboxService {
       order: [['last_message_at', 'DESC NULLS LAST'], ['updated_at', 'DESC']]
     });
 
-    const serialized = conversations.map(serializeConversation);
+    const canonicalByIdentity = new Map();
+    for (const conversation of conversations.map(serializeConversation)) {
+      const normalizedPhone = conversation.normalizedPhone || normalizePhone(conversation.contact?.phone || conversation.contact?.whatsappId);
+      const identity = `${conversation.whatsappAccountId || 'default'}:${normalizedPhone || `conversation:${conversation.id}`}`;
+      const current = canonicalByIdentity.get(identity);
+      const rank = (item) => {
+        const value = ['open', 'pending', 'closed', 'archived'].indexOf(item.status);
+        return value === -1 ? 99 : value;
+      };
+      if (!current
+        || rank(conversation) < rank(current)
+        || (rank(conversation) === rank(current) && new Date(conversation.createdAt || 0) < new Date(current.createdAt || 0))) {
+        canonicalByIdentity.set(identity, conversation);
+      }
+    }
+    const serialized = [...canonicalByIdentity.values()];
     const conversationIds = serialized.map((conversation) => conversation.id).filter(Boolean);
     const latestByConversation = new Map();
 

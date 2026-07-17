@@ -351,6 +351,15 @@ function ChatPage() {
       setConversations((current) => safeArray(current).map(patchConversation));
     };
     const handleLeadStatusUpdate = applyLeadUpdate;
+    const handleConversationMerged = (payload = {}) => {
+      const mergedIds = new Set(safeArray(payload.mergedConversationIds).map(String));
+      if (!payload.canonicalConversationId || mergedIds.size === 0) return;
+      setConversations((current) => safeArray(current).filter((item) => !mergedIds.has(String(item.id))));
+      if (mergedIds.has(String(selectedRef.current))) {
+        setSelected(String(payload.canonicalConversationId));
+      }
+      loadConversations({ silent: true });
+    };
     socket.on('chat:message', handleNewMessage);
     socket.on('whatsapp.message.received', handleNewMessage);
     socket.on('message_status_updated', handleStatusUpdate);
@@ -359,6 +368,7 @@ function ChatPage() {
     socket.on('lead.updated', applyLeadUpdate);
     socket.on('lead.status.changed', applyLeadUpdate);
     socket.on('lead.agent.changed', applyLeadUpdate);
+    socket.on('conversation.merged', handleConversationMerged);
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('whatsapp.message.received', handleNewMessage);
@@ -368,6 +378,7 @@ function ChatPage() {
       socket.off('lead.updated', applyLeadUpdate);
       socket.off('lead.status.changed', applyLeadUpdate);
       socket.off('lead.agent.changed', applyLeadUpdate);
+      socket.off('conversation.merged', handleConversationMerged);
     };
   }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage, agents]);
 

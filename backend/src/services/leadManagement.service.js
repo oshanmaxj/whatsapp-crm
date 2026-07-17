@@ -1,19 +1,23 @@
-const contactService = require('./contact.service');
 const leadService = require('./lead.service');
 const assignmentService = require('./assignment.service');
 const conversationService = require('./conversation.service');
 const followupService = require('./followup.service');
 const notificationService = require('./notification.service');
+const conversationIdentityService = require('./conversationIdentity.service');
 
 class LeadManagementService {
   async processIncomingWhatsapp({ from, whatsappId, profileName, text, threadId, payload, whatsappAccountId = null }) {
-    const contact = await contactService.findOrCreateFromWhatsapp({
+    const identity = await conversationIdentityService.findOrCreateByPhoneAndAccount({
       phone: from,
       whatsappId,
       firstName: profileName || null,
       lastName: null,
-      whatsappAccountId
+      whatsappAccountId,
+      whatsappThreadId: threadId,
+      lastMessageAt: new Date(),
+      contactStatus: 'new'
     });
+    const contact = identity.contact;
 
     let lead = await leadService.getOpenLeadForContact(contact.id, whatsappAccountId);
     if (!lead) {

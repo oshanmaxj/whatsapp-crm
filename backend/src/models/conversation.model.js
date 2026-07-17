@@ -9,6 +9,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: false
     },
+    normalizedPhone: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: 'normalized_phone'
+    },
     leadId: {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: true
@@ -59,6 +64,7 @@ module.exports = (sequelize, DataTypes) => {
     underscored: true,
     indexes: [
       { fields: ['contact_id'] },
+      { fields: ['normalized_phone'] },
       { fields: ['lead_id'] },
       { fields: ['assigned_user_id'] },
       { fields: ['assigned_role_id'] },

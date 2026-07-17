@@ -2,11 +2,8 @@ const { Op } = require('sequelize');
 const { Contact, Conversation, Message } = require('../models');
 const logger = require('../config/logger');
 const socketService = require('./socket.service');
-
-function normalizePhone(value) {
-  const digits = String(value || '').replace(/\D/g, '');
-  return digits.startsWith('00') ? digits.slice(2) : digits;
-}
+const conversationIdentityService = require('./conversationIdentity.service');
+const { normalizePhone, requireNormalizedPhone } = require('../utils/phone');
 
 function contactName(contact, fallback) {
   return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || fallback || 'WhatsApp contact';
@@ -19,10 +16,11 @@ class OutboundHistoryService {
       if (byId) return byId;
     }
 
-    const normalized = normalizePhone(phone);
+    const normalized = requireNormalizedPhone(phone);
     const candidates = await Contact.findAll({
       where: {
         [Op.or]: [
+          { normalizedPhone: normalized },
           { phone: normalized },
           { whatsappId: normalized },
           { phone: { [Op.like]: `%${normalized.slice(-7)}` } },
@@ -55,27 +53,22 @@ class OutboundHistoryService {
   async resolveConversation({ conversationId, contact, leadId, whatsappAccountId = null }) {
     if (conversationId) {
       const byId = await Conversation.findByPk(conversationId);
-      if (byId) return byId;
+      if (byId) {
+        whatsappAccountId = byId.whatsappAccountId ?? whatsappAccountId;
+        leadId = byId.leadId || leadId;
+      }
     }
 
-    let conversation = await Conversation.findOne({
-      where: { contactId: contact.id, whatsappAccountId },
-      order: [['last_message_at', 'DESC'], ['updated_at', 'DESC']]
-    });
-    if (conversation) {
-      if (!conversation.leadId && leadId) await conversation.update({ leadId });
-      return conversation;
-    }
-
-    conversation = await Conversation.create({
+    const result = await conversationIdentityService.findOrCreateByPhoneAndAccount({
       contactId: contact.id,
-      leadId: leadId || null,
+      phone: contact.phone,
+      whatsappId: contact.whatsappId,
+      leadId,
       whatsappThreadId: [whatsappAccountId || 'default', contact.whatsappId || normalizePhone(contact.phone)].join(':'),
       whatsappAccountId,
-      status: 'open',
       lastMessageAt: new Date()
     });
-    return conversation;
+    return result.conversation;
   }
 
   async record(payload) {
@@ -104,7 +97,7 @@ class OutboundHistoryService {
         sentToUserId: payload.sentToUserId || null,
         sentToPhone: payload.sentToPhone || null,
         fromNumber: payload.fromNumber || null,
-        toNumber: normalizePhone(payload.isInternalNotification ? payload.sentToPhone : payload.phone),
+        toNumber: requireNormalizedPhone(payload.isInternalNotification ? payload.sentToPhone : payload.phone),
         status: payload.status || 'sent',
         statusUpdatedAt: now,
         isRead: true,

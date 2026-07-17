@@ -32,6 +32,8 @@ const leadPipelineMigration = require('../../migrations/027_lead_pipeline_follow
 const unifiedLeadStatusMigration = require('../../migrations/028_unified_lead_status');
 const repairLeadActivityHistoryMigration = require('../../migrations/029_repair_lead_activity_history');
 const syncLeadActivityTypeMigration = require('../../migrations/030_sync_lead_activity_type');
+const canonicalConversationIdentityMigration = require('../../migrations/031_canonical_conversation_identity');
+const studentRegistrationSequenceMigration = require('../../migrations/032_student_registration_sequence');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -167,6 +169,10 @@ async function run() {
     console.log('Applied: lead activity history schema repair');
     await syncLeadActivityTypeMigration.up(queryInterface, Sequelize);
     console.log('Applied: lead activity type compatibility repair');
+    await canonicalConversationIdentityMigration.up(queryInterface, Sequelize);
+    console.log('Applied: canonical conversation identity');
+    await studentRegistrationSequenceMigration.up(queryInterface, Sequelize);
+    console.log('Applied: sequential student registration numbers');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

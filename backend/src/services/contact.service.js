@@ -1,5 +1,6 @@
 const { Op, literal } = require('sequelize');
 const { sequelize, Contact, Lead } = require('../models');
+const { normalizePhone, requireNormalizedPhone } = require('../utils/phone');
 
 const CONTACT_FIELDS = ['firstName', 'lastName', 'phone', 'whatsappId', 'email', 'company', 'status', 'notes', 'tags'];
 
@@ -106,15 +107,20 @@ function pickContactPayload(payload) {
 
 class ContactService {
   async findByPhone(phone) {
-    return Contact.findOne({ where: { phone } });
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return null;
+    return Contact.findOne({
+      where: { [Op.or]: [{ normalizedPhone }, { phone: normalizedPhone }, { whatsappId: normalizedPhone }] }
+    });
   }
 
   async findByWhatsappIdentity(phone, whatsappId) {
-    const identities = [phone, whatsappId].filter(Boolean);
+    const identities = [normalizePhone(phone), normalizePhone(whatsappId)].filter(Boolean);
     if (!identities.length) return null;
     return Contact.findOne({
       where: {
         [Op.or]: [
+          { normalizedPhone: { [Op.in]: identities } },
           { phone: { [Op.in]: identities } },
           { whatsappId: { [Op.in]: identities } }
         ]
@@ -196,7 +202,10 @@ class ContactService {
   }
 
   async createContact(payload) {
-    const contact = await Contact.create(pickContactPayload(payload));
+    const values = pickContactPayload(payload);
+    values.normalizedPhone = requireNormalizedPhone(values.phone);
+    values.phone = values.normalizedPhone;
+    const contact = await Contact.create(values);
     return serializeContact(contact);
   }
 
@@ -208,7 +217,12 @@ class ContactService {
       throw error;
     }
 
-    await contact.update(pickContactPayload(payload));
+    const values = pickContactPayload(payload);
+    if (Object.prototype.hasOwnProperty.call(values, 'phone')) {
+      values.normalizedPhone = requireNormalizedPhone(values.phone);
+      values.phone = values.normalizedPhone;
+    }
+    await contact.update(values);
     return serializeContact(contact);
   }
 
@@ -225,9 +239,11 @@ class ContactService {
   }
 
   async createFromWhatsapp({ phone, whatsappId, firstName, lastName, whatsappAccountId = null }) {
+    const normalizedPhone = requireNormalizedPhone(phone || whatsappId);
     return Contact.create({
-      phone,
-      whatsappId,
+      phone: normalizedPhone,
+      normalizedPhone,
+      whatsappId: whatsappId ? normalizedPhone : null,
       firstName,
       lastName,
       status: 'new',
@@ -236,13 +252,15 @@ class ContactService {
   }
 
   async findOrCreateFromWhatsapp({ phone, whatsappId, firstName, lastName, whatsappAccountId = null }) {
-    let contact = await this.findByWhatsappIdentity(phone, whatsappId);
+    const normalizedPhone = requireNormalizedPhone(phone || whatsappId);
+    let contact = await this.findByWhatsappIdentity(normalizedPhone, whatsappId);
     if (!contact) {
-      contact = await this.createFromWhatsapp({ phone, whatsappId, firstName, lastName, whatsappAccountId });
+      contact = await this.createFromWhatsapp({ phone: normalizedPhone, whatsappId, firstName, lastName, whatsappAccountId });
       return contact;
     }
 
     const updates = {};
+    if (contact.normalizedPhone !== normalizedPhone) updates.normalizedPhone = normalizedPhone;
     if (whatsappId && !contact.whatsappId) {
       updates.whatsappId = whatsappId;
     }
@@ -288,6 +306,8 @@ class ContactService {
       }
 
       try {
+        payload.normalizedPhone = requireNormalizedPhone(payload.phone);
+        payload.phone = payload.normalizedPhone;
         const existing = await this.findByPhone(payload.phone);
         if (existing) {
           await existing.update(payload);

@@ -62,6 +62,24 @@ npm run dev
 npm start
 ```
 
+## Repair duplicate conversations
+
+After running migrations, inspect duplicate phone/account conversations without changing data:
+
+```bash
+npm run repair:conversations
+```
+
+Review the JSON summary, stop application traffic, then apply the repair:
+
+```bash
+npm run repair:conversations -- --apply
+```
+
+The apply mode runs in one database transaction, relinks every table containing a
+`conversation_id` column, archives duplicate conversation rows, and creates the
+active conversation identity unique index. Re-running it is safe.
+
 ## Notes
 - The migration runner uses the same DB connection settings as `src/config/database.js`.
 - If you prefer to run SQL manually, connect to your MySQL server and run equivalent ALTER TABLE statements.

@@ -5,14 +5,18 @@ const PERMISSIONS = [
   ['payment-slips.mark', 'Payment Slips Mark', 'Mark an inbound WhatsApp message as a payment slip']
 ];
 
-async function exists(q, table) { return Boolean(await q.describeTable(table).catch(() => null)); }
+async function exists(q, table, transaction) {
+  return Boolean(await q.describeTable(table, { transaction }).catch(() => null));
+}
 
 module.exports = {
   async up(q, Sequelize) {
-    const D = Sequelize.DataTypes;
-    const json = D.JSONB || D.JSON;
-    if (!(await exists(q, 'payment_slips'))) {
-      await q.createTable('payment_slips', {
+    const migrate = async (transaction) => {
+      const D = Sequelize.DataTypes;
+      const json = D.JSONB || D.JSON;
+      const queryOptions = { transaction };
+      if (!(await exists(q, 'payment_slips', transaction))) {
+        await q.createTable('payment_slips', {
         id: { type: D.BIGINT, autoIncrement: true, primaryKey: true },
         student_id: { type: D.BIGINT, allowNull: true }, lead_id: { type: D.BIGINT, allowNull: true },
         contact_id: { type: D.BIGINT, allowNull: true }, conversation_id: { type: D.BIGINT, allowNull: true },
@@ -38,39 +42,50 @@ module.exports = {
         deleted_at: { type: D.DATE, allowNull: true },
         created_at: { type: D.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP') },
         updated_at: { type: D.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP') }
-      });
-      await q.addIndex('payment_slips', ['whatsapp_message_id'], { unique: true, name: 'payment_slips_whatsapp_message_unique' });
-      for (const [fields, name] of [
-        [['verification_status'], 'payment_slips_status_idx'], [['contact_id'], 'payment_slips_contact_idx'],
-        [['student_id'], 'payment_slips_student_idx'], [['reference_number'], 'payment_slips_reference_idx'],
-        [['file_hash'], 'payment_slips_file_hash_idx'], [['created_at'], 'payment_slips_created_idx']
-      ]) await q.addIndex('payment_slips', fields, { name });
-    }
-    if (!(await exists(q, 'payment_slip_detection_jobs'))) {
-      await q.createTable('payment_slip_detection_jobs', {
+        }, queryOptions);
+        await q.addIndex('payment_slips', ['whatsapp_message_id'], { unique: true, name: 'payment_slips_whatsapp_message_unique', transaction });
+        for (const [fields, name] of [
+          [['verification_status'], 'payment_slips_status_idx'], [['contact_id'], 'payment_slips_contact_idx'],
+          [['student_id'], 'payment_slips_student_idx'], [['reference_number'], 'payment_slips_reference_idx'],
+          [['file_hash'], 'payment_slips_file_hash_idx'], [['created_at'], 'payment_slips_created_idx']
+        ]) await q.addIndex('payment_slips', fields, { name, transaction });
+      }
+      if (!(await exists(q, 'payment_slip_detection_jobs', transaction))) {
+        await q.createTable('payment_slip_detection_jobs', {
         id: { type: D.BIGINT, autoIncrement: true, primaryKey: true }, message_id: { type: D.BIGINT, allowNull: false, unique: true },
         status: { type: D.STRING(30), allowNull: false, defaultValue: 'QUEUED' }, attempts: { type: D.INTEGER, allowNull: false, defaultValue: 0 },
         max_attempts: { type: D.INTEGER, allowNull: false, defaultValue: 3 }, next_attempt_at: { type: D.DATE, allowNull: true },
         last_error: { type: D.TEXT, allowNull: true }, processed_at: { type: D.DATE, allowNull: true },
         created_at: { type: D.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP') },
         updated_at: { type: D.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP') }
-      });
-      await q.addIndex('payment_slip_detection_jobs', ['status', 'next_attempt_at'], { name: 'payment_slip_jobs_due_idx' });
-    }
-    for (const [code, name, description] of PERMISSIONS) {
-      const [rows] = await q.sequelize.query('SELECT id FROM permissions WHERE code = :code', { replacements: { code } });
-      if (!rows.length) await q.bulkInsert('permissions', [{ code, name, description, created_at: new Date(), updated_at: new Date() }]);
-    }
-    const [roles] = await q.sequelize.query("SELECT id, lower(name) AS name FROM roles WHERE lower(name) IN ('admin','manager','accountant','agent')");
-    for (const role of roles) {
-      const allowed = role.name === 'agent' ? ['payment-slips.mark'] : PERMISSIONS.map(([code]) => code);
-      for (const code of allowed) {
-        const [permission] = await q.sequelize.query('SELECT id FROM permissions WHERE code = :code', { replacements: { code } });
-        if (!permission[0]) continue;
-        const [linked] = await q.sequelize.query('SELECT role_id FROM role_permissions WHERE role_id = :roleId AND permission_id = :permissionId', { replacements: { roleId: role.id, permissionId: permission[0].id } });
-        if (!linked.length) await q.bulkInsert('role_permissions', [{ role_id: role.id, permission_id: permission[0].id, created_at: new Date(), updated_at: new Date() }]);
+        }, queryOptions);
+        await q.addIndex('payment_slip_detection_jobs', ['status', 'next_attempt_at'], { name: 'payment_slip_jobs_due_idx', transaction });
       }
+      for (const [code, name, description] of PERMISSIONS) {
+        const [rows] = await q.sequelize.query('SELECT id FROM permissions WHERE code = :code', { replacements: { code }, transaction });
+        if (!rows.length) await q.bulkInsert('permissions', [{ code, name, description, created_at: new Date(), updated_at: new Date() }], queryOptions);
+      }
+      const rolePermissionSchema = await q.describeTable('role_permissions', queryOptions);
+      const [roles] = await q.sequelize.query("SELECT id, lower(name) AS name FROM roles WHERE lower(name) IN ('admin','manager','accountant','agent')", queryOptions);
+      for (const role of roles) {
+        const allowed = role.name === 'agent' ? ['payment-slips.mark'] : PERMISSIONS.map(([code]) => code);
+        for (const code of allowed) {
+          const [permission] = await q.sequelize.query('SELECT id FROM permissions WHERE code = :code', { replacements: { code }, transaction });
+          if (!permission[0]) continue;
+          const [linked] = await q.sequelize.query('SELECT role_id FROM role_permissions WHERE role_id = :roleId AND permission_id = :permissionId', { replacements: { roleId: role.id, permissionId: permission[0].id }, transaction });
+          if (!linked.length) {
+            const rolePermission = { role_id: role.id, permission_id: permission[0].id };
+            if (rolePermissionSchema.granted_at) rolePermission.granted_at = new Date();
+            await q.bulkInsert('role_permissions', [rolePermission], queryOptions);
+          }
+        }
+      }
+    };
+
+    if (typeof q.sequelize.transaction === 'function') {
+      return q.sequelize.transaction(migrate);
     }
+    return migrate(undefined);
   },
   async down() { /* additive, data-retaining migration */ }
 };

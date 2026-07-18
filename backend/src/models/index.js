@@ -62,6 +62,7 @@ const AppSetting = require('./appSetting.model');
 const BackupJob = require('./backupJob.model');
 const LoginHistory = require('./loginHistory.model');
 const PasswordResetToken = require('./passwordResetToken.model');
+const AuthSession = require('./authSession.model');
 const WhatsAppAccount = require('./whatsappAccount.model');
 const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
 const AccountingCategory = require('./accountingCategory.model');
@@ -147,6 +148,7 @@ const models = {
   BackupJob: BackupJob(sequelize, Sequelize.DataTypes),
   LoginHistory: LoginHistory(sequelize, Sequelize.DataTypes),
   PasswordResetToken: PasswordResetToken(sequelize, Sequelize.DataTypes),
+  AuthSession: AuthSession(sequelize, Sequelize.DataTypes),
   WhatsAppAccount: WhatsAppAccount(sequelize, Sequelize.DataTypes),
   RoleWhatsAppAccount: RoleWhatsAppAccount(sequelize, Sequelize.DataTypes),
   AccountingCategory: AccountingCategory(sequelize, Sequelize.DataTypes),
@@ -317,6 +319,8 @@ models.Student.hasMany(models.StudentAutomationDispatch, { foreignKey: 'student_
 models.Student.hasMany(models.LmsLiveClassJoin, { foreignKey: 'student_id', as: 'liveClassJoins' });
 models.LmsLesson.hasMany(models.LmsLiveClassJoin, { foreignKey: 'lesson_id', as: 'joinLogs' });
 models.User.hasMany(models.Notification, { foreignKey: 'user_id', as: 'notifications' });
+models.User.hasMany(models.AuthSession, { foreignKey: 'user_id', as: 'authSessions' });
+models.AuthSession.belongsTo(models.User, { foreignKey: 'user_id', as: 'user' });
 models.User.hasMany(models.AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
 models.User.hasMany(models.MessageQueue, { foreignKey: 'created_by', as: 'queuedMessages' });
 models.WhatsAppAccount.hasMany(models.Conversation, { foreignKey: 'whatsapp_account_id', as: 'conversations' });

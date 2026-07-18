@@ -14,6 +14,7 @@ import {
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { Link as RouterLink } from 'react-router-dom';
 import { login } from '../services/auth.service';
+import { storeAuthResponse } from '../services/api';
 
 function extractAuthPayload(response) {
   const body = response?.data || {};
@@ -65,7 +66,7 @@ function LoginPage() {
 
     try {
       const response = await login(form);
-      const { token, refreshToken, user } = extractAuthPayload(response);
+      const { token } = extractAuthPayload(response);
 
       if (!token) {
         throw Object.assign(new Error('Login response did not include an access token.'), {
@@ -73,11 +74,7 @@ function LoginPage() {
         });
       }
 
-      localStorage.setItem('accessToken', token);
-      if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
-      else localStorage.removeItem('refreshToken');
-      if (user) localStorage.setItem('user', JSON.stringify(user));
-      else localStorage.removeItem('user');
+      storeAuthResponse(response);
       navigate(redirectTo, { replace: true });
     } catch (err) {
       if (process.env.NODE_ENV === 'development') {

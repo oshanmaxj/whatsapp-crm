@@ -1,7 +1,8 @@
 const studentPortalService = require('../services/studentPortal.service');
+const crypto = require('crypto');
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
 
-exports.login = async (req, res, next) => { try { return ok(res, await studentPortalService.login(req.body)); } catch (error) { next(error); } };
+exports.login = async (req, res, next) => { try { return ok(res, await studentPortalService.login(req.body, { requestId: req.get('x-request-id') || crypto.randomUUID() })); } catch (error) { next(error); } };
 exports.verifyOtp = async (req, res, next) => { try { return ok(res, await studentPortalService.verifyOtp(req.body)); } catch (error) { next(error); } };
 exports.me = async (req, res) => ok(res, { student: req.student, paymentAccess: req.studentPaymentAccess });
 exports.dashboard = async (req, res, next) => { try { return ok(res, await studentPortalService.dashboard(req.student, req.studentPaymentAccess)); } catch (error) { next(error); } };

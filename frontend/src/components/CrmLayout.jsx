@@ -34,6 +34,7 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { getAccessPayload } from '../utils/access';
 import { useSocket } from '../hooks/useSocket';
 import { getNotifications, getSettings } from '../services/production.service';
+import { logoutSession } from '../services/api';
 import { ModuleTabs } from './ModuleNavigationView';
 import {
   canAccessItem,
@@ -183,10 +184,9 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
     });
   };
 
-  const logout = () => {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
+  const logout = async () => {
     setUserAnchor(null);
+    await logoutSession().catch(() => null);
     navigate('/login', { replace: true });
   };
 

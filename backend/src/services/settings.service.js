@@ -16,7 +16,10 @@ const DEFAULTS = [
   }],
   ['smtp', 'settings', { host: '', port: 587, secure: false, username: '' }],
   ['branding', 'theme', { primaryColor: '#25d366', logoUrl: '' }],
-  ['security', 'session', { timeoutMinutes: Number(process.env.SESSION_TIMEOUT_MINUTES || 120) }],
+  ['security', 'session', {
+    enabled: process.env.SESSION_TIMEOUT_ENABLED === 'true',
+    timeoutMinutes: Number(process.env.SESSION_TIMEOUT_MINUTES || 43200)
+  }],
   ['notifications', 'assignments', {
     assignmentNotificationsEnabled: true
   }],

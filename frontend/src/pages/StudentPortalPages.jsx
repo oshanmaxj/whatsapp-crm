@@ -52,7 +52,16 @@ export function StudentLoginPage() {
       setNotice('If the account details are valid, a WhatsApp code has been sent.');
     } catch (requestError) {
       const code = requestError.response?.data?.code;
-      setError(code === 'OTP_RATE_LIMITED' ? 'Please wait before requesting another code.' : 'Unable to send a code. Check your details or try again later.');
+      const messages = {
+        OTP_RATE_LIMITED: 'Please wait before requesting another code.',
+        INVALID_PHONE: 'Enter a valid Sri Lankan WhatsApp number.',
+        STUDENT_NOT_FOUND: 'Unable to send a code. Check your details or contact the office.',
+        WHATSAPP_CONFIGURATION_MISSING: 'WhatsApp login is temporarily unavailable. Please contact the office.',
+        WHATSAPP_AUTHENTICATION_FAILED: 'WhatsApp login is temporarily unavailable. Please contact the office.',
+        WHATSAPP_META_REJECTED: 'WhatsApp could not send this login code. Please contact the office.',
+        WHATSAPP_TEMPORARY_FAILURE: 'WhatsApp is temporarily unavailable. Please try again shortly.'
+      };
+      setError(messages[code] || 'Unable to send a code. Check your details or try again later.');
     } finally { setBusy(false); }
   };
   const verify = async () => {
@@ -61,7 +70,10 @@ export function StudentLoginPage() {
       const response = await verifyStudentOtp({ challengeToken: challenge, otp: form.otp });
       saveSession(response.data.data);
       navigate('/student/dashboard');
-    } catch (requestError) { setError(requestError.response?.data?.message || 'Unable to verify OTP.'); }
+    } catch (requestError) {
+      const code = requestError.response?.data?.code;
+      setError(code === 'OTP_EXPIRED' ? 'The code expired. Request a new one.' : code === 'OTP_INVALID' ? 'The code is incorrect or has already been used.' : 'Unable to verify OTP.');
+    }
     finally { setBusy(false); }
   };
 

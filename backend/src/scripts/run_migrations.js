@@ -36,6 +36,7 @@ const canonicalConversationIdentityMigration = require('../../migrations/031_can
 const studentRegistrationSequenceMigration = require('../../migrations/032_student_registration_sequence');
 const lmsCourseBuilderMigration = require('../../migrations/033_lms_course_builder');
 const canonicalScheduledLessonLmsMigration = require('../../migrations/034_canonical_scheduled_lesson_lms_sync');
+const persistentAuthSessionsMigration = require('../../migrations/035_add_persistent_auth_sessions');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -179,6 +180,8 @@ async function run() {
     console.log('Applied: hierarchical LMS course builder');
     await canonicalScheduledLessonLmsMigration.up(queryInterface, Sequelize);
     console.log('Applied: canonical scheduled lesson LMS synchronization');
+    await persistentAuthSessionsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: persistent CRM authentication sessions');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

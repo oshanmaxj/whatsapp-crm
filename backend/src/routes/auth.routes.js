@@ -4,7 +4,6 @@ const { validateBody } = require('../middleware/validate.middleware');
 const {
   registerSchema,
   loginSchema,
-  refreshSchema,
   updateMeSchema,
   changePasswordSchema,
   forgotPasswordSchema,
@@ -16,7 +15,8 @@ const router = express.Router();
 
 router.post('/register', validateBody(registerSchema), authController.register.bind(authController));
 router.post('/login', validateBody(loginSchema), authController.login.bind(authController));
-router.post('/refresh', validateBody(refreshSchema), authController.refreshToken.bind(authController));
+router.post('/refresh', authController.refreshToken.bind(authController));
+router.post('/logout', authController.logout.bind(authController));
 router.post('/password/forgot', validateBody(forgotPasswordSchema), authController.requestPasswordReset.bind(authController));
 router.post('/password/reset', validateBody(resetPasswordSchema), authController.resetPassword.bind(authController));
 router.get('/me', authMiddleware.authenticate, authController.me.bind(authController));

@@ -43,7 +43,7 @@ function corsOrigin(origin, callback) {
 const corsOptions = {
   origin: corsOrigin,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  credentials: false,
+  credentials: true,
   optionsSuccessStatus: 204
 };
 

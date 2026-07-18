@@ -231,7 +231,7 @@ export function ProductionSettingsPage() {
         fromName: smtpSettings.fromName || ''
       });
       setSecurity({
-        timeoutMinutes: securitySession.timeoutMinutes || 120,
+        timeoutMinutes: securitySession.timeoutMinutes || 43200,
         passwordMinLength: securitySession.passwordMinLength || 6,
         requireStrongPassword: Boolean(securitySession.requireStrongPassword),
         loginHistoryEnabled: securitySession.loginHistoryEnabled !== false

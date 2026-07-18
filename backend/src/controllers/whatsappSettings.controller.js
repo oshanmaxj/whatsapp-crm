@@ -1,4 +1,5 @@
 const whatsappSettingsService = require('../services/whatsappSettings.service');
+const studentPortalService = require('../services/studentPortal.service');
 
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
 
@@ -33,6 +34,12 @@ class WhatsappSettingsController {
     } catch (error) {
       return next(error);
     }
+  }
+
+  async testOtpConfiguration(req, res, next) {
+    try {
+      return ok(res, await studentPortalService.testOtpConfiguration());
+    } catch (error) { return next(error); }
   }
 }
 

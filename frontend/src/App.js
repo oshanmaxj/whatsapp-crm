@@ -44,6 +44,7 @@ import { ModuleLandingPage } from './components/ModuleNavigationView';
 import LmsCourseBuilderPage, { LmsCoursesPage } from './pages/LmsCourseBuilderPage';
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
 import CommissionPage from './pages/CommissionPage';
+import PaymentVerificationPage from './pages/PaymentVerificationPage';
 import PaymentReceiptsPage from './pages/PaymentReceiptsPage';
 import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
 import {
@@ -120,6 +121,7 @@ function App() {
             <Route path="/students" element={permit('students.view', <StudentsPage />)} />
             <Route path="/students/:id" element={permit('students.view', <StudentProfilePage />)} />
             <Route path="/fees" element={permit('fees.view', <FeesPage />)} />
+            <Route path="/payment-verification" element={permit('payment-slips.view', <PaymentVerificationPage />)} />
             <Route path="/receipts" element={permit('receipts.view', <PaymentReceiptsPage />)} />
             <Route path="/accounting" element={permit('accounting.view', <AccountingDashboardPage />)} />
             <Route path="/accounting/income" element={permit('accounting.view', <AccountingTransactionsPage type="income" />)} />

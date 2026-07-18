@@ -65,6 +65,8 @@ const PasswordResetToken = require('./passwordResetToken.model');
 const AuthSession = require('./authSession.model');
 const PaymentReceipt = require('./paymentReceipt.model');
 const PaymentReceiptJob = require('./paymentReceiptJob.model');
+const PaymentSlip = require('./paymentSlip.model');
+const PaymentSlipDetectionJob = require('./paymentSlipDetectionJob.model');
 const WhatsAppAccount = require('./whatsappAccount.model');
 const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
 const AccountingCategory = require('./accountingCategory.model');
@@ -153,6 +155,8 @@ const models = {
   AuthSession: AuthSession(sequelize, Sequelize.DataTypes),
   PaymentReceipt: PaymentReceipt(sequelize, Sequelize.DataTypes),
   PaymentReceiptJob: PaymentReceiptJob(sequelize, Sequelize.DataTypes),
+  PaymentSlip: PaymentSlip(sequelize, Sequelize.DataTypes),
+  PaymentSlipDetectionJob: PaymentSlipDetectionJob(sequelize, Sequelize.DataTypes),
   WhatsAppAccount: WhatsAppAccount(sequelize, Sequelize.DataTypes),
   RoleWhatsAppAccount: RoleWhatsAppAccount(sequelize, Sequelize.DataTypes),
   AccountingCategory: AccountingCategory(sequelize, Sequelize.DataTypes),
@@ -341,6 +345,13 @@ models.LmsLesson.hasMany(models.LmsLiveClassJoin, { foreignKey: 'lesson_id', as:
 models.User.hasMany(models.Notification, { foreignKey: 'user_id', as: 'notifications' });
 models.User.hasMany(models.AuthSession, { foreignKey: 'user_id', as: 'authSessions' });
 models.AuthSession.belongsTo(models.User, { foreignKey: 'user_id', as: 'user' });
+models.Message.hasOne(models.PaymentSlip, { foreignKey: 'whatsapp_message_id', as: 'paymentSlip' });
+models.PaymentSlip.belongsTo(models.Message, { foreignKey: 'whatsapp_message_id', as: 'whatsappMessage' });
+models.PaymentSlip.belongsTo(models.Media, { foreignKey: 'media_id', as: 'slipMedia' });
+models.PaymentSlip.belongsTo(models.Student, { foreignKey: 'student_id', as: 'student' });
+models.PaymentSlip.belongsTo(models.StudentFee, { foreignKey: 'student_fee_id', as: 'studentFee' });
+models.PaymentSlip.belongsTo(models.FeeInstallment, { foreignKey: 'fee_installment_id', as: 'installment' });
+models.PaymentSlipDetectionJob.belongsTo(models.Message, { foreignKey: 'message_id', as: 'message' });
 models.User.hasMany(models.AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
 models.User.hasMany(models.MessageQueue, { foreignKey: 'created_by', as: 'queuedMessages' });
 const conversationWhatsappAccountForeignKey = { name: 'whatsappAccountId', field: 'whatsapp_account_id' };

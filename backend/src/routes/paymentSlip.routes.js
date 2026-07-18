@@ -1,0 +1,14 @@
+const router = require('express').Router();
+const auth = require('../middleware/auth.middleware');
+const permit = require('../middleware/permission.middleware');
+const controller = require('../controllers/paymentSlip.controller');
+router.use(auth.authenticate);
+router.get('/', permit('payment-slips.view'), controller.list.bind(controller));
+router.get('/:id/file', permit('payment-slips.view'), controller.file.bind(controller));
+router.get('/:id', permit('payment-slips.view'), controller.get.bind(controller));
+router.post('/messages/:messageId/mark', permit('payment-slips.mark'), controller.mark.bind(controller));
+router.post('/:id/rerun', permit('payment-slips.review'), controller.rerun.bind(controller));
+router.post('/:id/approve', permit('payment-slips.approve'), controller.approve.bind(controller));
+router.post('/:id/reject', permit('payment-slips.approve'), controller.reject.bind(controller));
+router.post('/:id/duplicate', permit('payment-slips.approve'), controller.duplicate.bind(controller));
+module.exports = router;

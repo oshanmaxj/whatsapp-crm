@@ -37,6 +37,7 @@ const studentRegistrationSequenceMigration = require('../../migrations/032_stude
 const lmsCourseBuilderMigration = require('../../migrations/033_lms_course_builder');
 const canonicalScheduledLessonLmsMigration = require('../../migrations/034_canonical_scheduled_lesson_lms_sync');
 const persistentAuthSessionsMigration = require('../../migrations/035_add_persistent_auth_sessions');
+const whatsappPaymentSlipMigration = require('../../migrations/036_whatsapp_payment_slip_verification');
 const paymentReceiptsMigration = require('../../migrations/038_payment_receipts');
 
 async function columnExists(queryInterface, tableName, columnName) {
@@ -183,6 +184,8 @@ async function run() {
     console.log('Applied: canonical scheduled lesson LMS synchronization');
     await persistentAuthSessionsMigration.up(queryInterface, Sequelize);
     console.log('Applied: persistent CRM authentication sessions');
+    await whatsappPaymentSlipMigration.up(queryInterface, Sequelize);
+    console.log('Applied: WhatsApp payment slip verification');
     await paymentReceiptsMigration.up(queryInterface, Sequelize);
     console.log('Applied: canonical payment receipts');
 

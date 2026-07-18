@@ -25,6 +25,7 @@ import { getRoles } from '../services/userManagement.service';
 import { updateContact } from '../services/contact.service';
 import { updateLeadStatus } from '../services/lead.service';
 import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
+import { markMessageAsPaymentSlip } from '../services/paymentSlip.service';
 import {
   ChatArea,
   ChatLayout,
@@ -127,6 +128,22 @@ function ChatPage() {
     || safeArray(conversations).find((item) => String(item.id) === String(selected))
     || null;
   const windowOpen = isMessagingWindowOpen(selectedConversation, windowNow);
+
+  const handleMarkPaymentSlip = async (message, alreadyDetected) => {
+    if (alreadyDetected && message.paymentSlip?.id) {
+      navigate(`/payment-verification?slipId=${message.paymentSlip.id}`);
+      return;
+    }
+    try {
+      const slip = (await markMessageAsPaymentSlip(message.id)).data?.data;
+      setMessages((current) => current.map((item) => String(item.id) === String(message.id)
+        ? { ...item, paymentSlip: { id: slip.id, verificationStatus: slip.verificationStatus, detectionConfidence: slip.detectionConfidence } }
+        : item));
+      setNotice('Message added to the finance payment verification queue.');
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to mark this message as a payment slip.');
+    }
+  };
 
   useEffect(() => {
     const interval = window.setInterval(() => setWindowNow(Date.now()), 60000);
@@ -809,6 +826,7 @@ function ChatPage() {
             onStatusChange={handleStatus}
             replyToMessage={replyToMessage}
             onReply={(message) => setReplyToMessage(message)}
+            onMarkPaymentSlip={handleMarkPaymentSlip}
             onCancelReply={() => setReplyToMessage(null)}
             mobile={compactLayout}
             sending={sending}

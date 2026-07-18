@@ -976,6 +976,12 @@ class WhatsappService {
       await socketService.emitToConversationAudience(conversationId, 'whatsapp.message.received', socketPayload);
     }
 
+    if (attachment && ['image', 'document'].includes(messageRecord.type)) {
+      const paymentSlipQueueService = require('./paymentSlipQueue.service');
+      await paymentSlipQueueService.enqueue(messageRecord.id).catch((error) => {
+        logger.warn('payment_slip_detection_enqueue_failed', { messageId: messageRecord.id, whatsappMessageId: message.id || null, code: error.code || null });
+      });
+    }
 
     setImmediate(() => (async () => {
       const enriched = typeof assignmentResult.enrich === 'function'

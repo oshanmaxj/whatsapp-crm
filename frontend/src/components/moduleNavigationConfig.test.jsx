@@ -17,8 +17,8 @@ describe('module navigation configuration', () => {
     });
   });
 
-  test('modules with alternative permissions remain visible to receipt users', () => {
+  test('modules with alternative permissions remain visible to authorized reviewers', () => {
     const accounting = modules.find((module) => module.id === 'accounting');
-    expect(canAccessModule(accounting, { isSystemAdmin: false, permissions: ['receipts.view'] })).toBe(true);
+    expect(canAccessModule(accounting, { isSystemAdmin: false, permissions: ['payment-slips.view'] })).toBe(true);
   });
 });

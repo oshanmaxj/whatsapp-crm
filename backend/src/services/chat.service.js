@@ -1,4 +1,4 @@
-const { Contact, Conversation, Message, User } = require('../models');
+const { Contact, Conversation, Message, PaymentSlip, User } = require('../models');
 const whatsappService = require('./whatsapp.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappTemplateService = require('./whatsappTemplate.service');
@@ -292,6 +292,12 @@ class ChatService {
           as: 'sentBy',
           attributes: ['id', 'firstName', 'lastName', 'email'],
           required: false
+        },
+        {
+          model: PaymentSlip,
+          as: 'paymentSlip',
+          attributes: ['id', 'verificationStatus', 'detectionConfidence'],
+          required: false
         }
       ]
     });
@@ -377,6 +383,12 @@ class ChatService {
           model: User,
           as: 'sentBy',
           attributes: ['id', 'firstName', 'lastName', 'email'],
+          required: false
+        },
+        {
+          model: PaymentSlip,
+          as: 'paymentSlip',
+          attributes: ['id', 'verificationStatus', 'detectionConfidence'],
           required: false
         }
       ],

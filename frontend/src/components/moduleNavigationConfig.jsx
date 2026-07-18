@@ -71,9 +71,10 @@ export const modules = [
     ]
   },
   {
-    id: 'accounting', label: 'Accounting', path: '/accounting', icon: <AccountBalanceIcon />, permission: ['accounting.view', 'receipts.view'], routes: ['/accounting', '/receipts'],
+    id: 'accounting', label: 'Accounting', path: '/accounting', icon: <AccountBalanceIcon />, permission: ['accounting.view', 'payment-slips.view', 'receipts.view'], routes: ['/accounting', '/payment-verification', '/receipts'],
     items: [
       { label: 'Dashboard', path: '/accounting', icon: <DashboardIcon />, permission: 'accounting.view', exact: true },
+      { label: 'Payment Verification', path: '/payment-verification', icon: <ReceiptLongIcon />, permission: 'payment-slips.view' },
       { label: 'Receipts', path: '/receipts', icon: <ReceiptLongIcon />, permission: 'receipts.view' },
       { label: 'Income', path: '/accounting/income', icon: <AddCardIcon />, permission: 'accounting.view' },
       { label: 'Expenses', path: '/accounting/expenses', icon: <MoneyOffIcon />, permission: 'accounting.view' },

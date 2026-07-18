@@ -13,6 +13,7 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import MicNoneOutlinedIcon from '@mui/icons-material/MicNoneOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import ReplyOutlinedIcon from '@mui/icons-material/ReplyOutlined';
+import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
@@ -161,7 +162,7 @@ function QuotedPreview({ preview, outbound, onClick }) {
   );
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad, onReply, onJumpToMessage, highlighted }) {
+export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad, onReply, onJumpToMessage, onMarkPaymentSlip, highlighted }) {
   const outbound = message.direction === 'outbound';
   const internal = message.isInternalNotification || message.is_internal_notification;
   const replyPreview = message.replyPreview;
@@ -204,6 +205,17 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
           onClick={() => replyPreview?.id && onJumpToMessage(replyPreview.id)}
         />
         <MessageMedia message={message} onMediaLoad={onMediaLoad} />
+        {!outbound && ['image', 'document'].includes(message.type) && (
+          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mb: 0.5 }}>
+            {message.paymentSlip ? (
+              <Button size="small" color="success" startIcon={<ReceiptLongOutlinedIcon />} onClick={() => onMarkPaymentSlip(message, true)}>
+                Payment Slip Detected · {Math.round(Number(message.paymentSlip.detectionConfidence || 0) * 100)}% · {String(message.paymentSlip.verificationStatus || '').replace(/_/g, ' ')}
+              </Button>
+            ) : (
+              <Button size="small" variant="outlined" startIcon={<ReceiptLongOutlinedIcon />} onClick={() => onMarkPaymentSlip(message, false)}>Mark as Payment Slip</Button>
+            )}
+          </Stack>
+        )}
         {bodyText && (
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.45 }}>
             {bodyText}
@@ -343,7 +355,7 @@ export function CustomerInfoBar({ conversation }) {
   );
 }
 
-export function MessageList({ messages, conversationId, messagesReady, onReply }) {
+export function MessageList({ messages, conversationId, messagesReady, onReply, onMarkPaymentSlip }) {
   const messagesContainerRef = useRef(null);
   const messagesEndRef = useRef(null);
   const messageRefs = useRef(new Map());
@@ -485,6 +497,7 @@ export function MessageList({ messages, conversationId, messagesReady, onReply }
             onMediaLoad={handleMediaLoad}
             onReply={onReply || (() => {})}
             onJumpToMessage={handleJumpToMessage}
+            onMarkPaymentSlip={onMarkPaymentSlip}
             highlighted={String(highlightedMessageId) === String(message.id)}
           />
         </Box>
@@ -683,6 +696,7 @@ export function ChatArea({
   onStatusChange,
   replyToMessage,
   onReply,
+  onMarkPaymentSlip,
   onCancelReply,
   mobile,
   sending
@@ -724,7 +738,7 @@ export function ChatArea({
           <CustomerInfoBar conversation={conversation} />
         </>
       )}
-      <MessageList messages={messages} conversationId={conversation?.id} messagesReady={messagesReady} onReply={onReply} />
+      <MessageList messages={messages} conversationId={conversation?.id} messagesReady={messagesReady} onReply={onReply} onMarkPaymentSlip={onMarkPaymentSlip} />
       <MessageComposer
         value={composerValue}
         onChange={onComposerChange}

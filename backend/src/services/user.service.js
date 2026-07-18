@@ -47,6 +47,7 @@ const LMS_PERMISSIONS = [
   'lms.lesson.update', 'lms.lesson.archive', 'lms.lesson.publish',
   'lms.live_class.manage', 'lms.progress.view', 'lms.progress.manage'
 ];
+const PAYMENT_SLIP_PERMISSIONS = ['payment-slips.view', 'payment-slips.review', 'payment-slips.approve', 'payment-slips.mark'];
 const RECEIPT_PERMISSIONS = ['receipts.view', 'receipts.generate', 'receipts.download', 'receipts.send_whatsapp', 'receipts.regenerate', 'receipts.void', 'receipts.export', 'receipts.manage_settings'];
 
 function permissionCode(group, action) {
@@ -203,7 +204,7 @@ class UserService {
         permissions.push(permission);
       }
     }
-    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...RECEIPT_PERMISSIONS]) {
+    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...PAYMENT_SLIP_PERMISSIONS, ...RECEIPT_PERMISSIONS]) {
       let permission = await Permission.findOne({ where: { code }, paranoid: false });
       if (permission?.deletedAt) await permission.restore();
       if (!permission) [permission] = await Permission.findOrCreate({ where: { code }, defaults: { name: code, description: `Secure ownership permission: ${code}` } });
@@ -233,12 +234,20 @@ class UserService {
       }
     }
     for (const roleName of ['Manager', 'Accountant']) {
+      for (const permission of permissions.filter((item) => PAYMENT_SLIP_PERMISSIONS.includes(item.code))) {
+        await RolePermission.findOrCreate({ where: { roleId: roles[roleName].id, permissionId: permission.id }, defaults: { roleId: roles[roleName].id, permissionId: permission.id } });
+      }
+    }
+    for (const roleName of ['Manager', 'Accountant']) {
       for (const permission of permissions.filter((item) => RECEIPT_PERMISSIONS.includes(item.code) && !['receipts.void', 'receipts.manage_settings'].includes(item.code))) {
         await RolePermission.findOrCreate({ where: { roleId: roles[roleName].id, permissionId: permission.id }, defaults: { roleId: roles[roleName].id, permissionId: permission.id } });
       }
     }
     for (const permission of permissions.filter((item) => RECEIPT_PERMISSIONS.includes(item.code))) {
       await RolePermission.findOrCreate({ where: { roleId: roles.Accountant.id, permissionId: permission.id }, defaults: { roleId: roles.Accountant.id, permissionId: permission.id } });
+    }
+    for (const permission of permissions.filter((item) => item.code === 'payment-slips.mark')) {
+      await RolePermission.findOrCreate({ where: { roleId: roles.Agent.id, permissionId: permission.id }, defaults: { roleId: roles.Agent.id, permissionId: permission.id } });
     }
     for (const roleName of ['Manager']) {
       for (const permission of permissions.filter((item) => OWNERSHIP_PERMISSIONS.includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles[roleName].id, permissionId: permission.id }, defaults: { roleId: roles[roleName].id, permissionId: permission.id } });

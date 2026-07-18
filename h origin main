@@ -1,0 +1,37 @@
+[33m0f02da6[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Add payment receipt generation and WhatsApp delivery
+ backend/.env.example                               |  12 [32m+[m
+ backend/docs/payment-receipts.md                   | 180 [32m+++++++++[m
+ backend/migrations/038_payment_receipts.js         | 137 [32m+++++++[m
+ backend/package-lock.json                          | 419 [32m+++++++++++++++++++++[m
+ backend/package.json                               |   3 [32m+[m
+ .../src/controllers/paymentReceipt.controller.js   | 154 [32m++++++++[m
+ backend/src/models/index.js                        |  18 [32m+[m
+ backend/src/models/paymentReceipt.model.js         |  46 [32m+++[m
+ backend/src/models/paymentReceiptJob.model.js      |  17 [32m+[m
+ backend/src/routes/index.js                        |   2 [32m+[m
+ backend/src/routes/paymentReceipt.routes.js        |  24 [32m++[m
+ backend/src/scripts/backfill_payment_receipts.js   |  42 [32m+++[m
+ backend/src/scripts/run_migrations.js              |   3 [32m+[m
+ backend/src/services/accounting.service.js         |  11 [32m+[m[31m-[m
+ backend/src/services/education.service.js          |  29 [32m+[m[31m-[m
+ backend/src/services/paymentReceipt.service.js     | 199 [32m++++++++++[m
+ .../src/services/paymentReceiptCrypto.service.js   |  35 [32m++[m
+ .../src/services/paymentReceiptDelivery.service.js |  81 [32m++++[m
+ backend/src/services/paymentReceiptJob.service.js  |  89 [32m+++++[m
+ .../src/services/paymentReceiptNumber.service.js   |  31 [32m++[m
+ backend/src/services/paymentReceiptPdf.service.js  | 137 [32m+++++++[m
+ .../src/services/paymentReceiptSettings.service.js |  56 [32m+++[m
+ .../src/services/paymentReceiptStorage.service.js  |  30 [32m++[m
+ backend/src/services/settings.service.js           |   9 [32m+[m
+ backend/src/services/user.service.js               |  11 [32m+[m[31m-[m
+ backend/test/paymentReceipt.test.js                | 311 [32m+++++++++++++++[m
+ frontend/src/App.js                                |   4 [32m+[m
+ frontend/src/components/moduleNavigationConfig.jsx |   9 [32m+[m[31m-[m
+ .../src/components/moduleNavigationConfig.test.jsx |   7 [32m+[m[31m-[m
+ frontend/src/pages/AccountingPages.jsx             |  23 [32m+[m[31m-[m
+ frontend/src/pages/EducationPages.jsx              |  13 [32m+[m[31m-[m
+ frontend/src/pages/PaymentReceiptsPage.jsx         | 111 [32m++++++[m
+ frontend/src/pages/ReceiptVerificationPage.jsx     |  24 [32m++[m
+ frontend/src/pages/students/StudentProfilePage.jsx |   4 [32m+[m[31m-[m
+ frontend/src/services/paymentReceipt.service.js    |  25 [32m++[m
+ 35 files changed, 2290 insertions(+), 16 deletions(-)

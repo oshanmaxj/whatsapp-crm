@@ -10,6 +10,7 @@ const logger = require('./config/logger');
 const initSocket = require('./sockets/socket');
 const { sequelize } = require('./models');
 const messageQueueService = require('./services/messageQueue.service');
+const paymentSlipQueueService = require('./services/paymentSlipQueue.service');
 const automationService = require('./services/automation.service');
 const flowService = require('./services/flow.service');
 const pipelineService = require('./services/pipeline.service');
@@ -51,6 +52,7 @@ const startServer = async () => {
       logger.info('server_started', { port: PORT });
     });
     messageQueueService.start();
+    paymentSlipQueueService.start();
     flowService.start();
     pipelineService.start();
   } catch (error) {

@@ -14,6 +14,10 @@ module.exports = (sequelize, DataTypes) => {
     status: { type: DataTypes.ENUM('active', 'inactive'), allowNull: false, defaultValue: 'active' },
     connectionStatus: { type: DataTypes.STRING(50), allowNull: true, defaultValue: 'connected' },
     connectionError: { type: DataTypes.TEXT, allowNull: true },
+    verifiedName: { type: DataTypes.STRING(255), allowNull: true },
+    qualityRating: { type: DataTypes.STRING(50), allowNull: true },
+    lastVerifiedAt: { type: DataTypes.DATE, allowNull: true },
+    sendEnabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     isDefault: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     lastTestedAt: { type: DataTypes.DATE, allowNull: true },
     createdBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }

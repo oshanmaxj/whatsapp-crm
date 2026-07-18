@@ -12,4 +12,5 @@ router.patch('/:id', requirePermission('connect-whatsapp.edit'), controller.upda
 router.delete('/:id', requirePermission('connect-whatsapp.edit'), controller.deactivate.bind(controller));
 router.post('/:id/set-default', requirePermission('connect-whatsapp.edit'), controller.setDefault.bind(controller));
 router.post('/:id/test-connection', requirePermission('connect-whatsapp.edit'), controller.test.bind(controller));
+router.get('/:id/diagnostic', requirePermission('connect-whatsapp.edit'), controller.diagnostic.bind(controller));
 module.exports = router;

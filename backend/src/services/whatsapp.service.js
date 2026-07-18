@@ -1,7 +1,7 @@
 ﻿const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
-const { CampaignEvent, CampaignRecipient, FlowNode, Message, MessageQueue } = require('../models');
+const { CampaignEvent, CampaignRecipient, FlowNode, Message, MessageQueue, Notification } = require('../models');
 const whatsappConfig = require('../config/whatsapp');
 const whatsappSettingsService = require('./whatsappSettings.service');
 const whatsappAccountService = require('./whatsappAccount.service');
@@ -13,6 +13,7 @@ const autoReplyService = require('./autoReply.service');
 const socketService = require('./socket.service');
 const storageService = require('./storage.service');
 const logger = require('../config/logger');
+const { normalizePhone } = require('../utils/phone');
 
 const MESSAGE_STATUSES = new Set(['pending', 'sent', 'delivered', 'read', 'failed']);
 const STORED_MESSAGE_TYPES = new Set([
@@ -130,6 +131,7 @@ function statusError(status) {
   const error = Array.isArray(status?.errors) ? status.errors[0] : null;
   return {
     errorCode: error?.code == null ? null : String(error.code),
+    errorSubcode: error?.error_subcode == null ? null : String(error.error_subcode),
     errorMessage: error?.error_data?.details || error?.message || error?.title || null
   };
 }
@@ -160,6 +162,46 @@ function normalizeConfig(config = {}) {
     apiVersion: trimCredential(config.apiVersion) || 'v17.0',
     apiBaseUrl: trimCredential(config.apiBaseUrl) || 'https://graph.facebook.com'
   };
+}
+
+function lastFour(value) {
+  const text = trimCredential(value);
+  return text ? text.slice(-4) : null;
+}
+
+function configurationError(message, code = 'WHATSAPP_CONFIGURATION_INVALID') {
+  return Object.assign(new Error(message), { status: 503, code, exposeMessage: true });
+}
+
+function validateOutbound(config, payload) {
+  if (!/^\d+$/.test(config.phoneNumberId)) {
+    throw configurationError('WhatsApp phone number ID must be a non-empty numeric value.');
+  }
+  if (!config.accessToken) throw configurationError('WhatsApp access token is not configured.');
+  if (!/^v\d+\.\d+$/.test(config.apiVersion)) {
+    throw configurationError('WhatsApp Graph API version is invalid.');
+  }
+  if (config.status && config.status !== 'active') {
+    throw configurationError('The selected WhatsApp account is inactive.', 'WHATSAPP_ACCOUNT_INACTIVE');
+  }
+  if (config.sendEnabled === false || config.connectionStatus === 'disconnected') {
+    throw configurationError(
+      'WhatsApp sending is disabled until the configured connection is verified.',
+      'WHATSAPP_CONNECTION_INVALID'
+    );
+  }
+  const recipient = normalizePhone(payload?.to);
+  if (!recipient) throw Object.assign(new Error('A valid WhatsApp recipient number is required.'), { status: 400, code: 'INVALID_PHONE_NUMBER' });
+  payload.to = recipient;
+  if (payload.type === 'template') {
+    if (!/^[a-z0-9_]+$/.test(payload.template?.name || '')) {
+      throw Object.assign(new Error('WhatsApp template name is invalid.'), { status: 400, code: 'INVALID_TEMPLATE_NAME' });
+    }
+    if (!/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(payload.template?.language?.code || '')) {
+      throw Object.assign(new Error('WhatsApp template language is invalid.'), { status: 400, code: 'INVALID_TEMPLATE_LANGUAGE' });
+    }
+  }
+  return { config, payload };
 }
 
 function safeApiError(error) {
@@ -195,6 +237,20 @@ class WhatsappService {
     return parseInboundContent(message);
   }
 
+  async recordUnconfiguredPhone(phoneNumberId, whatsappMessageId = null) {
+    const suffix = lastFour(phoneNumberId);
+    logger.warn('whatsapp_webhook_phone_number_unconfigured', {
+      phoneNumberIdLastFour: suffix,
+      whatsappMessageId
+    });
+    await Notification.create({
+      type: 'whatsapp_configuration_alert',
+      title: 'Unconfigured WhatsApp webhook number',
+      message: `An inbound webhook referenced an unconfigured phone number ID ending in ${suffix || 'unknown'}.`,
+      data: { phoneNumberIdLastFour: suffix, whatsappMessageId }
+    }).catch((error) => logger.warn('whatsapp_webhook_diagnostic_save_failed', { message: error.message }));
+  }
+
   async getWhatsAppConfig(whatsappAccountId = null, options = {}) {
     let accountConfig = null;
     try {
@@ -204,23 +260,20 @@ class WhatsappService {
       if (whatsappAccountId || options.phoneNumberId) throw error;
     }
     if (accountConfig) {
-      const preferEnvPhoneNumberId = !whatsappAccountId && !options.phoneNumberId && whatsappConfig.phoneNumberId;
       const config = normalizeConfig({
         ...accountConfig,
-        accessToken: whatsappConfig.accessToken || accountConfig.accessToken,
-        phoneNumberId: preferEnvPhoneNumberId
-          ? whatsappConfig.phoneNumberId
-          : accountConfig.phoneNumberId || whatsappConfig.phoneNumberId,
-        tokenSource: whatsappConfig.accessToken ? 'env' : 'whatsapp_account',
-        phoneNumberIdSource: preferEnvPhoneNumberId
-          ? 'env'
-          : accountConfig.phoneNumberId ? 'whatsapp_account' : 'env'
+        tokenSource: 'whatsapp_account',
+        phoneNumberIdSource: 'whatsapp_account',
+        configurationSource: 'whatsapp_account'
       });
       logger.info('whatsapp_credentials_resolved', {
-        tokenSource: config.tokenSource,
-        phoneNumberIdSource: config.phoneNumberIdSource,
+        configurationSource: config.configurationSource,
+        whatsappAccountId: config.whatsappAccountId,
         hasToken: Boolean(config.accessToken),
-        phoneNumberId: config.phoneNumberId || null
+        phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+        graphApiVersion: config.apiVersion,
+        active: config.status === 'active',
+        sendEnabled: config.sendEnabled !== false
       });
       return config;
     }
@@ -234,25 +287,19 @@ class WhatsappService {
       });
     }
 
-    const config = normalizeConfig({
-      accessToken: whatsappConfig.accessToken || settings.accessToken,
-      phoneNumberId: whatsappConfig.phoneNumberId || settings.phoneNumberId,
-      verifyToken: settings.verifyToken || whatsappConfig.verifyToken,
-      apiVersion: settings.apiVersion || whatsappConfig.apiVersion,
-      apiBaseUrl: settings.apiBaseUrl || whatsappConfig.apiBaseUrl,
-      tokenSource: whatsappConfig.accessToken ? 'env' : (settings.accessToken ? settings.tokenSource || 'settings' : 'env'),
-      phoneNumberIdSource: whatsappConfig.phoneNumberId
-        ? 'env'
-        : settings.phoneNumberId
-        ? settings.phoneNumberIdSource || 'settings'
-        : 'env'
-    });
+    const settingsComplete = Boolean(settings.accessToken && settings.phoneNumberId);
+    const source = settingsComplete ? settings : whatsappConfig;
+    const configurationSource = settingsComplete ? 'settings' : 'env';
+    const config = normalizeConfig({ ...source, configurationSource, tokenSource: configurationSource, phoneNumberIdSource: configurationSource });
 
     logger.info('whatsapp_credentials_resolved', {
-      tokenSource: config.tokenSource,
-      phoneNumberIdSource: config.phoneNumberIdSource,
+      configurationSource,
+      whatsappAccountId: null,
       hasToken: Boolean(config.accessToken),
-      phoneNumberId: config.phoneNumberId || null
+      phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+      graphApiVersion: config.apiVersion,
+      active: true,
+      sendEnabled: process.env.WHATSAPP_SEND_ENABLED === 'true'
     });
 
     return config;
@@ -293,7 +340,7 @@ class WhatsappService {
     logger.info('whatsapp_outbound_send_attempt', {
       to,
       type: 'text',
-      phoneNumberId: config.phoneNumberId,
+      phoneNumberIdLastFour: lastFour(config.phoneNumberId),
       tokenSource: config.tokenSource,
       phoneNumberIdSource: config.phoneNumberIdSource
     });
@@ -309,7 +356,7 @@ class WhatsappService {
       const metaError = error.response?.data;
       logger.error('whatsapp_outbound_send_failed', {
         to,
-        phoneNumberId: config.phoneNumberId,
+        phoneNumberIdLastFour: lastFour(config.phoneNumberId),
         tokenSource: config.tokenSource,
         phoneNumberIdSource: config.phoneNumberIdSource,
         ...safeApiError(error)
@@ -455,13 +502,13 @@ class WhatsappService {
     }
 
     const fileExists = Boolean(filePath) && fs.existsSync(filePath);
-    const uploadUrl = `https://graph.facebook.com/v25.0/${config.phoneNumberId}/media`;
+    const uploadUrl = `${config.apiBaseUrl}/${config.apiVersion}/${config.phoneNumberId}/media`;
 
     logger.info('meta_media_upload_attempt', {
       tokenSource: config.tokenSource,
       hasToken: Boolean(config.accessToken),
-      phoneNumberId: config.phoneNumberId,
-      uploadUrl,
+      phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+      graphApiVersion: config.apiVersion,
       mimeType: mimeType || null,
       filePathExists: fileExists
     });
@@ -605,13 +652,9 @@ class WhatsappService {
   }
 
   async sendRequest(payload, options = {}) {
-    const config = options.config || await this.getWhatsAppConfig();
+    const config = normalizeConfig(options.config || await this.getWhatsAppConfig());
+    validateOutbound(config, payload);
     const { client } = await this.requestClient(config);
-    if (!config.accessToken || !config.phoneNumberId) {
-      const error = new Error('WhatsApp Cloud API credentials are not configured');
-      error.status = 500;
-      throw error;
-    }
 
     try {
       const response = await this.retryRequest(() => client.post('/messages', payload));
@@ -619,6 +662,15 @@ class WhatsappService {
         ? response.data
         : response.data?.messages?.[0] || response.data;
     } catch (error) {
+      const meta = error.response?.data?.error || {};
+      if (Number(meta.code) === 100 && Number(meta.error_subcode) === 33) {
+        const message = 'Configured phone number ID is not accessible with the configured token.';
+        await whatsappAccountService.markDisconnected(config.whatsappAccountId, message).catch(() => null);
+        error.message = message;
+        error.code = 'WHATSAPP_PHONE_NUMBER_INACCESSIBLE';
+        error.status = 503;
+        error.exposeMessage = true;
+      }
       error.payloadSent = payload;
       error.whatsappApiResponse = error.response?.data || null;
       throw error;
@@ -729,7 +781,18 @@ class WhatsappService {
 
     const from = message.from;
     const webhookPhoneNumberId = value.metadata?.phone_number_id || null;
-    const config = await this.getRuntimeConfig(null, { phoneNumberId: webhookPhoneNumberId });
+    if (!/^\d+$/.test(String(webhookPhoneNumberId || ''))) {
+      await this.recordUnconfiguredPhone(webhookPhoneNumberId, message.id || null);
+      return null;
+    }
+    let config;
+    try {
+      config = await this.getRuntimeConfig(null, { phoneNumberId: webhookPhoneNumberId });
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      await this.recordUnconfiguredPhone(webhookPhoneNumberId, message.id || null);
+      return null;
+    }
     const whatsappAccountId = config.whatsappAccountId || null;
     const to = webhookPhoneNumberId || config.phoneNumberId;
     const threadId = [to, from].filter(Boolean).join(':');
@@ -1045,12 +1108,28 @@ class WhatsappService {
       return null;
     }
 
-    const existing = await Message.findOne({ where: { whatsappMessageId } });
+    const webhookPhoneNumberId = value?.metadata?.phone_number_id || null;
+    let accountConfig = null;
+    if (webhookPhoneNumberId) {
+      accountConfig = await this.getRuntimeConfig(null, { phoneNumberId: webhookPhoneNumberId }).catch(async (error) => {
+        if (error.status !== 404) throw error;
+        await this.recordUnconfiguredPhone(webhookPhoneNumberId, whatsappMessageId);
+        return null;
+      });
+      if (!accountConfig) return null;
+    }
+    const existing = await Message.findOne({
+      where: {
+        whatsappMessageId,
+        ...(accountConfig?.whatsappAccountId ? { whatsappAccountId: accountConfig.whatsappAccountId } : {})
+      }
+    });
     if (existing) {
       await existing.update({
         status: nextStatus,
         statusUpdatedAt: updatedAt,
         errorCode: nextStatus === 'failed' ? errors.errorCode : null,
+        errorSubcode: nextStatus === 'failed' ? errors.errorSubcode : null,
         errorMessage: nextStatus === 'failed' ? errors.errorMessage : null,
         rawPayload: {
           ...(existing.rawPayload || {}),
@@ -1079,6 +1158,7 @@ class WhatsappService {
         status: nextStatus,
         timestamp: updatedAt.toISOString(),
         errorCode: nextStatus === 'failed' ? errors.errorCode : null,
+        errorSubcode: nextStatus === 'failed' ? errors.errorSubcode : null,
         errorMessage: nextStatus === 'failed' ? errors.errorMessage : null
       };
       logger.info('MESSAGE_STATUS_UPDATED', {
@@ -1351,3 +1431,6 @@ class WhatsappService {
 }
 
 module.exports = new WhatsappService();
+module.exports.validateOutbound = validateOutbound;
+module.exports.normalizeConfig = normalizeConfig;
+module.exports.safeApiError = safeApiError;

@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "migrate": "node src/scripts/run_migrations.js",
+    "migrate:whatsapp-connection": "node src/scripts/migrate_whatsapp_connection.js",
     "db:test": "node src/scripts/test_db_connection.js",
     "db:sync": "node src/scripts/sync_models.js",
     "db:seed:admin": "node src/scripts/seed_admin.js",

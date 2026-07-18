@@ -62,7 +62,7 @@ class ChatService {
       where: { normalizedPhone: requested.normalizedPhone, whatsappAccountId: requested.whatsappAccountId },
       include,
       order: [
-        [require('../models').sequelize.literal("CASE WHEN status = 'open' THEN 0 WHEN status = 'pending' THEN 1 ELSE 2 END"), 'ASC'],
+        [require('../models').sequelize.literal("CASE WHEN \"Conversation\".\"status\" = 'open' THEN 0 WHEN \"Conversation\".\"status\" = 'pending' THEN 1 ELSE 2 END"), 'ASC'],
         ['created_at', 'ASC']
       ]
     })) || requested;
@@ -164,6 +164,7 @@ class ChatService {
         status: 'failed',
         statusUpdatedAt: new Date(),
         errorCode: whatsappError?.code == null ? null : String(whatsappError.code),
+        errorSubcode: whatsappError?.error_subcode == null ? null : String(whatsappError.error_subcode),
         errorMessage: whatsappError?.error_user_msg || whatsappError?.message || error.message,
         rawPayload: { whatsappError: metaError }
       }).catch(() => {});
@@ -255,6 +256,7 @@ class ChatService {
         status: 'failed',
         statusUpdatedAt: new Date(),
         errorCode: whatsappError?.code == null ? null : String(whatsappError.code),
+        errorSubcode: whatsappError?.error_subcode == null ? null : String(whatsappError.error_subcode),
         errorMessage: whatsappError?.error_user_msg || whatsappError?.message || error.message,
         rawPayload: { whatsappError: metaError }
       }).catch(() => {});

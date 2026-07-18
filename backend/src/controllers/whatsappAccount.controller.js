@@ -14,5 +14,6 @@ class WhatsAppAccountController {
   async deactivate(req, res, next) { try { return ok(res, await service.deactivate(req.params.id)); } catch (error) { return next(error); } }
   async setDefault(req, res, next) { try { return ok(res, await service.setDefault(req.params.id)); } catch (error) { return next(error); } }
   async test(req, res, next) { try { return ok(res, await service.testConnection(req.params.id)); } catch (error) { return next(error); } }
+  async diagnostic(req, res, next) { try { return ok(res, await service.safeDiagnostic(req.params.id)); } catch (error) { return next(error); } }
 }
 module.exports = new WhatsAppAccountController();

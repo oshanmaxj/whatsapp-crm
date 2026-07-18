@@ -2,16 +2,30 @@ const LEVELS = ['error', 'warn', 'info', 'debug'];
 const configuredLevel = process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug');
 const activeLevelIndex = LEVELS.includes(configuredLevel) ? LEVELS.indexOf(configuredLevel) : LEVELS.indexOf('info');
 
+const SECRET_KEY = /authorization|access[_-]?token|bearer|app[_-]?secret|client[_-]?secret/i;
+const SECRET_VALUE = /\bBearer\s+[A-Za-z0-9._~+\/-]+=*|\bOAuth\s+[A-Za-z0-9._~+\/-]+=*/gi;
+
+function redact(value, key = '') {
+  if (SECRET_KEY.test(key)) return '[REDACTED]';
+  if (typeof value === 'string') return value.replace(SECRET_VALUE, '[REDACTED]');
+  if (Array.isArray(value)) return value.map((item) => redact(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redact(childValue, childKey)]));
+  }
+  return value;
+}
+
 function serialize(value) {
   if (value instanceof Error) {
-    return {
+    return redact({
       name: value.name,
       message: value.message,
-      stack: value.stack
-    };
+      stack: value.stack,
+      code: value.code || null
+    });
   }
 
-  return value;
+  return redact(value);
 }
 
 function write(level, message, metadata) {
@@ -46,3 +60,4 @@ module.exports = {
     write: (message) => write('info', message.trim())
   }
 };
+module.exports.redact = redact;

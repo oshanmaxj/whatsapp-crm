@@ -44,6 +44,20 @@ function envValue(name, fallback = '') {
   return clean(value);
 }
 
+function validateAccountFields(payload, { requireToken = false } = {}) {
+  const phoneNumberId = clean(payload.phoneNumberId);
+  if (phoneNumberId && !/^\d+$/.test(phoneNumberId)) {
+    throw Object.assign(new Error('Phone number ID must contain digits only.'), { status: 400, code: 'WHATSAPP_CONFIGURATION_INVALID' });
+  }
+  if (requireToken && !clean(payload.accessToken)) {
+    throw Object.assign(new Error('Access token is required.'), { status: 400, code: 'WHATSAPP_CONFIGURATION_INVALID' });
+  }
+  const apiVersion = clean(payload.apiVersion);
+  if (apiVersion && !/^v\d+\.\d+$/.test(apiVersion)) {
+    throw Object.assign(new Error('Graph API version must use the format vNN.N.'), { status: 400, code: 'WHATSAPP_CONFIGURATION_INVALID' });
+  }
+}
+
 function serialize(row) {
   const data = row?.toJSON ? row.toJSON() : row;
   if (!data) return null;
@@ -55,6 +69,11 @@ function serialize(row) {
     accessToken: mask(decrypt(row.accessTokenEncrypted)),
     appSecret: mask(decrypt(row.appSecretEncrypted))
   };
+}
+
+function lastFour(value) {
+  const text = clean(value);
+  return text ? text.slice(-4) : null;
 }
 
 class WhatsAppAccountService {
@@ -139,18 +158,37 @@ class WhatsAppAccountService {
       phoneNumber: row.phoneNumber,
       phoneNumberId: clean(row.phoneNumberId),
       businessAccountId: clean(row.businessAccountId),
-      accessToken: envValue('WHATSAPP_ACCESS_TOKEN') || clean(decrypt(row.accessTokenEncrypted)),
+      // A database account is an atomic credential set. Never combine its ID
+      // with a global token that may belong to a different Meta business.
+      accessToken: clean(decrypt(row.accessTokenEncrypted)),
       verifyToken: clean(row.webhookVerifyToken),
       appId: row.appId,
       appSecret: decrypt(row.appSecretEncrypted),
       apiVersion: clean(row.apiVersion) || envValue('WHATSAPP_API_VERSION', 'v17.0'),
       apiBaseUrl: clean(row.apiBaseUrl) || envValue('WHATSAPP_API_BASE_URL', 'https://graph.facebook.com'),
       status: row.status,
-      isDefault: row.isDefault
+      isDefault: row.isDefault,
+      connectionStatus: row.connectionStatus,
+      sendEnabled: row.sendEnabled !== false,
+      configurationSource: 'whatsapp_account'
+    };
+  }
+
+  async safeDiagnostic(id = null) {
+    const config = await this.runtimeConfig(id);
+    return {
+      configurationSource: config.configurationSource,
+      whatsappAccountId: config.whatsappAccountId,
+      phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+      graphApiVersion: config.apiVersion,
+      tokenExists: Boolean(config.accessToken),
+      active: config.status === 'active',
+      sendEnabled: config.sendEnabled && config.connectionStatus !== 'disconnected'
     };
   }
 
   async create(payload, userId) {
+    validateAccountFields(payload, { requireToken: true });
     const duplicate = await WhatsAppAccount.findOne({ where: { phoneNumberId: String(payload.phoneNumberId || '').trim() } });
     if (duplicate) throw Object.assign(new Error('Phone number ID is already connected'), { status: 409 });
     return sequelize.transaction(async (transaction) => {
@@ -177,6 +215,7 @@ class WhatsAppAccountService {
   }
 
   async update(id, payload) {
+    validateAccountFields(payload);
     const row = await this.get(id);
     if (payload.phoneNumberId && payload.phoneNumberId !== row.phoneNumberId) {
       const duplicate = await WhatsAppAccount.findOne({ where: { phoneNumberId: payload.phoneNumberId, id: { [Op.ne]: row.id } } });
@@ -220,24 +259,45 @@ class WhatsAppAccountService {
     const config = await this.runtimeConfig(id);
     try {
       const response = await axios.get(`${config.apiBaseUrl}/${config.apiVersion}/${config.phoneNumberId}`, {
-        params: { fields: 'id,display_phone_number,verified_name' },
+        params: { fields: 'id,display_phone_number,verified_name,quality_rating' },
         headers: { Authorization: `Bearer ${config.accessToken}` },
         timeout: 15000
       });
-      await row.update({ lastTestedAt: new Date(), phoneNumber: response.data?.display_phone_number || row.phoneNumber });
-      await row.update({ connectionStatus: 'connected', connectionError: null });
+      const verifiedAt = new Date();
+      await row.update({
+        lastTestedAt: verifiedAt,
+        lastVerifiedAt: verifiedAt,
+        phoneNumber: response.data?.display_phone_number || row.phoneNumber,
+        verifiedName: response.data?.verified_name || row.verifiedName,
+        qualityRating: response.data?.quality_rating || row.qualityRating,
+        connectionStatus: 'connected',
+        connectionError: null
+      });
       return { connected: true, ...response.data };
     } catch (error) {
+      const meta = error.response?.data?.error || {};
+      const inaccessible = Number(meta.code) === 100 && Number(meta.error_subcode) === 33;
+      const message = inaccessible
+        ? 'Configured phone number ID is not accessible with the configured token.'
+        : 'WhatsApp connection verification failed.';
       await row.update({
         lastTestedAt: new Date(),
         connectionStatus: 'disconnected',
-        connectionError: error.response?.data?.error?.message || error.message
+        connectionError: message
       });
-      throw Object.assign(new Error('WhatsApp connection test failed'), {
+      throw Object.assign(new Error(message), {
         status: error.response?.status === 401 ? 401 : 502,
-        details: error.response?.data || error.message
+        code: inaccessible ? 'WHATSAPP_PHONE_NUMBER_INACCESSIBLE' : 'WHATSAPP_CONNECTION_FAILED',
+        metaCode: meta.code == null ? null : String(meta.code),
+        metaSubcode: meta.error_subcode == null ? null : String(meta.error_subcode),
+        exposeMessage: true
       });
     }
+  }
+
+  async markDisconnected(id, message) {
+    if (!id) return;
+    await WhatsAppAccount.update({ connectionStatus: 'disconnected', connectionError: message, lastTestedAt: new Date() }, { where: { id } });
   }
 
   async historyCount(id) {

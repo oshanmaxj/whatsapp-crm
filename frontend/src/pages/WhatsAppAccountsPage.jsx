@@ -73,7 +73,7 @@ export default function WhatsAppAccountsPage() {
                 <TableCell>{account.statistics?.flows || 0}</TableCell>
                 <TableCell>{account.statistics?.conversations || 0}</TableCell>
                 <TableCell align="right">
-                  <Button size="small" disabled={busy} onClick={() => action(() => testWhatsAppAccount(account.id), 'Connection test passed.')}>Test</Button>
+                  <Button size="small" disabled={busy} onClick={() => action(() => testWhatsAppAccount(account.id), 'WhatsApp connection verified.')}>Verify WhatsApp Connection</Button>
                   {!account.isDefault && account.status === 'active' && <Button size="small" disabled={busy} startIcon={<CheckCircleOutlineIcon />} onClick={() => action(() => setDefaultWhatsAppAccount(account.id), 'Default WhatsApp number updated.')}>Set default</Button>}
                   <IconButton onClick={() => beginEdit(account)}><EditOutlinedIcon /></IconButton>
                   {account.status === 'active' && <IconButton color="error" disabled={busy || account.isDefault} onClick={() => action(() => deactivateWhatsAppAccount(account.id), 'WhatsApp number deactivated.')}><DeleteOutlineIcon /></IconButton>}

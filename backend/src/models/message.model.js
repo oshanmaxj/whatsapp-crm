@@ -139,6 +139,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(100),
       allowNull: true
     },
+    errorSubcode: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
     errorMessage: {
       type: DataTypes.TEXT,
       allowNull: true

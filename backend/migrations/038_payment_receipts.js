@@ -105,6 +105,7 @@ module.exports = {
       await ensureIndex(queryInterface, 'payment_receipt_jobs', ['status', 'run_after'], { name: 'payment_receipt_jobs_due_idx' }, transaction);
       await ensureIndex(queryInterface, 'payment_receipt_jobs', ['receipt_id', 'job_type'], { name: 'payment_receipt_jobs_receipt_type_idx' }, transaction);
 
+      const rolePermissionSchema = await queryInterface.describeTable('role_permissions', queryOptions);
       for (const code of RECEIPT_PERMISSIONS) {
         const [rows] = await queryInterface.sequelize.query('SELECT id FROM permissions WHERE code = :code', { replacements: { code }, transaction });
         if (!rows.length) await queryInterface.bulkInsert('permissions', [{ code, name: code, description: `Receipt permission: ${code}`, created_at: new Date(), updated_at: new Date() }], queryOptions);
@@ -113,7 +114,11 @@ module.exports = {
         const [roles] = await queryInterface.sequelize.query('SELECT id FROM roles WHERE LOWER(name) IN (:roles) AND deleted_at IS NULL', { replacements: { roles: roleNames }, transaction });
         for (const role of roles) {
           const [mapping] = await queryInterface.sequelize.query('SELECT role_id FROM role_permissions WHERE role_id = :roleId AND permission_id = :permissionId', { replacements: { roleId: role.id, permissionId: permission[0].id }, transaction });
-          if (!mapping.length) await queryInterface.bulkInsert('role_permissions', [{ role_id: role.id, permission_id: permission[0].id, granted_at: new Date() }], queryOptions);
+          if (!mapping.length) {
+            const rolePermission = { role_id: role.id, permission_id: permission[0].id };
+            if (rolePermissionSchema.granted_at) rolePermission.granted_at = new Date();
+            await queryInterface.bulkInsert('role_permissions', [rolePermission], queryOptions);
+          }
         }
       }
 

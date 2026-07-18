@@ -223,10 +223,12 @@ models.User.hasMany(models.LeadAssignment, { foreignKey: 'assigned_to', as: 'lea
 models.Contact.hasMany(models.Conversation, { foreignKey: 'contact_id', as: 'conversations' });
 models.Lead.hasMany(models.Conversation, { foreignKey: 'lead_id', as: 'conversations' });
 
-models.Conversation.hasMany(models.Message, { foreignKey: 'conversation_id', as: 'messages' });
-models.Message.belongsTo(models.Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
-models.Message.belongsTo(models.Message, { foreignKey: 'reply_to_message_id', as: 'replyToMessage' });
-models.Message.hasMany(models.Message, { foreignKey: 'reply_to_message_id', as: 'messageReplies' });
+const messageConversationForeignKey = { name: 'conversationId', field: 'conversation_id' };
+const messageReplyForeignKey = { name: 'replyToMessageId', field: 'reply_to_message_id' };
+models.Conversation.hasMany(models.Message, { foreignKey: messageConversationForeignKey, as: 'messages' });
+models.Message.belongsTo(models.Conversation, { foreignKey: messageConversationForeignKey, as: 'conversation' });
+models.Message.belongsTo(models.Message, { foreignKey: messageReplyForeignKey, as: 'replyToMessage' });
+models.Message.hasMany(models.Message, { foreignKey: messageReplyForeignKey, as: 'messageReplies' });
 models.Message.belongsTo(models.User, { foreignKey: 'sentByUserId', as: 'sentBy' });
 models.User.hasMany(models.Message, { foreignKey: 'sentByUserId', as: 'sentMessages' });
 models.User.hasMany(models.Conversation, { foreignKey: 'assigned_user_id', as: 'assignedConversations' });
@@ -323,15 +325,19 @@ models.User.hasMany(models.AuthSession, { foreignKey: 'user_id', as: 'authSessio
 models.AuthSession.belongsTo(models.User, { foreignKey: 'user_id', as: 'user' });
 models.User.hasMany(models.AuditLog, { foreignKey: 'user_id', as: 'auditLogs' });
 models.User.hasMany(models.MessageQueue, { foreignKey: 'created_by', as: 'queuedMessages' });
-models.WhatsAppAccount.hasMany(models.Conversation, { foreignKey: 'whatsapp_account_id', as: 'conversations' });
-models.WhatsAppAccount.hasMany(models.Message, { foreignKey: 'whatsapp_account_id', as: 'messages' });
+const conversationWhatsappAccountForeignKey = { name: 'whatsappAccountId', field: 'whatsapp_account_id' };
+const messageWhatsappAccountForeignKey = { name: 'whatsappAccountId', field: 'whatsapp_account_id' };
+models.WhatsAppAccount.hasMany(models.Conversation, { foreignKey: conversationWhatsappAccountForeignKey, as: 'conversations' });
+models.WhatsAppAccount.hasMany(models.Message, { foreignKey: messageWhatsappAccountForeignKey, as: 'messages' });
 [
-  models.Conversation, models.Message, models.Contact, models.Lead, models.WhatsAppTemplate,
+  models.Contact, models.Lead, models.WhatsAppTemplate,
   models.Campaign, models.CampaignRecipient, models.MessageQueue, models.Flow, models.FlowRun,
   models.AutoReply, models.WhatsAppComplianceLog
 ].forEach((model) => {
   model.belongsTo(models.WhatsAppAccount, { foreignKey: 'whatsapp_account_id', as: 'whatsappAccount' });
 });
+models.Conversation.belongsTo(models.WhatsAppAccount, { foreignKey: conversationWhatsappAccountForeignKey, as: 'whatsappAccount' });
+models.Message.belongsTo(models.WhatsAppAccount, { foreignKey: messageWhatsappAccountForeignKey, as: 'whatsappAccount' });
 
 models.Lead.hasMany(models.Followup, { foreignKey: 'lead_id', as: 'followups' });
 models.Contact.hasMany(models.Followup, { foreignKey: 'contact_id', as: 'followups' });

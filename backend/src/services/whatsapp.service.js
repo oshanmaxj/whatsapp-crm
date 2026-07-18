@@ -6,6 +6,8 @@ const whatsappConfig = require('../config/whatsapp');
 const whatsappSettingsService = require('./whatsappSettings.service');
 const whatsappAccountService = require('./whatsappAccount.service');
 const leadManagementService = require('./leadManagement.service');
+const inboundWhatsappMessageService = require('./inboundWhatsappMessage.service');
+const { buildInboundSocketPayload } = require('./inboundWhatsappMessage.service');
 const aiService = require('./ai.service');
 const autoReplyService = require('./autoReply.service');
 const socketService = require('./socket.service');
@@ -765,6 +767,12 @@ class WhatsappService {
     if (message.id) {
       const duplicate = await Message.findOne({ where: { whatsappMessageId: message.id } });
       if (duplicate) {
+        if (!duplicate.conversationId) {
+          const error = new Error('Existing inbound WhatsApp message has no conversation');
+          error.code = 'INBOUND_ORPHAN_MESSAGE_FOUND';
+          error.messageId = duplicate.id;
+          throw error;
+        }
         logger.info('whatsapp_inbound_duplicate_ignored', {
           whatsappMessageId: message.id,
           type: message.type || null,
@@ -822,48 +830,43 @@ class WhatsappService {
       payload: value,
       whatsappAccountId,
       persistInbound: async ({ contact, conversation, transaction }) => {
-        const existing = message.id
-          ? await Message.findOne({ where: { whatsappMessageId: message.id }, transaction })
-          : null;
-        if (existing) return { messageRecord: existing, replyToMessage: null, created: false };
-        const replyToMessage = replyToWhatsappMessageId
-          ? await Message.findOne({
-              where: { conversationId: conversation.id, whatsappMessageId: replyToWhatsappMessageId },
-              attributes: ['id', 'whatsappMessageId', 'direction', 'type', 'text', 'mediaUrl', 'templateName', 'rawPayload'],
-              transaction
-            })
-          : null;
-        const messageRecord = await Message.create({
-          whatsappMessageId: message.id,
-          conversationId: conversation.id,
-          contactId: contact.id,
-          direction: 'inbound',
-          channel: 'whatsapp',
-          type: parsed.storedType,
-          messageType: parsed.messageType,
-          text,
-          buttonPayload: parsed.buttonPayload,
-          interactiveType: parsed.interactiveType,
-          mediaId,
-          mediaUrl,
-          fileName,
-          mimeType,
-          fromNumber: from,
-          toNumber: to,
-          status: 'delivered',
+        return inboundWhatsappMessageService.persist({
+          contact,
+          conversation,
           whatsappAccountId,
-          statusUpdatedAt: receivedAt,
-          replyToMessageId: replyToMessage?.id || null,
+          whatsappMessageId: message.id,
           replyToWhatsappMessageId,
-          rawPayload: message,
-          createdAt: receivedAt,
-          updatedAt: receivedAt
-        }, { transaction });
-        return { messageRecord, replyToMessage, created: true };
+          transaction,
+          values: {
+            direction: 'inbound',
+            channel: 'whatsapp',
+            type: parsed.storedType,
+            messageType: parsed.messageType,
+            text,
+            buttonPayload: parsed.buttonPayload,
+            interactiveType: parsed.interactiveType,
+            mediaId,
+            mediaUrl,
+            fileName,
+            mimeType,
+            fromNumber: from,
+            toNumber: to,
+            status: 'delivered',
+            statusUpdatedAt: receivedAt,
+            rawPayload: message,
+            createdAt: receivedAt,
+            updatedAt: receivedAt
+          }
+        });
       }
     });
 
-    const conversationId = assignmentResult.conversation.id;
+    const conversationId = assignmentResult?.conversation?.id;
+    if (!conversationId) {
+      const error = new Error('Inbound WhatsApp identity resolution returned no conversation');
+      error.code = 'INBOUND_CONVERSATION_REQUIRED';
+      throw error;
+    }
     const messageRecord = assignmentResult.message?.messageRecord || null;
     const replyToMessage = assignmentResult.message?.replyToMessage || null;
     if (!messageRecord) throw new Error('Inbound WhatsApp message was not persisted');
@@ -950,8 +953,7 @@ class WhatsappService {
               text: 'Replied to a previous message'
             }
           : null;
-      const socketPayload = {
-        ...(messageRecord?.toJSON ? messageRecord.toJSON() : messageRecord || {}),
+      const socketPayload = buildInboundSocketPayload(messageRecord, {
         conversationId,
         contactId: assignmentResult?.contact?.id || null,
         leadId: assignmentResult?.lead?.id || null,
@@ -964,7 +966,7 @@ class WhatsappService {
         replyPreview,
         mediaUrl: attachment?.publicUrl || messageRecord?.mediaUrl || mediaUrl,
         createdAt: messageRecord?.createdAt || receivedAt
-      };
+      });
       logger.info('socket_message_emit', {
         event: 'whatsapp.message.received',
         conversationId,

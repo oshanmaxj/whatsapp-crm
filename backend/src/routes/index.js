@@ -40,6 +40,7 @@ const studentPortalRoutes = require('./studentPortal.routes');
 const studentMessageTemplateRoutes = require('./studentMessageTemplate.routes');
 const courseSchedulerRoutes = require('./courseScheduler.routes');
 const commissionRoutes = require('./commission.routes');
+const paymentReceiptRoutes = require('./paymentReceipt.routes');
 const pipelineRoutes=require('./pipeline.routes'),followupRoutes=require('./followup.routes'),lostReasonRoutes=require('./lostReason.routes');
 
 const router = express.Router();
@@ -74,6 +75,7 @@ router.use('/whatsapp', whatsappRoutes);
 router.use('/whatsapp-accounts', whatsappAccountRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/commissions', commissionRoutes);
+router.use('/receipts', paymentReceiptRoutes);
 router.use('/pipeline',pipelineRoutes);router.use('/followups',followupRoutes);router.use('/lost-reasons',lostReasonRoutes);
 router.use('/notification-templates', notificationTemplateRoutes);
 router.use('/lms/student', studentPortalRoutes);

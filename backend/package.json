@@ -16,6 +16,7 @@
     "commissions:backfill": "node src/scripts/backfill_commissions.js",
     "repair:conversations": "node src/scripts/repair_duplicate_conversations.js",
     "backfill:inbound-whatsapp-conversations": "node src/scripts/backfill_inbound_whatsapp_conversations.js",
+    "backfill:payment-receipts": "node src/scripts/backfill_payment_receipts.js",
     "migrate:lms-curriculum": "node src/scripts/migrate_lms_curriculum.js",
     "backfill:lms-scheduled-lessons": "node src/scripts/backfill_scheduled_lessons_to_lms.js",
     "test:lead-status": "node --test"
@@ -34,8 +35,10 @@
     "morgan": "^1.10.0",
     "mysql2": "^3.4.0",
     "openai": "^4.8.0",
+    "pdfkit": "^0.19.1",
     "pg": "^8.22.0",
     "pg-hstore": "^2.3.4",
+    "qrcode": "^1.5.4",
     "sequelize": "^6.37.8",
     "socket.io": "^4.8.3"
   },

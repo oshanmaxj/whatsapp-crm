@@ -16,6 +16,15 @@ const DEFAULTS = [
   }],
   ['smtp', 'settings', { host: '', port: 587, secure: false, username: '' }],
   ['branding', 'theme', { primaryColor: '#25d366', logoUrl: '' }],
+  ['receipts', 'settings', {
+    prefix: process.env.RECEIPT_PREFIX || 'RCPT',
+    companyName: process.env.RECEIPT_COMPANY_NAME || 'First Of Education International (PVT) Ltd',
+    registrationNumber: process.env.RECEIPT_COMPANY_REGISTRATION_NUMBER || 'PV 00267065',
+    currency: process.env.RECEIPT_CURRENCY || 'LKR',
+    autoGenerate: process.env.RECEIPT_AUTO_GENERATE !== 'false',
+    autoSendWhatsapp: process.env.RECEIPT_AUTO_SEND_WHATSAPP !== 'false',
+    footerText: 'This is a computer-generated receipt and does not require a physical signature.'
+  }],
   ['security', 'session', {
     enabled: process.env.SESSION_TIMEOUT_ENABLED === 'true',
     timeoutMinutes: Number(process.env.SESSION_TIMEOUT_MINUTES || 43200)

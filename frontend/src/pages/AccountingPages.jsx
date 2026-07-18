@@ -8,12 +8,15 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DownloadIcon from '@mui/icons-material/Download';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import {
   createAccountingCategory, createAccountingTransaction, deleteAccountingCategory,
   deleteAccountingTransaction, getAccountingCategories, getAccountingReports,
   getAccountingSummary, getAccountingTransactions, updateAccountingCategory,
   updateAccountingTransaction
 } from '../services/accounting.service';
+import { downloadReceipt, generateReceipt, saveBlob } from '../services/paymentReceipt.service';
+import { hasPermission } from '../utils/access';
 
 const methods = ['cash', 'bank', 'card', 'online', 'other'];
 const money = (value) => Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -28,11 +31,11 @@ function Metric({ label, value, color = 'text.primary' }) {
   return <Paper variant="outlined" sx={{ p: 2.25 }}><Typography color="text.secondary">{label}</Typography><Typography variant="h5" fontWeight={900} color={color}>{money(value)}</Typography></Paper>;
 }
 
-function TransactionTable({ rows, actions = false, onEdit, onDelete }) {
+function TransactionTable({ rows, actions = false, onEdit, onDelete, onReceipt }) {
   return <TableContainer component={Paper} variant="outlined"><Table size="small">
     <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Category</TableCell><TableCell>Payment</TableCell><TableCell>Reference</TableCell><TableCell>Description</TableCell><TableCell align="right">Amount</TableCell>{actions && <TableCell align="right">Actions</TableCell>}</TableRow></TableHead>
     <TableBody>
-      {rows.map((row) => <TableRow key={row.id}><TableCell>{row.date}</TableCell><TableCell>{row.category?.name || '-'}</TableCell><TableCell sx={{ textTransform: 'capitalize' }}>{row.paymentMethod}</TableCell><TableCell>{row.referenceNo || '-'}</TableCell><TableCell>{row.description || '-'}</TableCell><TableCell align="right"><Typography fontWeight={800} color={row.type === 'income' ? 'success.main' : 'error.main'}>{row.type === 'income' ? '+' : '-'} {money(row.amount)}</Typography></TableCell>{actions && <TableCell align="right"><IconButton onClick={() => onEdit(row)}><EditOutlinedIcon /></IconButton><IconButton color="error" onClick={() => onDelete(row)}><DeleteOutlineIcon /></IconButton></TableCell>}</TableRow>)}
+      {rows.map((row) => { const receipt = (row.receipts || []).find((item) => item.status === 'ACTIVE') || row.receipts?.[0]; return <TableRow key={row.id}><TableCell>{row.date}</TableCell><TableCell>{row.category?.name || '-'}</TableCell><TableCell sx={{ textTransform: 'capitalize' }}>{row.paymentMethod}</TableCell><TableCell>{row.referenceNo || '-'}</TableCell><TableCell>{row.description || '-'}</TableCell><TableCell align="right"><Typography fontWeight={800} color={row.type === 'income' ? 'success.main' : 'error.main'}>{row.type === 'income' ? '+' : '-'} {money(row.amount)}</Typography></TableCell>{actions && <TableCell align="right">{row.type === 'income' && row.relatedStudentId && hasPermission(receipt ? 'receipts.download' : 'receipts.generate') && <IconButton title={receipt ? 'Download receipt' : 'Generate receipt'} onClick={() => onReceipt(row, receipt)}><ReceiptLongIcon /></IconButton>}<IconButton onClick={() => onEdit(row)}><EditOutlinedIcon /></IconButton><IconButton color="error" onClick={() => onDelete(row)}><DeleteOutlineIcon /></IconButton></TableCell>}</TableRow>; })}
       {!rows.length && <TableRow><TableCell colSpan={actions ? 7 : 6} align="center" sx={{ py: 5 }}>No transactions found.</TableCell></TableRow>}
     </TableBody>
   </Table></TableContainer>;
@@ -92,6 +95,20 @@ export function AccountingTransactionsPage({ type }) {
     if (!window.confirm('Delete this transaction?')) return;
     try { await deleteAccountingTransaction(row.id); await load(); } catch (e) { setMessage({ severity: 'error', text: errorText(e, 'Unable to delete transaction.') }); }
   };
+  const handleReceipt = async (row, receipt) => {
+    try {
+      if (receipt?.pdfStorageKey) {
+        const response = await downloadReceipt(receipt.id);
+        saveBlob(response.data, `${receipt.receiptNumber}.pdf`);
+      } else if (receipt) {
+        setMessage({ severity: 'info', text: 'Receipt PDF is still being generated.' });
+      } else {
+        await generateReceipt(row.id, 'MANUAL_PAYMENT');
+        await load();
+        setMessage({ severity: 'success', text: 'Receipt created. PDF generation is queued.' });
+      }
+    } catch (e) { setMessage({ severity: 'error', text: errorText(e, 'Unable to process receipt.') }); }
+  };
   return <Stack spacing={2.5}>
     <PageTitle title={title} subtitle={`Manage and filter ${title.toLowerCase()} transactions.`} action={<Button variant="contained" startIcon={<AddIcon />} onClick={beginCreate}>Add {type}</Button>} />
     {message && <Alert severity={message.severity} onClose={() => setMessage(null)}>{message.text}</Alert>}
@@ -101,7 +118,7 @@ export function AccountingTransactionsPage({ type }) {
       <Grid item xs={12} sm={6} md={3}><TextField select label="Category" value={filters.categoryId} onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })} fullWidth><MenuItem value="">All categories</MenuItem>{categories.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}</TextField></Grid>
       <Grid item xs={12} sm={6} md={3}><TextField select label="Payment method" value={filters.paymentMethod} onChange={(e) => setFilters({ ...filters, paymentMethod: e.target.value })} fullWidth><MenuItem value="">All methods</MenuItem>{methods.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField></Grid>
     </Grid></Paper>
-    <TransactionTable rows={rows} actions onEdit={beginEdit} onDelete={remove} />
+    <TransactionTable rows={rows} actions onEdit={beginEdit} onDelete={remove} onReceipt={handleReceipt} />
     <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm"><DialogTitle>{editing ? 'Edit' : 'Add'} {type}</DialogTitle><DialogContent><Grid container spacing={2} sx={{ pt: 1 }}>
       <Grid item xs={12} sm={6}><TextField type="date" label="Date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth required /></Grid>
       <Grid item xs={12} sm={6}><TextField type="number" label="Amount" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} inputProps={{ min: 0.01, step: 0.01 }} fullWidth required /></Grid>

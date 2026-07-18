@@ -1,6 +1,6 @@
 const { Op, fn, col } = require('sequelize');
 const {
-  AccountingCategory, AccountingTransaction, Campaign, Course, Student, User, sequelize
+  AccountingCategory, AccountingTransaction, Campaign, Course, PaymentReceipt, Student, User, sequelize
 } = require('../models');
 
 const TYPES = ['income', 'expense'];
@@ -27,7 +27,8 @@ class AccountingService {
       { model: Student, as: 'student', attributes: ['id', 'studentNo', 'name'], required: false },
       { model: Course, as: 'course', attributes: ['id', 'code', 'name'], required: false },
       { model: Campaign, as: 'campaign', attributes: ['id', 'name'], required: false },
-      { model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'], required: false }
+      { model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'], required: false },
+      { model: PaymentReceipt, as: 'receipts', required: false }
     ];
   }
 
@@ -91,6 +92,9 @@ class AccountingService {
 
   async updateTransaction(id, payload) {
     const row = await this.getTransaction(id);
+    if (await PaymentReceipt.count({ where: { paymentId: id } })) {
+      throw Object.assign(new Error('A receipted payment is immutable; reverse it and create a corrected payment'), { status: 409, code: 'RECEIPTED_PAYMENT_IMMUTABLE' });
+    }
     await this.validateTransaction(payload, row);
     await row.update({
       type: payload.type ?? row.type,
@@ -109,6 +113,9 @@ class AccountingService {
 
   async deleteTransaction(id) {
     const row = await this.getTransaction(id);
+    if (await PaymentReceipt.count({ where: { paymentId: id } })) {
+      throw Object.assign(new Error('A receipted payment cannot be deleted; reverse it instead'), { status: 409, code: 'RECEIPTED_PAYMENT_IMMUTABLE' });
+    }
     await row.destroy();
     return { deleted: true, id };
   }

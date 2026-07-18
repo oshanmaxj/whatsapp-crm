@@ -24,6 +24,7 @@ import MenuBookIcon from '@mui/icons-material/MenuBook';
 import MoneyOffIcon from '@mui/icons-material/MoneyOff';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import PaymentsIcon from '@mui/icons-material/Payments';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SchoolIcon from '@mui/icons-material/School';
 import SecurityIcon from '@mui/icons-material/Security';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -70,9 +71,10 @@ export const modules = [
     ]
   },
   {
-    id: 'accounting', label: 'Accounting', path: '/accounting', icon: <AccountBalanceIcon />, permission: 'accounting.view', routes: ['/accounting'],
+    id: 'accounting', label: 'Accounting', path: '/accounting', icon: <AccountBalanceIcon />, permission: ['accounting.view', 'receipts.view'], routes: ['/accounting', '/receipts'],
     items: [
       { label: 'Dashboard', path: '/accounting', icon: <DashboardIcon />, permission: 'accounting.view', exact: true },
+      { label: 'Receipts', path: '/receipts', icon: <ReceiptLongIcon />, permission: 'receipts.view' },
       { label: 'Income', path: '/accounting/income', icon: <AddCardIcon />, permission: 'accounting.view' },
       { label: 'Expenses', path: '/accounting/expenses', icon: <MoneyOffIcon />, permission: 'accounting.view' },
       { label: 'Categories', path: '/accounting/categories', icon: <CategoryOutlinedIcon />, permission: 'accounting.view' },
@@ -126,11 +128,12 @@ export function itemIsActive(item, pathname, search = '') {
 }
 
 export function canAccessItem(item, access) {
-  return access.isSystemAdmin || !item.permission || access.permissions?.includes(item.permission);
+  const required = Array.isArray(item.permission) ? item.permission : item.permission ? [item.permission] : [];
+  return access.isSystemAdmin || required.length === 0 || required.some((permission) => access.permissions?.includes(permission));
 }
 
 export function canAccessModule(module, access) {
   if (access.isSystemAdmin) return true;
-  if (module.permission) return access.permissions?.includes(module.permission);
+  if (module.permission) return canAccessItem(module, access);
   return module.items?.some((item) => canAccessItem(item, access)) ?? true;
 }

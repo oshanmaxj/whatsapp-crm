@@ -63,6 +63,8 @@ const BackupJob = require('./backupJob.model');
 const LoginHistory = require('./loginHistory.model');
 const PasswordResetToken = require('./passwordResetToken.model');
 const AuthSession = require('./authSession.model');
+const PaymentReceipt = require('./paymentReceipt.model');
+const PaymentReceiptJob = require('./paymentReceiptJob.model');
 const WhatsAppAccount = require('./whatsappAccount.model');
 const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
 const AccountingCategory = require('./accountingCategory.model');
@@ -149,6 +151,8 @@ const models = {
   LoginHistory: LoginHistory(sequelize, Sequelize.DataTypes),
   PasswordResetToken: PasswordResetToken(sequelize, Sequelize.DataTypes),
   AuthSession: AuthSession(sequelize, Sequelize.DataTypes),
+  PaymentReceipt: PaymentReceipt(sequelize, Sequelize.DataTypes),
+  PaymentReceiptJob: PaymentReceiptJob(sequelize, Sequelize.DataTypes),
   WhatsAppAccount: WhatsAppAccount(sequelize, Sequelize.DataTypes),
   RoleWhatsAppAccount: RoleWhatsAppAccount(sequelize, Sequelize.DataTypes),
   AccountingCategory: AccountingCategory(sequelize, Sequelize.DataTypes),
@@ -283,6 +287,20 @@ models.Student.hasMany(models.ClassReminder, { foreignKey: 'student_id', as: 'cl
 models.Student.hasMany(models.StudentFee, { foreignKey: 'student_id', as: 'fees' });
 models.StudentEnrollment.hasMany(models.StudentFee, { foreignKey: 'enrollment_id', as: 'fees' });
 models.StudentFee.hasMany(models.FeeInstallment, { foreignKey: { name: 'studentFeeId', field: 'fee_id' }, as: 'installments' });
+const receiptPaymentForeignKey = { name: 'paymentId', field: 'payment_id' };
+const receiptStudentForeignKey = { name: 'studentId', field: 'student_id' };
+const receiptFeeForeignKey = { name: 'studentFeeId', field: 'student_fee_id' };
+const receiptInstallmentForeignKey = { name: 'feeInstallmentId', field: 'fee_installment_id' };
+models.AccountingTransaction.hasMany(models.PaymentReceipt, { foreignKey: receiptPaymentForeignKey, as: 'receipts' });
+models.PaymentReceipt.belongsTo(models.AccountingTransaction, { foreignKey: receiptPaymentForeignKey, as: 'payment' });
+models.Student.hasMany(models.PaymentReceipt, { foreignKey: receiptStudentForeignKey, as: 'receipts' });
+models.PaymentReceipt.belongsTo(models.Student, { foreignKey: receiptStudentForeignKey, as: 'student' });
+models.StudentFee.hasMany(models.PaymentReceipt, { foreignKey: receiptFeeForeignKey, as: 'receipts' });
+models.PaymentReceipt.belongsTo(models.StudentFee, { foreignKey: receiptFeeForeignKey, as: 'studentFee' });
+models.FeeInstallment.hasMany(models.PaymentReceipt, { foreignKey: receiptInstallmentForeignKey, as: 'receipts' });
+models.PaymentReceipt.belongsTo(models.FeeInstallment, { foreignKey: receiptInstallmentForeignKey, as: 'installment' });
+models.PaymentReceipt.hasMany(models.PaymentReceiptJob, { foreignKey: { name: 'receiptId', field: 'receipt_id' }, as: 'jobs' });
+models.PaymentReceiptJob.belongsTo(models.PaymentReceipt, { foreignKey: { name: 'receiptId', field: 'receipt_id' }, as: 'receipt' });
 models.Student.hasMany(models.FeeReminder, { foreignKey: 'student_id', as: 'feeReminders' });
 models.StudentFee.hasMany(models.FeeReminder, { foreignKey: 'student_fee_id', as: 'reminders' });
 models.FeeInstallment.hasMany(models.FeeReminder, { foreignKey: 'installment_id', as: 'reminders' });

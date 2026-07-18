@@ -44,6 +44,8 @@ import { ModuleLandingPage } from './components/ModuleNavigationView';
 import LmsCourseBuilderPage, { LmsCoursesPage } from './pages/LmsCourseBuilderPage';
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
 import CommissionPage from './pages/CommissionPage';
+import PaymentReceiptsPage from './pages/PaymentReceiptsPage';
+import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
 import {
   StudentCoursePage, StudentCoursesPage, StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLiveClassesPage, StudentLoginPage, StudentMaterialsPage,
   StudentPaymentsPage, StudentPortalGuard, StudentPortalLayout, StudentProfilePage as StudentPortalProfilePage
@@ -80,6 +82,7 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/receipt/verify/:token" element={<ReceiptVerificationPage />} />
           <Route path="/student/login" element={<StudentLoginPage />} />
           <Route element={<StudentPortalGuard />}>
             <Route element={<StudentPortalLayout />}>
@@ -117,6 +120,7 @@ function App() {
             <Route path="/students" element={permit('students.view', <StudentsPage />)} />
             <Route path="/students/:id" element={permit('students.view', <StudentProfilePage />)} />
             <Route path="/fees" element={permit('fees.view', <FeesPage />)} />
+            <Route path="/receipts" element={permit('receipts.view', <PaymentReceiptsPage />)} />
             <Route path="/accounting" element={permit('accounting.view', <AccountingDashboardPage />)} />
             <Route path="/accounting/income" element={permit('accounting.view', <AccountingTransactionsPage type="income" />)} />
             <Route path="/accounting/expenses" element={permit('accounting.view', <AccountingTransactionsPage type="expense" />)} />

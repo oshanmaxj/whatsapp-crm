@@ -1,6 +1,6 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { modules } from './moduleNavigationConfig';
+import { canAccessModule, modules } from './moduleNavigationConfig';
 
 describe('module navigation configuration', () => {
   test('every configured icon is defined and renderable', () => {
@@ -15,5 +15,10 @@ describe('module navigation configuration', () => {
       expect(['function', 'object']).toContain(typeof entry.icon.type);
       expect(() => renderToStaticMarkup(entry.icon)).not.toThrow();
     });
+  });
+
+  test('modules with alternative permissions remain visible to receipt users', () => {
+    const accounting = modules.find((module) => module.id === 'accounting');
+    expect(canAccessModule(accounting, { isSystemAdmin: false, permissions: ['receipts.view'] })).toBe(true);
   });
 });

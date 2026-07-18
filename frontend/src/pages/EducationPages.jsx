@@ -12,6 +12,8 @@ import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockResetIcon from '@mui/icons-material/LockReset';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import { downloadReceipt, saveBlob } from '../services/paymentReceipt.service';
 import {
   confirmInstallmentPayment, convertLeadToStudent, createAttendance, createBatch, createCertificate, createCourse, createFee, createStudent, deleteAttendance,
   deleteBatch, deleteCertificate, deleteCourse, deleteFee, deleteStudent, listAttendance, listBatches,
@@ -586,6 +588,15 @@ function EducationModulePage({ moduleKey }) {
     setSuccess(`Reminder ${response.data.data.notification.mode}: ${response.data.data.notification.to}`);
   };
 
+  const openReceipt = async (receipt) => {
+    try {
+      const response = await downloadReceipt(receipt.id);
+      saveBlob(response.data, `${receipt.receiptNumber}.pdf`);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Receipt PDF is not ready.');
+    }
+  };
+
   return <Stack spacing={2.5}>
     {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
     {success && <Alert severity="success" onClose={() => setSuccess('')}>{success}</Alert>}
@@ -623,7 +634,7 @@ function EducationModulePage({ moduleKey }) {
       <DialogTitle>View Installments</DialogTitle>
       <DialogContent>
         {!canConfirmPayment && (installmentFee?.installments || []).some((item) => item.status === 'pending_confirmation') && <Alert severity="info" sx={{ mb: 2 }}>Payment added. Waiting for confirmation by Accounting or an administrator.</Alert>}
-        <TableContainer><Table size="small"><TableHead><TableRow>{['Installment No', 'Amount', 'Due Date', 'Paid Amount', 'Pending Amount', 'Paid Date', 'Payment Method', 'Status', 'Action'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>{(installmentFee?.installments || []).map((item) => <TableRow key={item.id}><TableCell>{item.installmentNo}</TableCell><TableCell>{moneyText(item.amount)}</TableCell><TableCell>{item.dueDate}</TableCell><TableCell>{moneyText(item.paidAmount)}</TableCell><TableCell>{item.pendingPaymentAmount ? moneyText(item.pendingPaymentAmount) : '-'}</TableCell><TableCell>{item.paidDate || '-'}</TableCell><TableCell>{item.paymentMethod || '-'}</TableCell><TableCell><Chip size="small" color={item.status === 'confirmed' ? 'success' : item.status === 'rejected' || item.status === 'reversed' ? 'error' : item.status === 'pending_confirmation' ? 'warning' : 'default'} label={String(item.status).replaceAll('_', ' ')} /></TableCell><TableCell><Stack direction="row" spacing={0.5} alignItems="center"><IconButton title="Add payment" size="small" onClick={() => openPay(item)} disabled={['paid', 'pending_confirmation'].includes(item.status) || Number(item.paidAmount) >= Number(item.amount)}><PaymentsIcon /></IconButton><IconButton title="Send reminder" size="small" onClick={() => remind(item)}><NotificationsActiveIcon /></IconButton>{canConfirmPayment && item.status === 'pending_confirmation' && <><Button size="small" variant="contained" color="success" onClick={() => confirmPayment(item)}>Confirm Payment</Button><Button size="small" variant="outlined" color="error" onClick={() => rejectPayment(item)}>Reject Payment</Button></>}{canConfirmPayment && item.status === 'confirmed' && <Button size="small" variant="outlined" color="warning" onClick={() => reversePayment(item)}>Reverse</Button>}</Stack></TableCell></TableRow>)}{(!installmentFee?.installments || installmentFee.installments.length === 0) && <TableRow><TableCell colSpan={9}>No installments for this fee plan.</TableCell></TableRow>}</TableBody></Table></TableContainer>
+        <TableContainer><Table size="small"><TableHead><TableRow>{['Installment No', 'Amount', 'Due Date', 'Paid Amount', 'Pending Amount', 'Paid Date', 'Payment Method', 'Status', 'Action'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>{(installmentFee?.installments || []).map((item) => { const receipt = (item.receipts || []).find((row) => row.status === 'ACTIVE') || item.receipts?.[0]; return <TableRow key={item.id}><TableCell>{item.installmentNo}</TableCell><TableCell>{moneyText(item.amount)}</TableCell><TableCell>{item.dueDate}</TableCell><TableCell>{moneyText(item.paidAmount)}</TableCell><TableCell>{item.pendingPaymentAmount ? moneyText(item.pendingPaymentAmount) : '-'}</TableCell><TableCell>{item.paidDate || '-'}</TableCell><TableCell>{item.paymentMethod || '-'}</TableCell><TableCell><Chip size="small" color={item.status === 'confirmed' ? 'success' : item.status === 'rejected' || item.status === 'reversed' ? 'error' : item.status === 'pending_confirmation' ? 'warning' : 'default'} label={String(item.status).replaceAll('_', ' ')} /></TableCell><TableCell><Stack direction="row" spacing={0.5} alignItems="center"><IconButton title="Add payment" size="small" onClick={() => openPay(item)} disabled={['paid', 'pending_confirmation'].includes(item.status) || Number(item.paidAmount) >= Number(item.amount)}><PaymentsIcon /></IconButton><IconButton title="Send reminder" size="small" onClick={() => remind(item)}><NotificationsActiveIcon /></IconButton>{receipt && <IconButton title="Download receipt" size="small" onClick={() => openReceipt(receipt)}><ReceiptLongIcon /></IconButton>}{canConfirmPayment && item.status === 'pending_confirmation' && <><Button size="small" variant="contained" color="success" onClick={() => confirmPayment(item)}>Confirm Payment</Button><Button size="small" variant="outlined" color="error" onClick={() => rejectPayment(item)}>Reject Payment</Button></>}{canConfirmPayment && item.status === 'confirmed' && <Button size="small" variant="outlined" color="warning" onClick={() => reversePayment(item)}>Reverse</Button>}</Stack></TableCell></TableRow>; })}{(!installmentFee?.installments || installmentFee.installments.length === 0) && <TableRow><TableCell colSpan={9}>No installments for this fee plan.</TableCell></TableRow>}</TableBody></Table></TableContainer>
       </DialogContent>
       <DialogActions><Button onClick={() => setInstallmentFee(null)}>Close</Button></DialogActions>
     </Dialog>

@@ -15,6 +15,7 @@ const {
   LeadSource,
   LeadStatus,
   Message,
+  PaymentReceipt,
   Student,
   StudentDocument,
   StudentEnrollment,
@@ -34,6 +35,8 @@ const { evaluateFeeAccess } = require('./enrollmentAccess.service');
 const leadStatusService = require('./leadStatus.service');
 const { normalizeSriLankanPhone, requireNormalizedPhone } = require('../utils/phone');
 const studentRegistrationNumberService = require('./studentRegistrationNumber.service');
+const paymentReceiptService = require('./paymentReceipt.service');
+const paymentReceiptSettingsService = require('./paymentReceiptSettings.service');
 
 function fullName(contact) {
   return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || contact?.phone || 'Student';
@@ -281,7 +284,7 @@ class EducationService {
             { model: Batch, as: 'batch', required: false, include: [{ model: User, as: 'trainer', attributes: ['id', 'firstName', 'lastName', 'email'] }] }
           ]
         },
-        { model: StudentFee, as: 'fees', required: false, include: [{ model: FeeInstallment, as: 'installments', required: false }] },
+        { model: StudentFee, as: 'fees', required: false, include: [{ model: FeeInstallment, as: 'installments', required: false, include: [{ model: PaymentReceipt, as: 'receipts', required: false }] }] },
         { model: AttendanceRecord, as: 'attendance', required: false },
         { model: Certificate, as: 'certificates', required: false },
         { model: StudentNote, as: 'profileNotes', required: false, include: [{ model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'] }] },
@@ -388,7 +391,8 @@ class EducationService {
         reference: item.transactionReference,
         status: item.status,
         dueDate: item.dueDate,
-        paidAmount: item.paidAmount
+        paidAmount: item.paidAmount,
+        receipt: serialize((item.receipts || []).find((receipt) => receipt.status === 'ACTIVE') || item.receipts?.[0] || null)
       })),
       attendance: {
         totalClasses,
@@ -871,7 +875,7 @@ class EducationService {
         { model: Student, as: 'student', include: [{ model: Contact, as: 'contact' }] },
         { model: Course, as: 'course' },
         { model: Batch, as: 'batch' },
-        { model: FeeInstallment, as: 'installments' }
+        { model: FeeInstallment, as: 'installments', include: [{ model: PaymentReceipt, as: 'receipts', required: false }] }
       ],
       order: [['created_at', 'DESC']]
     });
@@ -1046,7 +1050,7 @@ class EducationService {
         { model: Student, as: 'student', include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch' }] },
         { model: Course, as: 'course' },
         { model: Batch, as: 'batch' },
-        { model: FeeInstallment, as: 'installments' }
+        { model: FeeInstallment, as: 'installments', include: [{ model: PaymentReceipt, as: 'receipts', required: false }] }
       ]
     });
     if (!row) throw Object.assign(new Error('Fee record not found'), { status: 404 });
@@ -1248,6 +1252,17 @@ class EducationService {
       await fee.update({ paidAmount, balance, status: feeStatus(fee.totalAmount, paidAmount, fee.paymentType) }, { transaction });
     });
 
+    let receiptResult = null;
+    const receiptSettings = await paymentReceiptSettingsService.get();
+    if (receiptSettings.autoGenerate && transactionId) {
+      receiptResult = await paymentReceiptService.generatePaymentReceipt({
+        paymentId: transactionId,
+        actorType: 'USER',
+        actorUserId: userId || null,
+        generationSource: 'MANUAL_PAYMENT'
+      });
+    }
+
     const notification = alreadyConfirmed
       ? { status: 'skipped', reason: 'already_confirmed' }
       : await this.sendPaymentSuccessMessage(id, userId).catch((error) => {
@@ -1263,6 +1278,8 @@ class EducationService {
     return {
       fee: await this.getFee(studentFeeId),
       accountingTransactionId: transactionId,
+      receipt: receiptResult?.receipt || null,
+      receiptCreated: receiptResult?.created || false,
       notification,
       message: 'Payment confirmed and income recorded.'
     };
@@ -1290,6 +1307,7 @@ class EducationService {
   async reverseInstallmentPayment(id, payload = {}, userId) {
     let studentFeeId;
     let reversalTransactionId;
+    let originalPaymentId;
     await sequelize.transaction(async (transaction) => {
       const row = await FeeInstallment.findByPk(id, {
         transaction,
@@ -1297,6 +1315,7 @@ class EducationService {
       });
       if (!row) throw Object.assign(new Error('Installment not found'), { status: 404 });
       studentFeeId = row.studentFeeId;
+      originalPaymentId = row.accountingTransactionId || null;
       if (row.reversalAccountingTransactionId) {
         reversalTransactionId = row.reversalAccountingTransactionId;
         return;
@@ -1343,7 +1362,9 @@ class EducationService {
       }));
       const balance = roundMoney(Math.max(amount(fee.totalAmount) - paidAmount, 0));
       await fee.update({ paidAmount, balance, status: feeStatus(fee.totalAmount, paidAmount, fee.paymentType) }, { transaction });
+      await paymentReceiptService.markReversed(row.accountingTransactionId, userId || null, transaction);
     });
+    if (originalPaymentId) await paymentReceiptService.markReversed(originalPaymentId, userId || null).catch(() => null);
     await require('./commission.service').reverseForInstallment(id, cleanText(payload.reason) || 'Payment reversed').catch((error) => logger.warn('commission_reversal_failed', { installmentId: id, error: error.message }));
     return {
       fee: await this.getFee(studentFeeId),

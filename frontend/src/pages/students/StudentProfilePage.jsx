@@ -13,6 +13,8 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import PaymentsIcon from '@mui/icons-material/Payments';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import { downloadReceipt, saveBlob } from '../../services/paymentReceipt.service';
 import SchoolIcon from '@mui/icons-material/School';
 import SendIcon from '@mui/icons-material/Send';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
@@ -267,7 +269,7 @@ function StudentProfilePage() {
       ]} /></InfoCard></Grid>
     </Grid>}
 
-    {tab === 1 && <InfoCard title="Installment History" icon={<PaymentsIcon color="primary" />}><TableContainer><Table><TableHead><TableRow>{['Date', 'Amount', 'Method', 'Reference', 'Status'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>{installments.map((item) => <TableRow key={item.id}><TableCell>{dateText(item.date)}</TableCell><TableCell>{money(item.amount)}</TableCell><TableCell>{item.method || '-'}</TableCell><TableCell>{item.reference || '-'}</TableCell><TableCell><Chip size="small" label={item.status} /></TableCell></TableRow>)}{installments.length === 0 && <TableRow><TableCell colSpan={5}><EmptyState label="No installments found" /></TableCell></TableRow>}</TableBody></Table></TableContainer></InfoCard>}
+    {tab === 1 && <InfoCard title="Installment History" icon={<PaymentsIcon color="primary" />}><TableContainer><Table><TableHead><TableRow>{['Date', 'Amount', 'Method', 'Reference', 'Status', 'Receipt'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>{installments.map((item) => <TableRow key={item.id}><TableCell>{dateText(item.date)}</TableCell><TableCell>{money(item.amount)}</TableCell><TableCell>{item.method || '-'}</TableCell><TableCell>{item.reference || '-'}</TableCell><TableCell><Chip size="small" label={item.status} /></TableCell><TableCell>{item.receipt ? <IconButton title="Download receipt" onClick={async () => { const response = await downloadReceipt(item.receipt.id); saveBlob(response.data, `${item.receipt.receiptNumber}.pdf`); }}><ReceiptLongIcon /></IconButton> : '-'}</TableCell></TableRow>)}{installments.length === 0 && <TableRow><TableCell colSpan={6}><EmptyState label="No installments found" /></TableCell></TableRow>}</TableBody></Table></TableContainer></InfoCard>}
 
     {tab === 2 && <InfoCard title="Attendance" icon={<AssignmentTurnedInIcon color="primary" />}><TableContainer><Table><TableHead><TableRow>{['Date', 'Status', 'Notes'].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead><TableBody>{attendanceRows.map((item) => <TableRow key={item.id}><TableCell>{dateText(item.attendanceDate)}</TableCell><TableCell><Chip size="small" label={item.status} /></TableCell><TableCell>{item.notes || '-'}</TableCell></TableRow>)}{attendanceRows.length === 0 && <TableRow><TableCell colSpan={3}><EmptyState label="No attendance records found" /></TableCell></TableRow>}</TableBody></Table></TableContainer></InfoCard>}
 

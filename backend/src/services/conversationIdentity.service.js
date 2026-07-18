@@ -2,6 +2,7 @@ const { Op, UniqueConstraintError } = require('sequelize');
 const models = require('../models');
 const logger = require('../config/logger');
 const socketService = require('./socket.service');
+const inboundWhatsappContactService = require('./inboundWhatsappContact.service');
 const { normalizePhone, requireNormalizedPhone } = require('../utils/phone');
 
 function createConversationIdentityService(dependencies = {}) {
@@ -10,6 +11,14 @@ function createConversationIdentityService(dependencies = {}) {
   const Conversation = dependencies.Conversation || models.Conversation;
   const sockets = dependencies.socketService || socketService;
   const log = dependencies.logger || logger;
+  const inboundContactResolver = dependencies.inboundWhatsappContactService || inboundWhatsappContactService;
+
+  function isUniqueViolation(error) {
+    return error instanceof UniqueConstraintError
+      || error?.name === 'SequelizeUniqueConstraintError'
+      || error?.original?.code === '23505'
+      || error?.parent?.code === '23505';
+  }
 
   async function lockIdentity(normalizedPhone, whatsappAccountId, transaction) {
     if (sequelize.getDialect() !== 'postgres') return;
@@ -45,13 +54,25 @@ function createConversationIdentityService(dependencies = {}) {
   async function run(values, transaction) {
     const normalizedPhone = requireNormalizedPhone(values.phone || values.whatsappId);
     const whatsappAccountId = values.whatsappAccountId || null;
-    await lockIdentity(normalizedPhone, whatsappAccountId, transaction);
-
-    let contact = values.contactId
-      ? await Contact.findByPk(values.contactId, { transaction, paranoid: false })
-      : null;
-    if (!contact) contact = await findContact(normalizedPhone, transaction);
-    if (contact?.deletedAt) await contact.restore({ transaction });
+    let contactResolution = null;
+    let contact = null;
+    if (values.whatsappId) {
+      contactResolution = await inboundContactResolver.resolveInboundWhatsAppContact({
+        whatsappAccountId,
+        whatsappId: values.whatsappId,
+        normalizedPhone,
+        profileName: values.name || values.firstName,
+        transaction
+      });
+      contact = contactResolution.contact;
+    } else {
+      await lockIdentity(normalizedPhone, whatsappAccountId, transaction);
+      contact = values.contactId
+        ? await Contact.findByPk(values.contactId, { transaction, paranoid: false })
+        : null;
+      if (!contact) contact = await findContact(normalizedPhone, transaction);
+      if (contact?.deletedAt) await contact.restore({ transaction });
+    }
     if (!contact) {
       const parts = String(values.name || values.firstName || '').trim().split(/\s+/).filter(Boolean);
       contact = await Contact.create({
@@ -63,7 +84,7 @@ function createConversationIdentityService(dependencies = {}) {
         status: values.contactStatus || 'active',
         whatsappAccountId
       }, { transaction });
-    } else {
+    } else if (!values.whatsappId) {
       const updates = {};
       if (contact.normalizedPhone !== normalizedPhone) updates.normalizedPhone = normalizedPhone;
       if (values.whatsappId && !contact.whatsappId) updates.whatsappId = normalizedPhone;
@@ -91,7 +112,7 @@ function createConversationIdentityService(dependencies = {}) {
     if (conversation) {
       const updates = {
         normalizedPhone,
-        contactId: conversation.contactId || contact.id,
+        contactId: contact.id,
         leadId: conversation.leadId || values.leadId || null,
         assignedUserId: values.assignedTo ?? conversation.assignedUserId,
         lastMessageAt: values.lastMessageAt || conversation.lastMessageAt,
@@ -99,32 +120,57 @@ function createConversationIdentityService(dependencies = {}) {
       };
       if (!conversation.whatsappThreadId && values.whatsappThreadId) updates.whatsappThreadId = values.whatsappThreadId;
       await conversation.update(updates, { transaction });
-      return { contact, conversation, created: false, normalizedPhone };
+      const persisted = typeof values.afterResolve === 'function'
+        ? await values.afterResolve({ contact, conversation, transaction })
+        : null;
+      return { contact, conversation, created: false, normalizedPhone, contactResolution, persisted };
     }
 
-    try {
-      conversation = await Conversation.create({
-        contactId: contact.id,
-        normalizedPhone,
-        leadId: values.leadId || null,
-        whatsappThreadId: values.whatsappThreadId || `${whatsappAccountId || 'default'}:${normalizedPhone}`,
-        assignedUserId: values.assignedTo || null,
-        lastMessageAt: values.lastMessageAt || new Date(),
-        whatsappAccountId,
-        status: 'open'
-      }, { transaction });
-    } catch (error) {
-      if (!(error instanceof UniqueConstraintError) && error?.name !== 'SequelizeUniqueConstraintError') throw error;
-      conversation = await Conversation.findOne({ where: { normalizedPhone, whatsappAccountId }, transaction });
-      if (!conversation) throw error;
-    }
-    return { contact, conversation, created: true, normalizedPhone };
+    conversation = await Conversation.create({
+      contactId: contact.id,
+      normalizedPhone,
+      leadId: values.leadId || null,
+      whatsappThreadId: values.whatsappThreadId || `${whatsappAccountId || 'default'}:${normalizedPhone}`,
+      assignedUserId: values.assignedTo || null,
+      lastMessageAt: values.lastMessageAt || new Date(),
+      whatsappAccountId,
+      status: 'open'
+    }, { transaction });
+    const persisted = typeof values.afterResolve === 'function'
+      ? await values.afterResolve({ contact, conversation, transaction })
+      : null;
+    return { contact, conversation, created: true, normalizedPhone, contactResolution, persisted };
   }
 
   return {
     async findOrCreateByPhoneAndAccount(values, options = {}) {
       if (options.transaction) return run(values, options.transaction);
-      return sequelize.transaction((transaction) => run(values, transaction));
+      let lastError;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          const result = await sequelize.transaction((transaction) => run(values, transaction));
+          await inboundContactResolver.recordConflict(result.contactResolution, values.whatsappAccountId || null);
+          return result;
+        } catch (error) {
+          lastError = error;
+          if (!isUniqueViolation(error) || attempt === 2) {
+            log.error('whatsapp_identity_transaction_failed', {
+              attempt,
+              whatsappIdLastFour: String(values.whatsappId || values.phone || '').slice(-4) || null,
+              postgresCode: error.original?.code || error.parent?.code || error.code || null,
+              constraint: error.original?.constraint || error.parent?.constraint || null,
+              message: error.message
+            });
+            throw error;
+          }
+          log.warn('whatsapp_identity_transaction_retry', {
+            attempt,
+            postgresCode: error.original?.code || error.parent?.code || null,
+            constraint: error.original?.constraint || error.parent?.constraint || null
+          });
+        }
+      }
+      throw lastError;
     },
     emitMerged(payload) {
       log.info('conversation_merged', payload);

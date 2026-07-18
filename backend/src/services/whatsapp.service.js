@@ -6,8 +6,6 @@ const whatsappConfig = require('../config/whatsapp');
 const whatsappSettingsService = require('./whatsappSettings.service');
 const whatsappAccountService = require('./whatsappAccount.service');
 const leadManagementService = require('./leadManagement.service');
-const contactService = require('./contact.service');
-const conversationService = require('./conversation.service');
 const aiService = require('./ai.service');
 const autoReplyService = require('./autoReply.service');
 const socketService = require('./socket.service');
@@ -23,7 +21,7 @@ const STORED_MESSAGE_TYPES = new Set([
 function inboundPayloadSummary(message) {
   return {
     id: message?.id || null,
-    from: message?.from || null,
+    fromLastFour: lastFour(message?.from),
     type: message?.type || null,
     timestamp: message?.timestamp || null,
     fields: message && typeof message === 'object' ? Object.keys(message) : []
@@ -757,12 +755,10 @@ class WhatsappService {
     if (isInteractiveReply) {
       logger.info('whatsapp_interactive_reply_received', {
         whatsappMessageId: message.id || null,
-        from: message.from || null,
+        fromLastFour: lastFour(message.from),
         rawType: parsed.rawType,
         messageType: parsed.messageType,
-        interactiveType: parsed.interactiveType || null,
-        title: parsed.interactiveTitle || null,
-        payload: parsed.buttonPayload || null
+        interactiveType: parsed.interactiveType || null
       });
     }
 
@@ -813,137 +809,73 @@ class WhatsappService {
         whatsappMessageId: message.id,
         mediaId,
         type: messageType,
-        from
+        fromLastFour: lastFour(from)
       });
     }
 
-    let assignmentResult = {
-      contact: null,
-      lead: null,
-      assignee: null,
-      assignment: null,
-      conversation: null,
-      followup: null
-    };
-    try {
-      assignmentResult = await leadManagementService.processIncomingWhatsapp({
-        from,
-        whatsappId,
-        profileName: contactProfile?.profile?.name || contactProfile?.name || null,
-        text,
-        threadId,
-        payload: value,
-        whatsappAccountId
-      });
-    } catch (error) {
-      console.error(error);
-      console.error(error.message);
-      console.error(error.stack);
-      if (Array.isArray(error.errors)) {
-        console.error('Inbound automation validation errors:', error.errors);
-      }
-    }
-
-    if (!assignmentResult?.conversation) {
-      try {
-        const contact = assignmentResult?.contact || await contactService.findOrCreateFromWhatsapp({
-          phone: from,
-          whatsappId,
-          firstName: contactProfile?.profile?.name || contactProfile?.name || null,
-          lastName: null,
-          whatsappAccountId
-        });
-        const conversation = await conversationService.upsertConversation({
+    const assignmentResult = await leadManagementService.processIncomingWhatsapp({
+      from,
+      whatsappId,
+      profileName: contactProfile?.profile?.name || contactProfile?.name || null,
+      text,
+      threadId,
+      payload: value,
+      whatsappAccountId,
+      persistInbound: async ({ contact, conversation, transaction }) => {
+        const existing = message.id
+          ? await Message.findOne({ where: { whatsappMessageId: message.id }, transaction })
+          : null;
+        if (existing) return { messageRecord: existing, replyToMessage: null, created: false };
+        const replyToMessage = replyToWhatsappMessageId
+          ? await Message.findOne({
+              where: { conversationId: conversation.id, whatsappMessageId: replyToWhatsappMessageId },
+              attributes: ['id', 'whatsappMessageId', 'direction', 'type', 'text', 'mediaUrl', 'templateName', 'rawPayload'],
+              transaction
+            })
+          : null;
+        const messageRecord = await Message.create({
+          whatsappMessageId: message.id,
+          conversationId: conversation.id,
           contactId: contact.id,
-          leadId: assignmentResult?.lead?.id || null,
-          whatsappThreadId: threadId,
-          assignedTo: assignmentResult?.assignee?.id || null,
-          lastMessageAt: receivedAt,
-          whatsappAccountId
-        });
-        assignmentResult = { ...assignmentResult, contact, conversation };
-        logger.info('whatsapp_inbound_conversation_fallback_resolved', {
-          whatsappMessageId: message.id || null,
-          contactId: contact.id,
-          conversationId: conversation.id
-        });
-      } catch (error) {
-        logger.error('whatsapp_inbound_conversation_fallback_failed', {
-          whatsappMessageId: message.id || null,
-          from,
-          message: error.message
-        });
-      }
-    }
-
-    const conversationId = assignmentResult?.conversation?.id || null;
-    const replyToMessage = replyToWhatsappMessageId && conversationId
-      ? await Message.findOne({
-          where: { conversationId, whatsappMessageId: replyToWhatsappMessageId },
-          attributes: ['id', 'whatsappMessageId', 'direction', 'type', 'text', 'mediaUrl', 'templateName', 'rawPayload']
-        }).catch(() => null)
-      : null;
-
-    let messageRecord = null;
-    try {
-      messageRecord = await this.logMessage({
-        whatsappMessageId: message.id,
-        conversationId,
-        contactId: assignmentResult?.contact?.id || null,
-        direction: 'inbound',
-        channel: 'whatsapp',
-        type: parsed.storedType,
-        messageType: parsed.messageType,
-        text,
-        buttonPayload: parsed.buttonPayload,
-        interactiveType: parsed.interactiveType,
-        mediaId,
-        mediaUrl,
-        fileName,
-        mimeType,
-        fromNumber: from,
-        toNumber: to,
-        status: 'delivered',
-        whatsappAccountId,
-        statusUpdatedAt: receivedAt,
-        replyToMessageId: replyToMessage?.id || null,
-        replyToWhatsappMessageId,
-        rawPayload: message,
-        createdAt: receivedAt,
-        updatedAt: receivedAt
-      });
-      if (isInteractiveReply) {
-        if (messageRecord) {
-          logger.info('whatsapp_interactive_reply_saved', {
-            whatsappMessageId: message.id || null,
-            messageId: messageRecord.id || null,
-            conversationId,
-            messageType: parsed.messageType,
-            interactiveType: parsed.interactiveType || null,
-            title: parsed.interactiveTitle || null,
-            payload: parsed.buttonPayload || null
-          });
-        } else {
-          logger.warn('whatsapp_interactive_reply_failed', {
-            whatsappMessageId: message.id || null,
-            conversationId,
-            messageType: parsed.messageType,
-            interactiveType: parsed.interactiveType || null,
-            errorMessage: 'Message was not saved'
-          });
-        }
-      }
-    } catch (error) {
-      if (isInteractiveReply) {
-        logger.warn('whatsapp_interactive_reply_failed', {
-          whatsappMessageId: message.id || null,
-          conversationId,
+          direction: 'inbound',
+          channel: 'whatsapp',
+          type: parsed.storedType,
           messageType: parsed.messageType,
-          interactiveType: parsed.interactiveType || null,
-          errorMessage: error.message
-        });
+          text,
+          buttonPayload: parsed.buttonPayload,
+          interactiveType: parsed.interactiveType,
+          mediaId,
+          mediaUrl,
+          fileName,
+          mimeType,
+          fromNumber: from,
+          toNumber: to,
+          status: 'delivered',
+          whatsappAccountId,
+          statusUpdatedAt: receivedAt,
+          replyToMessageId: replyToMessage?.id || null,
+          replyToWhatsappMessageId,
+          rawPayload: message,
+          createdAt: receivedAt,
+          updatedAt: receivedAt
+        }, { transaction });
+        return { messageRecord, replyToMessage, created: true };
       }
-      throw error;
+    });
+
+    const conversationId = assignmentResult.conversation.id;
+    const messageRecord = assignmentResult.message?.messageRecord || null;
+    const replyToMessage = assignmentResult.message?.replyToMessage || null;
+    if (!messageRecord) throw new Error('Inbound WhatsApp message was not persisted');
+    if (assignmentResult.message?.created === false) return messageRecord;
+    if (isInteractiveReply) {
+      logger.info('whatsapp_interactive_reply_saved', {
+        whatsappMessageId: message.id || null,
+        messageId: messageRecord.id,
+        conversationId,
+        messageType: parsed.messageType,
+        interactiveType: parsed.interactiveType || null
+      });
     }
 
     if (conversationId && messageRecord) {
@@ -1042,45 +974,52 @@ class WhatsappService {
       await socketService.emitToConversationAudience(conversationId, 'whatsapp.message.received', socketPayload);
     }
 
-    // A concurrent webhook delivery can pass the early lookup before the
-    // first request commits. The unique WhatsApp id makes one insert lose;
-    // only the request that persisted the inbound message may run automations.
-    if (!messageRecord) return null;
 
-    const isTextMessage = messageType === 'text' && !!text;
-    const activeReply = isTextMessage
-      ? await autoReplyService.findReplyForText(text, whatsappAccountId).catch((error) => {
-        logger.warn('whatsapp_auto_reply_lookup_failed', error);
-        return null;
-      })
-      : null;
-    const autoReply = activeReply ? activeReply.response : null;
+    setImmediate(() => (async () => {
+      const enriched = typeof assignmentResult.enrich === 'function'
+        ? await assignmentResult.enrich().catch((error) => {
+            logger.warn('whatsapp_inbound_post_commit_enrichment_failed', { contactId: assignmentResult.contact.id, conversationId, message: error.message });
+            return assignmentResult;
+          })
+        : assignmentResult;
 
-    if (autoReply) {
-      await this.sendTextMessage({ to: from, text: autoReply, whatsappAccountId }).catch((error) => {
-        logger.warn('whatsapp_auto_reply_send_failed', error);
+      const isTextMessage = messageType === 'text' && !!text;
+      const activeReply = isTextMessage
+        ? await autoReplyService.findReplyForText(text, whatsappAccountId).catch((error) => {
+            logger.warn('whatsapp_auto_reply_lookup_failed', error);
+            return null;
+          })
+        : null;
+      const autoReply = activeReply ? activeReply.response : null;
+      if (autoReply) {
+        await this.sendTextMessage({ to: from, text: autoReply, whatsappAccountId }).catch((error) => {
+          logger.warn('whatsapp_auto_reply_send_failed', error);
+          return null;
+        });
+      }
+
+      const flowService = require('./flow.service');
+      await flowService.handleInboundMessage({
+        text,
+        contact: enriched.contact || null,
+        lead: enriched.lead || null,
+        conversation: enriched.conversation || null,
+        messageType: parsed.messageType,
+        interactiveType: parsed.interactiveType,
+        buttonPayload: parsed.buttonPayload,
+        whatsappMessageId: message.id || null,
+        replyToWhatsappMessageId,
+        rawPayload: message,
+        whatsappAccountId
+      }).catch((error) => {
+        logger.warn('flow_builder_execution_failed', error);
         return null;
       });
-    }
+    })().catch((error) => {
+      logger.error('whatsapp_inbound_post_commit_failed', { contactId: assignmentResult.contact.id, conversationId, messageId: messageRecord.id, message: error.message });
+    }));
 
-    const flowService = require('./flow.service');
-    await flowService.handleInboundMessage({
-      text,
-      contact: assignmentResult?.contact || null,
-      lead: assignmentResult?.lead || null,
-      conversation: assignmentResult?.conversation || null,
-      messageType: parsed.messageType,
-      interactiveType: parsed.interactiveType,
-      buttonPayload: parsed.buttonPayload,
-      whatsappMessageId: message.id || null,
-      replyToWhatsappMessageId,
-      rawPayload: message
-      , whatsappAccountId
-    }).catch((error) => {
-      logger.warn('flow_builder_execution_failed', error);
-      return null;
-    });
-
+    return messageRecord;
   }
 
   async handleStatusUpdate(value, status) {
@@ -1094,7 +1033,7 @@ class WhatsappService {
     logger.info('WHATSAPP_STATUS_RECEIVED', {
       whatsappMessageId,
       status: nextStatus,
-      recipientId: status?.recipient_id || null,
+      recipientIdLastFour: lastFour(status?.recipient_id),
       timestamp: updatedAt.toISOString(),
       errors: status?.errors || []
     });

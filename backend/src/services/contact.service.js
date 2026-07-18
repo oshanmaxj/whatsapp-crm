@@ -1,6 +1,7 @@
 const { Op, literal } = require('sequelize');
 const { sequelize, Contact, Lead } = require('../models');
 const { normalizePhone, requireNormalizedPhone } = require('../utils/phone');
+const inboundWhatsappContactService = require('./inboundWhatsappContact.service');
 
 const CONTACT_FIELDS = ['firstName', 'lastName', 'phone', 'whatsappId', 'email', 'company', 'status', 'notes', 'tags'];
 
@@ -253,31 +254,17 @@ class ContactService {
 
   async findOrCreateFromWhatsapp({ phone, whatsappId, firstName, lastName, whatsappAccountId = null }) {
     const normalizedPhone = requireNormalizedPhone(phone || whatsappId);
-    let contact = await this.findByWhatsappIdentity(normalizedPhone, whatsappId);
-    if (!contact) {
-      contact = await this.createFromWhatsapp({ phone: normalizedPhone, whatsappId, firstName, lastName, whatsappAccountId });
-      return contact;
-    }
-
-    const updates = {};
-    if (contact.normalizedPhone !== normalizedPhone) updates.normalizedPhone = normalizedPhone;
-    if (whatsappId && !contact.whatsappId) {
-      updates.whatsappId = whatsappId;
-    }
-    if (firstName && !contact.firstName) {
-      updates.firstName = firstName;
-    }
-    if (lastName && !contact.lastName) {
-      updates.lastName = lastName;
-    }
-    if (whatsappAccountId && !contact.whatsappAccountId) {
-      updates.whatsappAccountId = whatsappAccountId;
-    }
-    if (Object.keys(updates).length > 0) {
-      await contact.update(updates);
-    }
-
-    return contact;
+    const resolution = await sequelize.transaction((transaction) => (
+      inboundWhatsappContactService.resolveInboundWhatsAppContact({
+        whatsappAccountId,
+        whatsappId: whatsappId || normalizedPhone,
+        normalizedPhone,
+        profileName: [firstName, lastName].filter(Boolean).join(' '),
+        transaction
+      })
+    ));
+    await inboundWhatsappContactService.recordConflict(resolution, whatsappAccountId);
+    return resolution.contact;
   }
 
   async findOpenLeadContact(contactId) {

@@ -36,6 +36,12 @@ const FlowNode = require('./flowNode.model');
 const FlowConnection = require('./flowConnection.model');
 const FlowRun = require('./flowRun.model');
 const FlowRunLog = require('./flowRunLog.model');
+const FlowActionExecution = require('./flowActionExecution.model');
+const FlowRunLink = require('./flowRunLink.model');
+const ContactList = require('./contactList.model');
+const ContactListMember = require('./contactListMember.model');
+const Sequence = require('./sequence.model');
+const SequenceSubscription = require('./sequenceSubscription.model');
 const GoogleSheetConnection = require('./googleSheetConnection.model');
 const Appointment = require('./appointment.model');
 const AppointmentRequest = require('./appointmentRequest.model');
@@ -126,6 +132,12 @@ const models = {
   FlowConnection: FlowConnection(sequelize, Sequelize.DataTypes),
   FlowRun: FlowRun(sequelize, Sequelize.DataTypes),
   FlowRunLog: FlowRunLog(sequelize, Sequelize.DataTypes),
+  FlowActionExecution: FlowActionExecution(sequelize, Sequelize.DataTypes),
+  FlowRunLink: FlowRunLink(sequelize, Sequelize.DataTypes),
+  ContactList: ContactList(sequelize, Sequelize.DataTypes),
+  ContactListMember: ContactListMember(sequelize, Sequelize.DataTypes),
+  Sequence: Sequence(sequelize, Sequelize.DataTypes),
+  SequenceSubscription: SequenceSubscription(sequelize, Sequelize.DataTypes),
   GoogleSheetConnection: GoogleSheetConnection(sequelize, Sequelize.DataTypes),
   Appointment: Appointment(sequelize, Sequelize.DataTypes),
   AppointmentRequest: AppointmentRequest(sequelize, Sequelize.DataTypes),
@@ -244,6 +256,17 @@ models.CommissionRule.hasMany(models.CommissionTier,{foreignKey:'commission_rule
 models.AgentCommission.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'}); models.AgentCommission.belongsTo(models.Student,{foreignKey:'student_id',as:'student'}); models.AgentCommission.belongsTo(models.Course,{foreignKey:'course_id',as:'course'}); models.AgentCommission.belongsTo(models.CommissionRule,{foreignKey:'commission_rule_id',as:'rule'});
 models.CommissionPayoutBatch.hasMany(models.CommissionPayoutItem,{foreignKey:'payout_batch_id',as:'items'}); models.CommissionPayoutItem.belongsTo(models.CommissionPayoutBatch,{foreignKey:'payout_batch_id',as:'batch'});
 models.Conversation.hasMany(models.ConversationAssignmentHistory, { foreignKey: 'conversation_id', as: 'assignmentHistory' });
+models.FlowRun.hasMany(models.FlowActionExecution, { foreignKey: 'flow_run_id', as: 'actionExecutions' });
+models.FlowActionExecution.belongsTo(models.FlowRun, { foreignKey: 'flow_run_id', as: 'run' });
+models.FlowRun.hasMany(models.FlowRunLink, { foreignKey: 'parent_flow_run_id', as: 'childLinks' });
+models.FlowRunLink.belongsTo(models.FlowRun, { foreignKey: 'parent_flow_run_id', as: 'parentRun' });
+models.FlowRunLink.belongsTo(models.FlowRun, { foreignKey: 'child_flow_run_id', as: 'childRun' });
+models.ContactList.hasMany(models.ContactListMember, { foreignKey: 'contact_list_id', as: 'members' });
+models.ContactListMember.belongsTo(models.ContactList, { foreignKey: 'contact_list_id', as: 'list' });
+models.ContactListMember.belongsTo(models.Contact, { foreignKey: 'contact_id', as: 'contact' });
+models.Sequence.hasMany(models.SequenceSubscription, { foreignKey: 'sequence_id', as: 'subscriptions' });
+models.SequenceSubscription.belongsTo(models.Sequence, { foreignKey: 'sequence_id', as: 'sequence' });
+models.SequenceSubscription.belongsTo(models.Contact, { foreignKey: 'contact_id', as: 'contact' });
 models.ConversationAssignmentHistory.belongsTo(models.Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
 models.ConversationAssignmentHistory.belongsTo(models.User, { foreignKey: 'previous_user_id', as: 'previousUser' });
 models.ConversationAssignmentHistory.belongsTo(models.User, { foreignKey: 'new_user_id', as: 'newUser' });

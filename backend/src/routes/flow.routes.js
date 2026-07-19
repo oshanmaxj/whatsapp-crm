@@ -7,6 +7,7 @@ const router = express.Router();
 
 router.use(authMiddleware.authenticate);
 
+router.get('/action-options', requirePermission('flow-builder.edit'), flowController.options.bind(flowController));
 router.get('/', requirePermission('flow-builder.view'), flowController.list.bind(flowController));
 router.get('/:id', requirePermission('flow-builder.view'), flowController.get.bind(flowController));
 router.post('/', requirePermission('flow-builder.create'), flowController.create.bind(flowController));
@@ -17,6 +18,8 @@ router.post('/:id/media', express.json({ limit: '30mb' }), requirePermission('fl
 router.post('/:id/publish', requirePermission('flow-builder.publish'), flowController.publish.bind(flowController));
 router.post('/:id/unpublish', requirePermission('flow-builder.publish'), flowController.unpublish.bind(flowController));
 router.post('/:id/test', requirePermission('flow-builder.test'), flowController.test.bind(flowController));
+router.get('/:id/validate', requirePermission('flow-builder.publish'), flowController.validate.bind(flowController));
+router.post('/:id/simulate-trigger', requirePermission('flow-builder.test'), flowController.simulateTrigger.bind(flowController));
 router.post('/:id/duplicate', requirePermission('flow-builder.create'), flowController.duplicate.bind(flowController));
 router.get('/:id/analytics', requirePermission('flow-builder.view'), flowController.analytics.bind(flowController));
 router.get('/:id/stats', requirePermission('flow-builder.view'), flowController.stats.bind(flowController));

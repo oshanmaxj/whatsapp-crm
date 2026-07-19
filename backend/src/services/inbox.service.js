@@ -453,6 +453,11 @@ class InboxService {
         defaults: { conversationId, labelId: label.id }
       });
     }
+    setImmediate(() => require('./flow.service').handleDomainEvent({
+      eventType: 'label_added', eventId: `${conversationId}:${labelRows.map((label) => label.id).join(',')}`,
+      conversationId, contactId: conversation.contactId, whatsappAccountId: conversation.whatsappAccountId,
+      labelIds: labelRows.map((label) => label.id)
+    }).catch(() => null));
     return this.getConversation(conversationId, userId);
   }
 

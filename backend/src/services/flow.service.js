@@ -11,7 +11,9 @@ const {
   FlowNode,
   FlowRun,
   FlowRunLog,
+  FlowRunLink,
   Lead,
+  Message,
   Role,
   User,
   sequelize
@@ -25,6 +27,10 @@ const assignmentNotificationService = require('./assignmentNotification.service'
 const aiService = require('./ai.service');
 const whatsappAccountService = require('./whatsappAccount.service');
 const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
+const flowActionService = require('./flowAction.service');
+const triggerMatcher = require('./flowTriggerMatcher.service');
+
+const MAX_NESTED_FLOW_DEPTH = Number(process.env.MAX_NESTED_FLOW_DEPTH || 5);
 
 const MESSAGE_TYPES = new Set([
   'text_message', 'image_message', 'video_message', 'audio_message', 'file_document', 'location',
@@ -56,7 +62,7 @@ function normalizeTriggerKeywords(value) {
     ? value.flatMap((item) => String(item).split(','))
     : String(value || '').split(',');
   return list
-    .map((item) => item.trim().toLowerCase())
+    .map((item) => item.normalize('NFC').trim().replace(/\s+/gu, ' '))
     .filter(Boolean)
     .filter((item, index, rows) => rows.indexOf(item) === index);
 }
@@ -67,7 +73,7 @@ function normalizeKeywords(value) {
 
 function matchesTriggerKeyword(messageText, keywords, mode = 'contains') {
   const text = String(messageText || '').trim().toLowerCase();
-  const list = normalizeTriggerKeywords(keywords);
+  const list = normalizeTriggerKeywords(keywords).map((keyword) => keyword.toLocaleLowerCase('und'));
   if (!text || list.length === 0) return false;
   return list.some((keyword) => {
     if (mode === 'exact') return text === keyword;
@@ -115,6 +121,15 @@ function normalizeButtons(buttons = []) {
   })).filter((button) => button.id && button.title);
 }
 
+function encodedButtonId(flowId, nodeKey, buttonId) {
+  return `flowbtn:${flowId}:${nodeKey}:${buttonId}`.slice(0, 256);
+}
+
+function decodedButtonId(payload) {
+  const parts = String(payload || '').split(':');
+  return parts[0] === 'flowbtn' && parts.length >= 4 ? parts.slice(3).join(':') : String(payload || '');
+}
+
 function serializeFlow(flow) {
   const plain = typeof flow?.toJSON === 'function' ? flow.toJSON() : flow;
   if (!plain) return null;
@@ -143,6 +158,42 @@ class FlowService {
       order: [['updated_at', 'DESC']]
     });
     return flows.map(serializeFlow);
+  }
+
+  async actionOptions(userId = null, currentFlowId = null) {
+    const accessWhere = userId ? await whatsappAccountAccessService.whereForUser(userId) : {};
+    const [labels, lists, sequences, departments, users, flows, courses, campaigns] = await Promise.all([
+      require('../models').Label.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }),
+      require('../models').ContactList.findAll({ where: { status: 'active' }, attributes: ['id', 'name', 'status'], order: [['name', 'ASC']] }),
+      require('../models').Sequence.findAll({ where: { status: 'active' }, attributes: ['id', 'name', 'status'], order: [['name', 'ASC']] }),
+      Role.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }),
+      User.findAll({ where: { status: { [Op.ne]: 'inactive' } }, attributes: ['id', 'firstName', 'lastName', 'email', 'status'], order: [['first_name', 'ASC']] }),
+      Flow.findAll({ where: { status: 'published', id: { [Op.ne]: currentFlowId || 0 }, ...accessWhere }, attributes: ['id', 'name', 'status', 'whatsappAccountId'], order: [['name', 'ASC']] }),
+      require('../models').Course.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }),
+      require('../models').Campaign.findAll({ attributes: ['id', 'name', 'status', 'whatsappAccountId'], order: [['name', 'ASC']] })
+    ]);
+    return {
+      labels, lists, sequences, departments, courses,
+      campaigns: campaigns.map((item) => ({ id: item.id, name: item.name, status: item.status, accountId: item.whatsappAccountId })),
+      agents: users.map((user) => ({ id: user.id, name: contactName(user) || user.email, status: user.status })),
+      flows: flows.map((flow) => ({ id: flow.id, name: flow.name, status: flow.status, scope: flow.whatsappAccountId ? 'account' : 'global', accountId: flow.whatsappAccountId })),
+      customFields: [
+        { id: 'contact.custom', name: 'Contact custom field', scope: 'contact' },
+        { id: 'lead.custom', name: 'Lead custom field', scope: 'lead' },
+        { id: 'conversation.custom', name: 'Conversation custom field', scope: 'conversation' }
+      ]
+    };
+  }
+
+  async validateForPublication(id) {
+    const flow = await this.get(id);
+    const details = [...this.validateFlow(flow), ...await this.validateFlowReferences(flow)];
+    return { valid: !details.some((item) => item.severity !== 'warning'), details };
+  }
+
+  async simulateTrigger(id, event = {}, { allowRegex = false } = {}) {
+    const flow = await this.get(id);
+    return { matched: triggerMatcher.matchesTrigger(flow, { ...event, whatsappAccountId: event.whatsappAccountId || flow.whatsappAccountId }, { allowRegex }), actions: (flow.triggerConfig?.automationActions || []).filter((action) => action.enabled !== false).map((action) => ({ actionType: action.actionType, phase: action.phase || 'pre', executionOrder: action.executionOrder || 0 })) };
   }
 
   async get(id, userId = null) {
@@ -242,7 +293,8 @@ class FlowService {
   async publish(id) {
     const flow = await this.get(id);
     const errors = this.validateFlow(flow);
-    if (errors.length) throw Object.assign(new Error('Flow validation failed'), { status: 422, details: errors });
+    errors.push(...await this.validateFlowReferences(flow));
+    if (errors.some((item) => item.severity !== 'warning')) throw Object.assign(new Error('Flow validation failed'), { status: 422, details: errors });
     await flow.update({ status: 'published' });
     return this.get(id);
   }
@@ -314,17 +366,88 @@ class FlowService {
         const options = config.buttons || config.rows || config.sections?.flatMap((section) => section.rows || []) || [];
         const normalized = Array.isArray(options) ? options : String(options || '').split(',').filter(Boolean);
         addRequired(!normalized.length, 'At least one button or option is required.');
+        addRequired(['interactive_message', 'button_message'].includes(node.nodeType) && normalized.length > 3, 'WhatsApp reply messages support at most 3 buttons.');
+        addRequired(node.nodeType === 'list_message' && normalized.length > 10, 'A WhatsApp list section supports at most 10 rows.');
         for (const option of normalized) {
           const handle = typeof option === 'string' ? option.trim() : option.id || option.payload || option.title;
           addRequired(typeof option !== 'string' && missing(option.title || option.label), 'Every button or option needs a label.');
+          addRequired(typeof option !== 'string' && String(option.title || option.label || '').length > (node.nodeType === 'list_message' ? 24 : 20), `Option titles may contain at most ${node.nodeType === 'list_message' ? 24 : 20} characters.`);
+          addRequired(String(handle || '').length > 160, 'Stable button IDs may contain at most 160 characters.');
+          if (typeof option !== 'string') {
+            const actionType = String(option.primaryActionType || option.actionType || 'CONTINUE_FLOW').toUpperCase();
+            addRequired(!['SEND_MESSAGE', 'START_FLOW', 'CONTINUE_FLOW', 'OPEN_URL', 'CALL_PHONE', 'SYSTEM_DEFAULT_ACTION', 'REPLY', 'URL', 'PHONE'].includes(actionType), 'Button action type is invalid.');
+            addRequired(actionType === 'SEND_MESSAGE' && missing(option.primaryActionConfig?.message || option.message), 'Send Message button requires a message.');
+            addRequired(actionType === 'START_FLOW' && missing(option.primaryActionConfig?.targetFlowId || option.targetFlowId), 'Start Flow button requires a target flow.');
+            addRequired(actionType === 'OPEN_URL' && !/^https:\/\//i.test(option.primaryActionConfig?.url || option.url || ''), 'Open URL button requires an HTTPS URL.');
+            addRequired(actionType === 'CALL_PHONE' && !/^\+?[0-9 ()-]{7,20}$/.test(option.primaryActionConfig?.phone || option.phone || ''), 'Call Phone button requires a valid phone number.');
+            if (actionType === 'OPEN_URL') errors.push({ nodeKey: node.nodeKey, severity: 'warning', message: 'Regular WhatsApp reply buttons cannot open a URL and return a press webhook. Use an approved URL CTA template when native opening is required; CTA clicks cannot run button automations.' });
+            if (actionType === 'CALL_PHONE') errors.push({ nodeKey: node.nodeKey, severity: 'warning', message: 'Call Phone is only native in supported approved templates. Regular WhatsApp reply buttons return a webhook but cannot initiate a call.' });
+            for (const issue of flowActionService.validateActions(option.automationActions || [])) errors.push({ nodeKey: node.nodeKey, message: `Button action ${issue.index + 1}: ${issue.message}` });
+          }
           if (handle && !edges.some((edge) => edge.sourceNodeKey === node.nodeKey && edge.sourceHandle === handle)
             && !edges.some((edge) => edge.sourceNodeKey === node.nodeKey && ['next', 'fallback'].includes(edge.sourceHandle))) {
             errors.push({ nodeKey: node.nodeKey, message: `Option "${handle}" needs a branch or fallback.` });
           }
         }
       }
+      if (node.nodeType === 'start') for (const issue of flowActionService.validateActions(config.automationActions || [])) errors.push({ nodeKey: node.nodeKey, message: `Trigger action ${issue.index + 1}: ${issue.message}` });
+    }
+    const titles = new Map();
+    for (const node of nodes.filter((item) => ['interactive_message', 'button_message'].includes(item.nodeType))) {
+      for (const button of node.configJson?.buttons || []) {
+        const title = String(button.title || '').trim().toLocaleLowerCase('und');
+        if (!title) continue;
+        const prior = titles.get(title);
+        if (prior) errors.push({ nodeKey: node.nodeKey, severity: 'warning', message: `Button title "${button.title}" is also used on ${prior}; stable payload IDs will keep actions distinct.` });
+        else titles.set(title, node.label);
+      }
     }
     return errors;
+  }
+
+  async validateFlowReferences(flow) {
+    const errors = [];
+    const refs = (flow.nodes || []).flatMap((node) => (node.configJson?.buttons || []).map((button) => ({ node, target: button.primaryActionConfig?.targetFlowId || button.targetFlowId })).filter((item) => item.target));
+    for (const ref of refs) {
+      if (String(ref.target) === String(flow.id)) { errors.push({ nodeKey: ref.node.nodeKey, message: 'A flow cannot start itself.' }); continue; }
+      const target = await Flow.findByPk(ref.target);
+      if (!target || target.status !== 'published') errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow must exist and be published.' });
+      else if (target.whatsappAccountId && String(target.whatsappAccountId) !== String(flow.whatsappAccountId)) errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow is not available to this WhatsApp account.' });
+      else if (await this.flowReferenceReaches(ref.target, flow.id, new Set())) errors.push({ nodeKey: ref.node.nodeKey, message: 'Circular flow reference detected.' });
+    }
+    return errors;
+  }
+
+  async flowReferenceReaches(currentFlowId, targetFlowId, visited) {
+    if (String(currentFlowId) === String(targetFlowId)) return true;
+    if (visited.has(String(currentFlowId))) return false;
+    visited.add(String(currentFlowId));
+    const nodes = await FlowNode.findAll({ where: { flowId: currentFlowId }, attributes: ['configJson'] });
+    const references = nodes.flatMap((node) => (node.configJson?.buttons || []).map((button) => button.primaryActionConfig?.targetFlowId || button.targetFlowId).filter(Boolean));
+    for (const reference of references) if (await this.flowReferenceReaches(reference, targetFlowId, visited)) return true;
+    return false;
+  }
+
+  async startFlowFromAction({ targetFlowId, contactId, conversationId, whatsappAccountId, sourceFlowRunId, sourceNodeId, variables = {}, actorType = 'system', transaction = null }) {
+    const target = await Flow.findOne({ where: { id: targetFlowId, status: 'published' }, include: this.includeBuilder(), transaction });
+    if (!target) throw Object.assign(new Error('Target flow is not published or enabled.'), { code: 'FLOW_TARGET_UNAVAILABLE', status: 422 });
+    if (target.whatsappAccountId && String(target.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Target flow does not support this WhatsApp account.'), { code: 'FLOW_ACCOUNT_SCOPE_MISMATCH', status: 403 });
+    const conversation = await Conversation.findByPk(conversationId, { transaction });
+    if (!conversation || String(conversation.contactId) !== String(contactId) || String(conversation.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Canonical conversation context does not match the target flow action.'), { code: 'FLOW_CANONICAL_CONTEXT_MISMATCH', status: 409 });
+    let depth = 0;
+    const ancestors = new Set([String(targetFlowId)]);
+    let cursor = sourceFlowRunId ? await FlowRun.findByPk(sourceFlowRunId, { transaction }) : null;
+    while (cursor) {
+      depth += 1;
+      if (depth > MAX_NESTED_FLOW_DEPTH) throw Object.assign(new Error('Maximum nested-flow depth exceeded.'), { code: 'FLOW_NESTED_DEPTH_EXCEEDED', status: 422 });
+      if (ancestors.has(String(cursor.flowId))) throw Object.assign(new Error('Circular flow reference detected.'), { code: 'FLOW_CIRCULAR_REFERENCE', status: 422 });
+      ancestors.add(String(cursor.flowId));
+      const parentLink = await FlowRunLink.findOne({ where: { childFlowRunId: cursor.id }, transaction });
+      cursor = parentLink ? await FlowRun.findByPk(parentLink.parentFlowRunId, { transaction }) : null;
+    }
+    const result = await this.executeFlow(target, { contactId, conversationId, whatsappAccountId, variables, actor: { type: actorType }, nestedDepth: depth + 1 }, {});
+    if (sourceFlowRunId && result?.id) await FlowRunLink.findOrCreate({ where: { childFlowRunId: result.id }, defaults: { parentFlowRunId: sourceFlowRunId, childFlowRunId: result.id, sourceNodeKey: sourceNodeId || null }, transaction });
+    return result;
   }
 
   async duplicate(id, createdBy) {
@@ -574,10 +697,12 @@ class FlowService {
           });
           return this.getRun(run.id);
         }
+        if (result.stop) break;
         if (node.nodeType === 'end_flow') break;
         node = this.nextNode(flow, node, runContext, result.sourceHandle);
       }
       await run.update({ status: realSendEnabled ? 'completed' : 'simulated', completedAt: new Date(), contextJson: runContext });
+      await this.resumeParentAfterChild(run).catch(() => null);
       return this.getRun(run.id);
     } catch (error) {
       if (node) await this.incrementNodeStats(node, { errors: 1 });
@@ -601,6 +726,20 @@ class FlowService {
     Object.entries(patch).forEach(([key, value]) => { stats[key] = Number(stats[key] || 0) + Number(value || 0); });
     await FlowNode.update({ stats }, { where: { id: node.id } }).catch(() => null);
     node.stats = stats;
+  }
+
+  async resumeParentAfterChild(childRun) {
+    const link = await FlowRunLink.findOne({ where: { childFlowRunId: childRun.id } });
+    if (!link) return null;
+    const parent = await FlowRun.findByPk(link.parentFlowRunId);
+    if (!parent || parent.status !== 'waiting' || !parent.contextJson?.resumeAfterChild) return null;
+    const parentFlow = await this.get(parent.flowId);
+    const source = (parentFlow.nodes || []).find((node) => node.nodeKey === link.sourceNodeKey);
+    const next = source ? this.nextNode(parentFlow, source, parent.contextJson || {}, 'next') : null;
+    if (!next) return parent.update({ status: 'completed', waitingForReply: false, waitingNodeKey: null, completedAt: new Date() });
+    const resumedContext = { ...(parent.contextJson || {}), resumeAfterChild: false };
+    await parent.update({ status: 'running', waitingForReply: false, waitingNodeKey: null, contextJson: resumedContext });
+    return this.executeFlow(parentFlow, resumedContext, { run: parent, startNode: next });
   }
 
   async getRun(id) {
@@ -631,8 +770,11 @@ class FlowService {
             ...(config.assignedUserId ? { assignedUserId: config.assignedUserId } : {})
           }, { where: { id: conversationId } });
         }
-        await this.log(run, node, 'completed', context, { started: true });
-        return {};
+        const actionContext = { ...context, flowRun: run, nodeKey: node.nodeKey, sourceMessageId: context.whatsappMessageId };
+        const pre = await flowActionService.executeFlowActions({ actions: config.automationActions || [], context: actionContext, phase: 'pre' });
+        const post = await flowActionService.executeFlowActions({ actions: config.automationActions || [], context: actionContext, phase: 'post' });
+        await this.log(run, node, 'completed', context, { started: true, actions: [...pre.results, ...post.results] });
+        return { stop: pre.directive === 'stop' || post.directive === 'stop', sourceHandle: pre.nodeKey || post.nodeKey || null };
       }
       if (MESSAGE_TYPES.has(node.nodeType)) {
         const output = await this.executeMessageNode(node, config, context, realSendEnabled);
@@ -812,7 +954,8 @@ class FlowService {
             ? { type: config.headerMediaType || 'image', url: config.headerMediaUrl }
             : null
       );
-      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, header, buttons, log: false, whatsappAccountId: context.whatsappAccountId });
+      const encoded = buttons.map((button) => ({ ...button, id: encodedButtonId(context.flowId, node.nodeKey, button.id) }));
+      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, header, buttons: encoded, log: false, whatsappAccountId: context.whatsappAccountId });
       sentInteractiveType = 'button';
     } else if (node.nodeType === 'list_message' || node.nodeType === 'appointment_booking') {
       const rows = node.nodeType === 'appointment_booking'
@@ -821,7 +964,8 @@ class FlowService {
       const sections = config.sections?.length
         ? config.sections
         : [{ title: config.sectionTitle || 'Options', rows }];
-      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, sections, buttonText: String(config.buttonText || 'Choose').slice(0, 20), log: false, whatsappAccountId: context.whatsappAccountId });
+      const encodedSections = sections.map((section) => ({ ...section, rows: (section.rows || []).map((row, index) => ({ ...row, id: encodedButtonId(context.flowId, node.nodeKey, row.id || row.payload || `row_${index + 1}`) })) }));
+      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, sections: encodedSections, buttonText: String(config.buttonText || 'Choose').slice(0, 20), log: false, whatsappAccountId: context.whatsappAccountId });
       sentInteractiveType = 'list';
     } else if (node.nodeType === 'whatsapp_flow') {
       response = await whatsappService.sendWhatsAppFlowMessage({
@@ -871,6 +1015,32 @@ class FlowService {
       rawPayload: { source: 'flow', flowId: context.flowId || null, nodeKey: node.nodeKey, whatsapp: response }
     });
     return { status: 'completed', response, to, text, nodeType: node.nodeType };
+  }
+
+  async executeButtonAction({ flow, run, node, button, context }) {
+    const primary = String(button.primaryActionType || button.actionType || 'CONTINUE_FLOW').toUpperCase();
+    const normalizedPrimary = primary === 'REPLY' ? 'CONTINUE_FLOW' : primary === 'URL' ? 'OPEN_URL' : primary === 'PHONE' ? 'CALL_PHONE' : primary;
+    const actionContext = { ...context, flowRun: run, nodeKey: node.nodeKey, buttonId: button.id, sourceMessageId: context.whatsappMessageId };
+    const pre = await flowActionService.executeFlowActions({ actions: button.automationActions || [], context: actionContext, phase: 'pre' });
+    let primaryResult = {};
+    if (pre.directive !== 'stop' && ['SEND_MESSAGE', 'START_FLOW'].includes(normalizedPrimary)) {
+      primaryResult = await flowActionService.executeFlowActions({
+        actions: [{ id: `primary:${button.id}`, actionType: normalizedPrimary, config: button.primaryActionConfig || button, enabled: true, executionOrder: 0, phase: 'primary', failurePolicy: 'STOP_FLOW' }],
+        context: actionContext,
+        phase: 'primary'
+      });
+    }
+    const post = await flowActionService.executeFlowActions({ actions: button.automationActions || [], context: actionContext, phase: 'post' });
+    const childRun = primaryResult.results?.find((item) => item.actionType === 'START_FLOW')?.output;
+    const wantsPause = normalizedPrimary === 'START_FLOW' && button.primaryActionConfig?.pauseCurrentFlow === true;
+    const childIsWaiting = childRun?.status === 'waiting';
+    return {
+      stop: pre.directive === 'stop' || primaryResult.directive === 'stop' || post.directive === 'stop' || (normalizedPrimary === 'START_FLOW' && button.primaryActionConfig?.stopCurrentFlow === true),
+      pause: wantsPause && childIsWaiting,
+      continueFlow: ['CONTINUE_FLOW', 'SEND_MESSAGE', 'SYSTEM_DEFAULT_ACTION'].includes(normalizedPrimary) || (normalizedPrimary === 'START_FLOW' && !button.primaryActionConfig?.stopCurrentFlow && (!wantsPause || !childIsWaiting)),
+      actionType: normalizedPrimary,
+      actions: [...pre.results, ...(primaryResult.results || []), ...post.results]
+    };
   }
 
   async handleInboundMessage({
@@ -935,9 +1105,15 @@ class FlowService {
         }
       }
       const branch = waitingNode.nodeType === 'whatsapp_flow' ? 'next' : (buttonPayload || text);
+      const stableBranch = decodedButtonId(branch);
+      const buttons = waitingNode.configJson?.buttons || waitingNode.configJson?.rows || [];
+      // New actions resolve only by the stable payload ID. Title matching is
+      // retained solely for legacy transition-only definitions.
+      const selectedButton = buttons.find((button) => String(button.id || button.payload || '') === stableBranch)
+        || buttons.find((button) => !button.primaryActionType && String(button.title || '') === String(text || ''));
       const startNode = waitingNode.nodeType === 'user_input'
         ? waitingNode
-        : this.nextNode(flow, waitingNode, context, branch);
+        : this.nextNode(flow, waitingNode, context, stableBranch);
       await waitingRun.update({
         status: 'running',
         waitingForReply: false,
@@ -945,6 +1121,24 @@ class FlowService {
         lastWhatsappMessageId: whatsappMessageId || waitingRun.lastWhatsappMessageId,
         contextJson: context
       });
+      let selectedActionResult = null;
+      if (selectedButton) {
+        selectedActionResult = await this.executeButtonAction({ flow, run: waitingRun, node: waitingNode, button: selectedButton, context });
+        await this.log(waitingRun, waitingNode, 'completed', context, { buttonId: selectedButton.id, actionType: selectedActionResult.actionType, actions: selectedActionResult.actions });
+        if (selectedActionResult.stop) {
+          await waitingRun.update({ status: 'completed', completedAt: new Date(), contextJson: context });
+          return this.getRun(waitingRun.id);
+        }
+        if (selectedActionResult.pause) {
+          context.resumeAfterChild = true;
+          await waitingRun.update({ status: 'waiting', waitingForReply: false, waitingNodeKey: waitingNode.nodeKey, contextJson: context });
+          return this.getRun(waitingRun.id);
+        }
+        if (!selectedActionResult.continueFlow) {
+          await waitingRun.update({ status: 'completed', completedAt: new Date(), contextJson: context });
+          return this.getRun(waitingRun.id);
+        }
+      }
       if (!startNode) {
         await waitingRun.update({ status: 'completed', completedAt: new Date() });
         return this.getRun(waitingRun.id);
@@ -962,21 +1156,16 @@ class FlowService {
       },
       include: this.includeBuilder()
     });
-    const flow = flows.find((candidate) => {
-      const config = candidate.triggerConfig || {};
-      const source = config.source || candidate.triggerType || 'inbound_message';
-      const isInteractive = messageType === 'button_reply' || messageType === 'interactive';
-      if (source === 'template_button_reply' && !isInteractive) return false;
-      if (source === 'interactive_button_reply' && interactiveType !== 'button_reply' && messageType !== 'button_reply') return false;
-      if (source === 'list_reply' && interactiveType !== 'list_reply') return false;
-      if (source === 'campaign_response' && !replyToWhatsappMessageId) return false;
-      const keywords = normalizeTriggerKeywords(config.keywords?.length ? config.keywords : candidate.triggerKeywords);
-      if (!keywords.length) return ['inbound_message', 'manual'].includes(source);
-      const matchType = config.matchType || config.keywordMatchMode || 'contains';
-      return matchesTriggerKeyword(text, keywords, matchType);
-    });
-    if (!flow) return null;
-    return this.executeFlow(flow, {
+    const conversationMessageCount = conversation?.id ? await Message.count({ where: { conversationId: conversation.id } }) : null;
+    const event = { text, messageType, interactiveType, buttonPayload, replyToWhatsappMessageId, whatsappAccountId, contact, lead, isFirstMessage: conversationMessageCount === 1 };
+    const matched = flows.filter((candidate) => triggerMatcher.matchesTrigger(candidate, event, { allowRegex: candidate.triggerConfig?.regexPrivileged === true }))
+      .sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
+    if (!matched.length) return null;
+    const results = [];
+    for (const flow of matched) {
+      const prior = whatsappMessageId ? await FlowRun.findOne({ where: { flowId: flow.id, lastWhatsappMessageId: whatsappMessageId } }) : null;
+      if (prior) { results.push(await this.getRun(prior.id)); continue; }
+      results.push(await this.executeFlow(flow, {
       latestMessage: text,
       contactId: contact?.id,
       leadId: lead?.id,
@@ -991,7 +1180,30 @@ class FlowService {
       contact: contact ? { ...contact.toJSON(), name: contactName(contact) } : null,
       lead: lead ? lead.toJSON() : null
       , whatsappAccountId
-    });
+      }));
+      if (flow.triggerConfig?.stopAfterMatch !== false) break;
+    }
+    return results.length === 1 ? results[0] : results;
+  }
+
+  async handleDomainEvent(event = {}) {
+    const conversation = event.conversation || (event.conversationId ? await Conversation.findByPk(event.conversationId) : null);
+    const contactId = event.contactId || conversation?.contactId || event.contact?.id || null;
+    const leadId = event.leadId || conversation?.leadId || event.lead?.id || null;
+    const contact = event.contact || (contactId ? await Contact.findByPk(contactId) : null);
+    const lead = event.lead || (leadId ? await Lead.findByPk(leadId) : null);
+    const whatsappAccountId = event.whatsappAccountId || conversation?.whatsappAccountId || contact?.whatsappAccountId || lead?.whatsappAccountId || null;
+    const candidates = await Flow.findAll({ where: { status: 'published', [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null }] }, include: this.includeBuilder() });
+    const matched = candidates.filter((candidate) => triggerMatcher.matchesTrigger(candidate, { ...event, contact, lead, whatsappAccountId }, { allowRegex: candidate.triggerConfig?.regexPrivileged === true })).sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
+    const results = [];
+    const eventKey = event.eventId ? `event:${event.eventType}:${event.eventId}` : null;
+    for (const candidate of matched) {
+      const duplicate = eventKey ? await FlowRun.findOne({ where: { flowId: candidate.id, lastWhatsappMessageId: eventKey } }) : null;
+      if (duplicate) { results.push(await this.getRun(duplicate.id)); continue; }
+      results.push(await this.executeFlow(candidate, { ...event, contactId, leadId, conversationId: conversation?.id || event.conversationId || null, contact, lead, conversation, whatsappAccountId, whatsappMessageId: eventKey }));
+      if (candidate.triggerConfig?.stopAfterMatch !== false) break;
+    }
+    return results;
   }
 
   async processDueWaitingRuns() {
@@ -1024,3 +1236,6 @@ class FlowService {
 }
 
 module.exports = new FlowService();
+module.exports.FlowService = FlowService;
+module.exports.encodedButtonId = encodedButtonId;
+module.exports.decodedButtonId = decodedButtonId;

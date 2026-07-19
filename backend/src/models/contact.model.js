@@ -46,6 +46,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: []
     },
+    customFields: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
     status: {
       type: DataTypes.ENUM('new', 'active', 'inactive', 'archived'),
       allowNull: false,
@@ -60,6 +61,9 @@ module.exports = (sequelize, DataTypes) => {
     timestamps: true,
     paranoid: true,
     underscored: true,
+    hooks: {
+      afterCreate: (contact) => setImmediate(() => require('../services/flow.service').handleDomainEvent({ eventType: 'contact_created', eventId: contact.id, contactId: contact.id, contact, whatsappAccountId: contact.whatsappAccountId }).catch(() => null))
+    },
     indexes: [
       { fields: ['phone'] },
       { fields: ['normalized_phone'] },

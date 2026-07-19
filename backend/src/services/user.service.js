@@ -49,6 +49,7 @@ const LMS_PERMISSIONS = [
 ];
 const PAYMENT_SLIP_PERMISSIONS = ['payment-slips.view', 'payment-slips.review', 'payment-slips.approve', 'payment-slips.mark'];
 const RECEIPT_PERMISSIONS = ['receipts.view', 'receipts.generate', 'receipts.download', 'receipts.send_whatsapp', 'receipts.regenerate', 'receipts.void', 'receipts.export', 'receipts.manage_settings'];
+const FLOW_ACTION_PERMISSIONS = ['flows.view', 'flows.create', 'flows.edit', 'flows.publish', 'flows.manage_triggers', 'flows.manage_actions', 'flows.start_other_flows', 'flows.manage_assignments', 'flows.manage_sequences', 'flows.manage_integrations', 'flows.test', 'flows.view_execution_logs'];
 
 function permissionCode(group, action) {
   return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase().replace(/\s+/g, '_')}`;
@@ -204,7 +205,7 @@ class UserService {
         permissions.push(permission);
       }
     }
-    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...PAYMENT_SLIP_PERMISSIONS, ...RECEIPT_PERMISSIONS]) {
+    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...PAYMENT_SLIP_PERMISSIONS, ...RECEIPT_PERMISSIONS, ...FLOW_ACTION_PERMISSIONS]) {
       let permission = await Permission.findOne({ where: { code }, paranoid: false });
       if (permission?.deletedAt) await permission.restore();
       if (!permission) [permission] = await Permission.findOrCreate({ where: { code }, defaults: { name: code, description: `Secure ownership permission: ${code}` } });

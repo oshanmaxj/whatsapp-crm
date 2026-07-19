@@ -341,6 +341,11 @@ class PaymentSlipService {
       await Notification.create({ userId: reviewerUserId, type: 'payment_slip_approved', title: 'Payment slip approved', message: `Payment slip #${slip.id} was approved.`, data: { slipId: slip.id, paymentId: payment.id } }, { transaction });
       result = slip;
     });
+    setImmediate(() => require('./flow.service').handleDomainEvent({
+      eventType: 'payment_event', eventId: result.id, conversationId: result.conversationId,
+      whatsappAccountId: result.whatsappAccountId, paymentSlipId: result.id,
+      amount: result.confirmedAmount, status: 'approved'
+    }).catch(() => null));
     if (!result.decisionAcknowledgementQueuedAt) {
       const enriched = await this.get(result.id);
       const remaining = enriched.fee?.balance ?? 0;

@@ -40,6 +40,7 @@ const persistentAuthSessionsMigration = require('../../migrations/035_add_persis
 const whatsappPaymentSlipMigration = require('../../migrations/036_whatsapp_payment_slip_verification');
 const paymentReceiptsMigration = require('../../migrations/038_payment_receipts');
 const canonicalPaymentConversationMigration = require('../../migrations/039_canonical_payment_whatsapp_conversation');
+const advancedFlowActionsMigration = require('../../migrations/040_advanced_flow_actions');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -190,6 +191,9 @@ async function run() {
     await paymentReceiptsMigration.up(queryInterface, Sequelize);
     console.log('Applied: canonical payment receipts');
     await canonicalPaymentConversationMigration.up(queryInterface, Sequelize);
+    console.log('Applied: canonical payment WhatsApp conversations');
+    await advancedFlowActionsMigration.up(queryInterface, Sequelize);
+    console.log('Applied: advanced flow triggers and actions');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

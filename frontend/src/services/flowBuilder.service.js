@@ -15,6 +15,9 @@ export const getFlowAnalytics = (id) => api.get(`/flows/${id}/analytics`);
 export const getFlowRuns = (id) => api.get(`/flows/${id}/runs`);
 export const getFlowLogs = (id) => api.get(`/flows/${id}/logs`);
 export const getFlowStats = (id) => api.get(`/flows/${id}/stats`);
+export const getFlowActionOptions = (currentFlowId) => api.get('/flows/action-options', { params: { currentFlowId } });
+export const validateFlow = (id) => api.get(`/flows/${id}/validate`);
+export const simulateFlowTrigger = (id, payload) => api.post(`/flows/${id}/simulate-trigger`, payload);
 
 export const getGoogleSheetConnections = () => api.get('/google-sheets/connections');
 export const createGoogleSheetConnection = (payload) => api.post('/google-sheets/connections', payload);

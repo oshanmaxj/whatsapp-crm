@@ -51,6 +51,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    customFields: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
     stage: {
       type: DataTypes.STRING(100),
       allowNull: false,

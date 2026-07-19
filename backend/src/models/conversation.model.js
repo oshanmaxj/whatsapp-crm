@@ -49,6 +49,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: true
     },
+    customFields: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
     lastMessage: {
       type: DataTypes.TEXT,
       allowNull: true

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Box, Button, Card, CardActionArea, Checkbox, Chip, Dialog, DialogActions,
+  Alert, Autocomplete, Box, Button, Card, CardActionArea, Checkbox, Chip, Dialog, DialogActions,
   DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, MenuItem,
   Paper, Stack, TextField, Typography
 } from '@mui/material';
@@ -9,7 +9,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import InsertEmoticonIcon from '@mui/icons-material/InsertEmoticon';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { uploadFlowMedia } from '../../services/flowBuilder.service';
-import { FLOW_VARIABLES, nodeConfigErrors, normalizeKeywords } from './flowBuilderConfig';
+import { compatibleButton, FLOW_VARIABLES, nodeConfigErrors, normalizeKeywords } from './flowBuilderConfig';
 
 const EMOJIS = ['😊', '👍', '🙏', '🎉', '❤️', '👋'];
 const clone = (value) => JSON.parse(JSON.stringify(value || {}));
@@ -169,24 +169,66 @@ function ImageSourceEditor({ config, set, errors }) {
   );
 }
 
-function ButtonEditor({ value, onChange, errors }) {
+const ACTION_LABELS = {
+  ADD_LABELS: 'Add Labels', REMOVE_LABELS: 'Remove Labels', ADD_TO_LISTS: 'Add to Lists', REMOVE_FROM_LISTS: 'Remove from Lists',
+  SUBSCRIBE_SEQUENCE: 'Subscribe to Sequence', UNSUBSCRIBE_SEQUENCE: 'Unsubscribe from Sequence', ASSIGN_TEAM: 'Assign Conversation to Team',
+  ASSIGN_AGENT: 'Assign Conversation to Agent', AUTO_ASSIGN: 'Auto Assign', UNASSIGN_AGENT: 'Unassign Agent', REMOVE_TEAM: 'Remove Team Assignment',
+  SET_CUSTOM_FIELD: 'Set Custom Field', SEND_WEBHOOK: 'Send to Webhook', SEND_GOOGLE_SHEETS: 'Send to Google Sheets',
+  CREATE_CALENDAR_EVENT: 'Send to Google Calendar', START_FLOW: 'Start Another Flow', STOP_FLOW: 'Stop Current Flow'
+};
+
+function OptionMultiSelect({ label, options = [], value = [], onChange }) {
+  const selected = options.filter((item) => value.map(String).includes(String(item.id)));
+  return <Autocomplete multiple size="small" options={options} value={selected} getOptionLabel={(item) => item.name || item.email || String(item.id)} isOptionEqualToValue={(a, b) => String(a.id) === String(b.id)} onChange={(_, rows) => onChange(rows.map((item) => item.id))} renderInput={(params) => <TextField {...params} label={label} />} />;
+}
+
+function AutomationActionsEditor({ value, onChange, options = {} }) {
+  const actions = Array.isArray(value) ? value : [];
+  const update = (index, patch) => onChange(actions.map((action, itemIndex) => itemIndex === index ? { ...action, ...patch } : action));
+  const updateConfig = (index, patch) => update(index, { config: { ...(actions[index].config || {}), ...patch } });
+  return <Stack spacing={1.25}>
+    {actions.map((action, index) => {
+      const type = action.actionType || 'ADD_LABELS';
+      const config = action.config || {};
+      return <Paper key={action.id || index} variant="outlined" sx={{ p: 1.25 }}><Stack spacing={1}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+          <TextField select size="small" label="Automation action" value={type} onChange={(event) => update(index, { actionType: event.target.value, config: {} })} fullWidth>{Object.entries(ACTION_LABELS).map(([id, name]) => <MenuItem key={id} value={id}>{name}</MenuItem>)}</TextField>
+          <TextField select size="small" label="Phase" value={action.phase || 'pre'} onChange={(event) => update(index, { phase: event.target.value })} sx={{ minWidth: 105 }}><MenuItem value="pre">Before</MenuItem><MenuItem value="post">After</MenuItem></TextField>
+          <TextField size="small" type="number" label="Order" value={action.executionOrder ?? index} onChange={(event) => update(index, { executionOrder: Number(event.target.value) })} sx={{ width: 90 }} />
+          <TextField select size="small" label="On failure" value={action.failurePolicy || 'CONTINUE'} onChange={(event) => update(index, { failurePolicy: event.target.value })} sx={{ minWidth: 130 }}><MenuItem value="CONTINUE">Continue</MenuItem><MenuItem value="STOP_FLOW">Stop flow</MenuItem><MenuItem value="RETRY">Retry</MenuItem><MenuItem value="ROUTE_TO_ERROR_NODE">Error node</MenuItem></TextField>
+          <IconButton color="error" onClick={() => onChange(actions.filter((_, itemIndex) => itemIndex !== index))}><DeleteOutlineIcon /></IconButton>
+        </Stack>
+        {['ADD_LABELS', 'REMOVE_LABELS'].includes(type) && <OptionMultiSelect label="Labels" options={options.labels} value={config.labelIds || []} onChange={(labelIds) => updateConfig(index, { labelIds })} />}
+        {['ADD_TO_LISTS', 'REMOVE_FROM_LISTS'].includes(type) && <OptionMultiSelect label="Contact lists" options={options.lists} value={config.listIds || []} onChange={(listIds) => updateConfig(index, { listIds })} />}
+        {['SUBSCRIBE_SEQUENCE', 'UNSUBSCRIBE_SEQUENCE'].includes(type) && <OptionMultiSelect label="Sequences" options={options.sequences} value={config.sequenceIds || []} onChange={(sequenceIds) => updateConfig(index, { sequenceIds })} />}
+        {type === 'ASSIGN_TEAM' && <Autocomplete size="small" options={options.departments || []} value={(options.departments || []).find((item) => String(item.id) === String(config.roleId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => updateConfig(index, { roleId: item?.id || '' })} renderInput={(params) => <TextField {...params} label="Team" />} />}
+        {type === 'ASSIGN_AGENT' && <Autocomplete size="small" options={options.agents || []} value={(options.agents || []).find((item) => String(item.id) === String(config.userId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => updateConfig(index, { userId: item?.id || '' })} renderInput={(params) => <TextField {...params} label="Agent" />} />}
+        {type === 'SET_CUSTOM_FIELD' && <Stack direction="row" spacing={1}><TextField select size="small" label="Record" value={config.entity || 'contact'} onChange={(event) => updateConfig(index, { entity: event.target.value })}><MenuItem value="contact">Contact</MenuItem><MenuItem value="lead">Lead</MenuItem><MenuItem value="conversation">Conversation</MenuItem></TextField><TextField size="small" label="Field key" value={config.field || ''} onChange={(event) => updateConfig(index, { field: event.target.value })} fullWidth /><TextField size="small" label="Value / {{variable}}" value={config.value || ''} onChange={(event) => updateConfig(index, { value: event.target.value })} fullWidth /></Stack>}
+        {type === 'SEND_WEBHOOK' && <TextField size="small" label="HTTPS webhook URL" value={config.url || ''} onChange={(event) => updateConfig(index, { url: event.target.value })} fullWidth />}
+        {type === 'START_FLOW' && <Autocomplete size="small" options={options.flows || []} value={(options.flows || []).find((item) => String(item.id) === String(config.targetFlowId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => updateConfig(index, { targetFlowId: item?.id || '' })} renderInput={(params) => <TextField {...params} label="Published flow" />} />}
+        <FormControlLabel control={<Checkbox checked={action.enabled !== false} onChange={(event) => update(index, { enabled: event.target.checked })} />} label="Enabled" />
+      </Stack></Paper>;
+    })}
+    <Button size="small" variant="outlined" onClick={() => onChange([...actions, { id: `action_${Date.now()}`, actionType: 'ADD_LABELS', config: {}, phase: 'pre', executionOrder: actions.length, failurePolicy: 'CONTINUE', enabled: true }])}>Add automation action</Button>
+  </Stack>;
+}
+
+function ButtonEditor({ value, onChange, errors, options }) {
   const rows = Array.isArray(value) ? value : [];
-  const add = (actionType) => {
+  const add = () => {
     const number = rows.length + 1;
     onChange([...rows, {
-      id: `option_${number}`,
-      payload: `option_${number}`,
-      title: actionType === 'reply' ? `Option ${number}` : actionType === 'url' ? 'Visit website' : 'Call us',
-      actionType,
-      url: '',
-      phone: ''
+      id: `button_${Date.now()}_${number}`,
+      payload: `button_${Date.now()}_${number}`,
+      title: `Option ${number}`,
+      primaryActionType: 'CONTINUE_FLOW', primaryActionConfig: {}, automationActions: []
     }]);
   };
   const update = (index, patch) => onChange(rows.map((row, itemIndex) => itemIndex === index ? { ...row, ...patch } : row));
   return (
     <Stack spacing={1.25}>
       {rows.map((row, index) => {
-        const type = row.actionType || 'reply';
+        const type = String(row.primaryActionType || row.actionType || 'CONTINUE_FLOW').toUpperCase();
         return (
           <Paper key={`${row.id || 'button'}_${index}`} variant="outlined" sx={{ p: 1.5 }}>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'flex-start' }}>
@@ -204,39 +246,30 @@ function ButtonEditor({ value, onChange, errors }) {
                 select
                 label="Action"
                 value={type}
-                onChange={(event) => update(index, { actionType: event.target.value })}
+                onChange={(event) => update(index, { primaryActionType: event.target.value, primaryActionConfig: {} })}
                 sx={{ minWidth: 140 }}
               >
-                <MenuItem value="reply">Quick reply</MenuItem>
-                <MenuItem value="url">Open URL</MenuItem>
-                <MenuItem value="phone">Call phone</MenuItem>
+                <MenuItem value="SEND_MESSAGE">Send Message</MenuItem><MenuItem value="START_FLOW">Start a Flow</MenuItem><MenuItem value="CONTINUE_FLOW">Continue Flow</MenuItem><MenuItem value="OPEN_URL">Open URL</MenuItem><MenuItem value="CALL_PHONE">Call Phone</MenuItem><MenuItem value="SYSTEM_DEFAULT_ACTION">System Default Action</MenuItem>
               </TextField>
-              <TextField
-                size="small"
-                label={type === 'url' ? 'URL' : type === 'phone' ? 'Phone' : 'Payload'}
-                value={type === 'url' ? row.url || '' : type === 'phone' ? row.phone || '' : row.payload || row.id || ''}
-                onChange={(event) => {
-                  const field = type === 'url' ? 'url' : type === 'phone' ? 'phone' : 'payload';
-                  const patch = { [field]: event.target.value };
-                  if (type === 'reply') patch.id = event.target.value;
-                  update(index, patch);
-                }}
-                error={Boolean(errors[`button_${index}_value`])}
-                helperText={errors[`button_${index}_value`]}
-                fullWidth
-              />
               <IconButton color="error" onClick={() => onChange(rows.filter((_, itemIndex) => itemIndex !== index))} aria-label="Delete button">
                 <DeleteOutlineIcon />
               </IconButton>
             </Stack>
+            <Typography variant="caption" color="text.secondary">Stable action ID: {row.id}</Typography>
+            {type === 'SEND_MESSAGE' && <MessageField label="Message sent when pressed" value={row.primaryActionConfig?.message || row.message || ''} onChange={(message) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), message } })} />}
+            {type === 'START_FLOW' && <Stack spacing={1}><Autocomplete options={options.flows || []} value={(options.flows || []).find((item) => String(item.id) === String(row.primaryActionConfig?.targetFlowId || row.targetFlowId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), targetFlowId: item?.id || '' } })} renderInput={(params) => <TextField {...params} label="Published flow" />} /><FormControlLabel control={<Checkbox checked={Boolean(row.primaryActionConfig?.pauseCurrentFlow)} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), pauseCurrentFlow: event.target.checked, stopCurrentFlow: event.target.checked ? false : row.primaryActionConfig?.stopCurrentFlow } })} />} label="Pause and resume this flow when the child completes" /><FormControlLabel control={<Checkbox checked={Boolean(row.primaryActionConfig?.stopCurrentFlow)} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), stopCurrentFlow: event.target.checked, pauseCurrentFlow: event.target.checked ? false : row.primaryActionConfig?.pauseCurrentFlow } })} />} label="Stop current flow after starting target" /></Stack>}
+            {type === 'OPEN_URL' && <TextField size="small" label="HTTPS URL" value={row.primaryActionConfig?.url || row.url || ''} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), url: event.target.value } })} fullWidth />}
+            {type === 'CALL_PHONE' && <TextField size="small" label="Phone number" value={row.primaryActionConfig?.phone || row.phone || ''} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), phone: event.target.value } })} fullWidth />}
+            {type === 'OPEN_URL' && <Alert severity="warning">Regular WhatsApp reply buttons cannot both open a URL and return a press webhook. Use an approved URL CTA template for native opening; CTA clicks cannot run these automations.</Alert>}
+            {type === 'CALL_PHONE' && <Alert severity="warning">Native phone-call buttons require a supported approved template. A regular reply button can return a webhook, but it cannot initiate the call.</Alert>}
+            <Divider sx={{ my: 1 }} /><Typography fontWeight={700} fontSize={13}>Automation actions</Typography><AutomationActionsEditor value={row.automationActions || []} onChange={(automationActions) => update(index, { automationActions })} options={options} />
+            <Alert severity="info" sx={{ mt: 1 }}>On press: run enabled pre-actions → {type.replaceAll('_', ' ').toLowerCase()} → transition if configured → run post-actions.</Alert>
           </Paper>
         );
       })}
       {errors.buttons && <Alert severity="error">{errors.buttons}</Alert>}
       <Stack direction="row" gap={1} flexWrap="wrap">
-        <Button size="small" variant="outlined" onClick={() => add('reply')}>Add Quick Reply</Button>
-        <Button size="small" variant="outlined" onClick={() => add('url')}>Add URL Button</Button>
-        <Button size="small" variant="outlined" onClick={() => add('phone')}>Add Phone Button</Button>
+        <Button size="small" variant="outlined" onClick={add}>Add Button</Button>
       </Stack>
     </Stack>
   );
@@ -288,7 +321,7 @@ function WhatsAppPreview({ type, config, label }) {
   );
 }
 
-export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDelete, departments = [], users = [], flowId }) {
+export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDelete, departments = [], users = [], actionOptions = {}, flowId }) {
   const [label, setLabel] = useState('');
   const [config, setConfig] = useState({});
   const [errors, setErrors] = useState({});
@@ -298,6 +331,8 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
   useEffect(() => {
     if (!node || !open) return;
     const nextConfig = clone(node.data.config);
+    if (Array.isArray(nextConfig.buttons)) nextConfig.buttons = nextConfig.buttons.map(compatibleButton);
+    if (Array.isArray(nextConfig.rows)) nextConfig.rows = nextConfig.rows.map(compatibleButton);
     setLabel(node.data.label || '');
     setConfig(nextConfig);
     setErrors({});
@@ -357,7 +392,18 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
 
   let form;
   if (type === 'start') {
-    form = <Section title="Flow trigger">{field('source', 'Start flow from', { select: true, children: ['inbound_message', 'template_button_reply', 'interactive_button_reply', 'list_reply', 'campaign_response', 'manual'].map((value) => <MenuItem key={value} value={value}>{value.replaceAll('_', ' ')}</MenuItem>) })}<TextField label="Trigger keywords" value={Array.isArray(config.keywords) ? config.keywords.join(', ') : config.keywords || ''} onChange={(event) => set('keywords', normalizeKeywords(event.target.value))} error={Boolean(errors.keywords)} helperText={errors.keywords || 'Separate keywords with commas.'} fullWidth />{field('matchType', 'Keyword matching', { select: true, children: [['exact', 'Exact match'], ['contains', 'Contains'], ['starts_with', 'Starts with']].map(([value, text]) => <MenuItem key={value} value={value}>{text}</MenuItem>) })}</Section>;
+    form = <><Section title="Flow trigger">
+      {field('title', 'Trigger title')}
+      {field('source', 'Start flow from', { select: true, children: ['inbound_message', 'any_message', 'first_message', 'button_reply', 'list_reply', 'template_button_reply', 'payment_event', 'label_added', 'contact_created', 'lead_status_changed', 'campaign_response', 'manual'].map((value) => <MenuItem key={value} value={value}>{value.replaceAll('_', ' ')}</MenuItem>) })}
+      <TextField label="Trigger keywords" value={Array.isArray(config.keywords) ? config.keywords.join(', ') : config.keywords || ''} onChange={(event) => set('keywords', normalizeKeywords(event.target.value))} error={Boolean(errors.keywords)} helperText={errors.keywords || 'Separate keywords with commas; Unicode and Sinhala are supported.'} fullWidth />
+      {field('matchType', 'Keyword matching', { select: true, children: [['exact', 'Exact match'], ['contains', 'Contains'], ['starts_with', 'Starts with'], ['ends_with', 'Ends with'], ['regex', 'Regular expression (privileged)']].map(([value, text]) => <MenuItem key={value} value={value}>{text}</MenuItem>) })}
+      <Grid container spacing={1}><Grid item xs={6}>{field('priority', 'Priority', { type: 'number' })}</Grid><Grid item xs={6}>{field('contactSource', 'Optional source scope')}</Grid></Grid>
+      <Autocomplete options={actionOptions.courses || []} value={(actionOptions.courses || []).find((item) => item.name === config.course) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => set('course', item?.name || '')} renderInput={(params) => <TextField {...params} label="Optional course scope" />} />
+      <Autocomplete options={actionOptions.campaigns || []} value={(actionOptions.campaigns || []).find((item) => String(item.id) === String(config.campaignId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => set('campaignId', item?.id || '')} renderInput={(params) => <TextField {...params} label="Optional campaign scope" />} />
+      <FormControlLabel control={<Checkbox checked={config.caseInsensitive !== false} onChange={(event) => set('caseInsensitive', event.target.checked)} />} label="Case insensitive" />
+      <FormControlLabel control={<Checkbox checked={config.normalizeWhitespace !== false} onChange={(event) => set('normalizeWhitespace', event.target.checked)} />} label="Trim and normalize whitespace" />
+      <FormControlLabel control={<Checkbox checked={config.stopAfterMatch !== false} onChange={(event) => set('stopAfterMatch', event.target.checked)} />} label="Stop after first matched trigger" />
+    </Section><Section title="Automation actions" description="Actions can run before or after this flow starts."><AutomationActionsEditor value={config.automationActions || []} onChange={(automationActions) => set('automationActions', automationActions)} options={actionOptions} /></Section></>;
   } else if (type === 'interactive_message') {
     form = <>
       <Section title="Header" description="Optional content shown above the message body.">
@@ -372,7 +418,7 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
       </Section>
       <Section title="Message body"><MessageField value={config.message || ''} onChange={(value) => set('message', value)} error={errors.message} /></Section>
       <Section title="Footer">{field('footer', 'Footer text', { inputProps: { maxLength: 60 }, helperText: `${(config.footer || '').length} / 60` })}</Section>
-      <Section title="Buttons" description="Each button creates an output handle on the node after you save."><ButtonEditor value={config.buttons} onChange={(value) => set('buttons', value)} errors={errors} /></Section>
+      <Section title="Buttons" description="Each button uses a stable payload ID and can run its own action."><ButtonEditor value={config.buttons} onChange={(value) => set('buttons', value)} errors={errors} options={actionOptions} /></Section>
     </>;
   } else if (type === 'text_message') {
     form = <Section title="Text message"><MessageField value={config.message || ''} onChange={(value) => set('message', value)} error={errors.message} emoji /></Section>;
@@ -393,7 +439,7 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
   } else if (type === 'user_input') {
     form = <><Section title="Question"><MessageField value={config.question || ''} onChange={(value) => set('question', value)} error={errors.question} /></Section><Section title="Store the answer">{field('saveAs', 'Save answer field', { placeholder: 'custom.answer' })}{field('timeoutMinutes', 'Timeout (minutes)', { type: 'number', inputProps: { min: 1 } })}</Section></>;
   } else if (['button_message', 'list_message'].includes(type)) {
-    form = <><Section title="Message body"><MessageField value={config.message || ''} onChange={(value) => set('message', value)} error={errors.message} /></Section>{type === 'button_message' ? <Section title="Buttons"><ButtonEditor value={config.buttons} onChange={(value) => set('buttons', value)} errors={errors} /></Section> : <Section title="List options"><OptionEditor label="Rows" value={config.rows} onChange={(value) => set('rows', value)} error={errors.rows} />{field('sectionTitle', 'Section title')}{field('buttonText', 'Menu button text')}</Section>}</>;
+    form = <><Section title="Message body"><MessageField value={config.message || ''} onChange={(value) => set('message', value)} error={errors.message} /></Section>{type === 'button_message' ? <Section title="Buttons"><ButtonEditor value={config.buttons} onChange={(value) => set('buttons', value)} errors={errors} options={actionOptions} /></Section> : <Section title="List options"><ButtonEditor value={config.rows} onChange={(value) => set('rows', value)} errors={{ ...errors, buttons: errors.rows }} options={actionOptions} />{field('sectionTitle', 'Section title')}{field('buttonText', 'Menu button text')}</Section>}</>;
   } else if (type === 'location') {
     form = <Section title="Location">{field('latitude', 'Latitude')}{field('longitude', 'Longitude')}{field('name', 'Location name')}{field('address', 'Address')}</Section>;
   } else if (type === 'whatsapp_flow') {

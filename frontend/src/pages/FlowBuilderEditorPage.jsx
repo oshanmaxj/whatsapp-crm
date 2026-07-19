@@ -21,7 +21,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import {
-  getFlow, publishFlow, saveFlowBuilder, testFlow, unpublishFlow
+  getFlow, getFlowActionOptions, publishFlow, saveFlowBuilder, testFlow, unpublishFlow
 } from '../services/flowBuilder.service';
 import { getRoles, getUsers } from '../services/userManagement.service';
 import FlowNodeConfigDialog from '../components/flow-builder/FlowNodeConfigDialog';
@@ -175,6 +175,7 @@ function Editor() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
+  const [actionOptions, setActionOptions] = useState({ labels: [], lists: [], sequences: [], departments: [], agents: [], flows: [], courses: [], campaigns: [], customFields: [] });
   const [isDirty, setIsDirty] = useState(false);
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('');
@@ -217,9 +218,10 @@ function Editor() {
   }, [id, setEdges, setNodes]);
 
   useEffect(() => {
-    Promise.all([getRoles(), getUsers()]).then(([rolesResponse, usersResponse]) => {
+    Promise.all([getRoles(), getUsers(), getFlowActionOptions(id)]).then(([rolesResponse, usersResponse, optionsResponse]) => {
       setDepartments(rolesResponse.data.data || []);
       setUsers(usersResponse.data.data || []);
+      setActionOptions(optionsResponse.data.data || {});
     }).catch(() => {});
   }, []);
 
@@ -359,6 +361,7 @@ function Editor() {
       open={editorOpen}
       departments={departments}
       users={users}
+      actionOptions={actionOptions}
       onDelete={() => selected && deleteNode(selected.id)}
       onClose={() => setEditorOpen(false)}
       onSave={({ label, config }) => {

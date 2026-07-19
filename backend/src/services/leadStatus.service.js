@@ -177,6 +177,11 @@ function createLeadStatusService(dependencies = {}) {
           if (emissions.some((item) => item.status === 'rejected')) {
             log.warn('lead_status_socket_emit_failed', { leadId: String(leadId), actorUserId: effectiveActorUserId });
           }
+          setImmediate(() => require('./flow.service').handleDomainEvent({
+            eventType: 'lead_status_changed', eventId: `${leadId}:${result.status.id}:${new Date(payload.updatedAt).getTime()}`,
+            leadId, lead: result.lead, conversationId: conversations[0]?.id || null,
+            whatsappAccountId: result.lead.whatsappAccountId, statusCode: result.status.code
+          }).catch((error) => log.warn('lead_status_flow_trigger_failed', { leadId: String(leadId), code: error.code || null })));
         }
         return {
           id: result.lead.id,

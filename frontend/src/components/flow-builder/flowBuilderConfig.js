@@ -8,17 +8,33 @@ export const FLOW_VARIABLES = [
 
 const blank = (value) => !String(value ?? '').trim();
 
+export function buttonActionFields(actionType) {
+  const type = String(actionType || 'CONTINUE_FLOW').toUpperCase();
+  if (type === 'SEND_MESSAGE') return ['message'];
+  if (type === 'START_FLOW') return ['targetFlowId', 'stopCurrentFlow', 'pauseCurrentFlow'];
+  if (type === 'OPEN_URL' || type === 'URL') return ['url'];
+  if (type === 'CALL_PHONE' || type === 'PHONE') return ['phone'];
+  return [];
+}
+
+export function compatibleButton(button = {}) {
+  const legacy = String(button.actionType || '').toLowerCase();
+  const primaryActionType = button.primaryActionType || (legacy === 'url' ? 'OPEN_URL' : legacy === 'phone' ? 'CALL_PHONE' : 'CONTINUE_FLOW');
+  const primaryActionConfig = button.primaryActionConfig || (legacy === 'url' ? { url: button.url || '' } : legacy === 'phone' ? { phone: button.phone || '' } : {});
+  return { ...button, primaryActionType, primaryActionConfig, automationActions: button.automationActions || [] };
+}
+
 export function normalizeKeywords(value) {
   if (Array.isArray(value)) {
     return value
       .flatMap((item) => String(item).split(','))
-      .map((item) => item.trim().toLowerCase())
+      .map((item) => item.normalize('NFC').trim().replace(/\s+/gu, ' '))
       .filter(Boolean)
       .filter((item, index, rows) => rows.indexOf(item) === index);
   }
   return String(value || '')
     .split(',')
-    .map((item) => item.trim().toLowerCase())
+    .map((item) => item.normalize('NFC').trim().replace(/\s+/gu, ' '))
     .filter(Boolean)
     .filter((item, index, rows) => rows.indexOf(item) === index);
 }
@@ -56,17 +72,24 @@ export function nodeConfigErrors(nodeType, config = {}) {
   if (['interactive_message', 'button_message'].includes(nodeType)) {
     const buttons = Array.isArray(config.buttons) ? config.buttons : [];
     if (!buttons.length) errors.buttons = 'Add at least one button.';
+    if (buttons.length > 3) errors.buttons = 'WhatsApp supports at most 3 reply buttons.';
     buttons.forEach((button, index) => {
       if (blank(button.title)) errors[`button_${index}_title`] = 'Button label is required.';
-      if (button.actionType === 'url' && blank(button.url)) errors[`button_${index}_value`] = 'Enter a valid URL.';
-      if (button.actionType === 'phone' && blank(button.phone)) errors[`button_${index}_value`] = 'Enter a phone number.';
-      if ((!button.actionType || button.actionType === 'reply') && blank(button.id || button.payload)) {
+      if (String(button.title || '').length > 20) errors[`button_${index}_title`] = 'Button labels may contain at most 20 characters.';
+      const actionType = String(button.primaryActionType || button.actionType || 'CONTINUE_FLOW').toUpperCase();
+      if (['OPEN_URL', 'URL'].includes(actionType) && !isPublicHttpsUrl(button.primaryActionConfig?.url || button.url)) errors[`button_${index}_value`] = 'Enter a public HTTPS URL.';
+      if (['CALL_PHONE', 'PHONE'].includes(actionType) && blank(button.primaryActionConfig?.phone || button.phone)) errors[`button_${index}_value`] = 'Enter a phone number.';
+      if (actionType === 'SEND_MESSAGE' && blank(button.primaryActionConfig?.message || button.message)) errors[`button_${index}_value`] = 'Enter the message to send.';
+      if (actionType === 'START_FLOW' && blank(button.primaryActionConfig?.targetFlowId || button.targetFlowId)) errors[`button_${index}_value`] = 'Select a published flow.';
+      if (blank(button.id || button.payload)) {
         errors[`button_${index}_value`] = 'Button payload is required.';
       }
     });
   }
   if (nodeType === 'list_message') {
     if (!(config.rows || []).length) errors.rows = 'Add at least one list option.';
+    if ((config.rows || []).length > 10) errors.rows = 'A WhatsApp list section supports at most 10 rows.';
+    (config.rows || []).forEach((row, index) => { if (String(row.title || '').length > 24) errors[`button_${index}_title`] = 'List row titles may contain at most 24 characters.'; });
   }
   if (nodeType === 'image_message') {
     const sourceType = config.sourceType || (config.whatsappMediaId ? 'media_id' : 'url');

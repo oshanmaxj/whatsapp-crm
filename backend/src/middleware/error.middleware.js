@@ -1,13 +1,21 @@
 const logger = require('../config/logger');
 
 module.exports = (err, req, res, next) => {
-  const status = err.status || 500;
+  const status = err.status || err.statusCode || (err.type === 'entity.too.large' ? 413 : 500);
+  const uploadCode = err.code || (status === 413 ? 'REQUEST_TOO_LARGE' : null);
   const requestId = req.headers['x-request-id'] || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const response = {
     success: false,
-    message: status >= 500 && !err.exposeMessage ? 'Internal server error' : (err.message || 'Request failed'),
+    message: status === 413 && !err.uploadError
+      ? 'Request exceeds the CRM upload limit.'
+      : (status >= 500 && !err.exposeMessage ? 'Internal server error' : (err.message || 'Request failed')),
     requestId
   };
+  if (err.uploadError || status === 413) {
+    response.error = uploadCode;
+    response.code = uploadCode;
+    response.rejectedLayer = err.rejectedLayer || 'app';
+  }
 
   if (err.details) {
     response.details = err.details;
@@ -32,9 +40,14 @@ module.exports = (err, req, res, next) => {
     'LEAD_STATUS_ACTIVITY_FAILED','LEAD_STATUS_AUDIT_FAILED','INVALID_DATE_RANGE','UNIFIED_LEAD_STATUS_CONFLICT',
     'SLIP_MEDIA_MISSING','SLIP_FILE_TOO_LARGE','SLIP_UNSUPPORTED_FILE','SLIP_MESSAGE_NOT_FOUND','SLIP_FILE_ACCESS_DENIED',
     'PAYMENT_SLIP_NOT_FOUND','PAYMENT_SLIP_ALREADY_PROCESSED','PAYMENT_SLIP_DUPLICATE','INSTALLMENT_REQUIRED',
-    'FEE_INSTALLMENT_MISMATCH','STUDENT_FEE_MISMATCH','INVALID_CONFIRMED_AMOUNT','INVALID_SLIP_ACTION'
+    'FEE_INSTALLMENT_MISMATCH','STUDENT_FEE_MISMATCH','INVALID_CONFIRMED_AMOUNT','INVALID_SLIP_ACTION',
+    'FILE_TOO_LARGE','REQUEST_TOO_LARGE','MEDIA_FILE_REQUIRED','INTERACTIVE_MEDIA_TYPE_UNSUPPORTED',
+    'INTERACTIVE_MEDIA_MIME_UNSUPPORTED','INTERACTIVE_MEDIA_EMPTY','INTERACTIVE_MEDIA_TOO_LARGE',
+    'INTERACTIVE_MEDIA_INVALID','INTERACTIVE_MEDIA_CONTENT_INVALID','INTERACTIVE_VIDEO_CODEC_UNSUPPORTED',
+    'INTERACTIVE_VIDEO_AUDIO_UNSUPPORTED','MEDIA_STORAGE_FAILED','META_MEDIA_ID_MISSING','UPLOAD_INVALID'
   ].includes(err.code)) {
     response.code = err.code;
+    if (err.uploadError || String(err.code).includes('MEDIA') || err.code === 'FILE_TOO_LARGE') response.error = err.code;
   }
 
   logger[status >= 500 ? 'error' : 'warn']('request_failed', {
@@ -43,7 +56,9 @@ module.exports = (err, req, res, next) => {
     method: req.method,
     path: req.originalUrl,
     userId: req.user?.id || null,
-    error: err
+    errorCode: uploadCode,
+    rejectedLayer: err.rejectedLayer || (err.uploadError ? 'app' : null),
+    message: err.message
   });
 
   if (process.env.NODE_ENV === 'development') {

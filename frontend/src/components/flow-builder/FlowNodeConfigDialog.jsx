@@ -8,8 +8,8 @@ import CloseIcon from '@mui/icons-material/Close';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import InsertEmoticonIcon from '@mui/icons-material/InsertEmoticon';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
-import { uploadFlowMedia } from '../../services/flowBuilder.service';
-import { compatibleButton, FLOW_VARIABLES, nodeConfigErrors, normalizeKeywords } from './flowBuilderConfig';
+import { flowMediaUploadError, uploadFlowMedia } from '../../services/flowBuilder.service';
+import { applyInteractiveMediaUpload, compatibleButton, FLOW_VARIABLES, nodeConfigErrors, normalizeKeywords } from './flowBuilderConfig';
 
 const EMOJIS = ['😊', '👍', '🙏', '🎉', '❤️', '👋'];
 const clone = (value) => JSON.parse(JSON.stringify(value || {}));
@@ -451,25 +451,15 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
           dataBase64: nextConfig.headerMediaDataBase64
         }, { onUploadProgress: (event) => setUploadProgress(event.total ? Math.min(99, Math.round((event.loaded * 100) / event.total)) : 50) });
         const media = response.data.data;
-        nextConfig = {
-          ...nextConfig,
-          headerType,
-          headerMediaType: headerType,
-          headerMediaId: media.mediaId || media.whatsappMediaId,
-          headerMediaAccountId: media.whatsappAccountId,
-          headerMediaLocalRef: media.localMediaRef,
-          headerMediaMimeType: media.mimeType,
-          headerMediaFileName: media.fileName,
-          headerMediaSize: media.size,
-          headerMediaDataBase64: '',
-          headerMediaPreview: '',
-          headerMediaUrl: ''
-        };
+        nextConfig = applyInteractiveMediaUpload(nextConfig, media, headerType);
         setUploadProgress(100);
       }
       onSave({ label: label.trim(), config: nextConfig });
     } catch (error) {
-      setErrors({ form: error.response?.data?.message || error.message || 'Unable to save node.' });
+      const mediaType = node.data.nodeType === 'interactive_message'
+        ? (config.headerType === 'media' ? config.headerMediaType : config.headerType)
+        : 'image';
+      setErrors({ form: flowMediaUploadError(error, mediaType || 'file') });
     } finally {
       setSaving(false);
     }

@@ -97,7 +97,7 @@ test('media ID from another WhatsApp account is rejected', async () => {
 
 test('invalid MIME type and oversized media are rejected before upload', () => {
   assert.throws(() => validateMedia({ mediaType: 'image', mimeType: 'image/gif', size: 100, fileName: 'x.gif' }), { code: 'INTERACTIVE_MEDIA_MIME_UNSUPPORTED' });
-  assert.throws(() => validateMedia({ mediaType: 'image', mimeType: 'image/jpeg', size: 6 * 1024 * 1024, fileName: 'x.jpg' }), { code: 'INTERACTIVE_MEDIA_TOO_LARGE' });
+  assert.throws(() => validateMedia({ mediaType: 'image', mimeType: 'image/jpeg', size: 6 * 1024 * 1024, fileName: 'x.jpg' }), { code: 'FILE_TOO_LARGE' });
 });
 
 test('list messages block media headers', () => {

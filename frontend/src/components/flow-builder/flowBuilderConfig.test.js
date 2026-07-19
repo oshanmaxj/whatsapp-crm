@@ -1,4 +1,4 @@
-import { buttonActionFields, compatibleButton, nodeConfigErrors, normalizeKeywords } from './flowBuilderConfig';
+import { applyInteractiveMediaUpload, buttonActionFields, compatibleButton, nodeConfigErrors, normalizeKeywords } from './flowBuilderConfig';
 
 test('button action types expose only relevant fields', () => {
   expect(buttonActionFields('SEND_MESSAGE')).toEqual(['message']);
@@ -31,4 +31,15 @@ test('advanced trigger and action validation supports Unicode and required actio
 test('interactive media headers require a valid uploaded or pending source', () => {
   expect(nodeConfigErrors('interactive_message', { message: 'Choose', headerType: 'image', buttons: [{ id: 'b', title: 'Go' }] }).headerMedia).toMatch(/select/i);
   expect(nodeConfigErrors('interactive_message', { message: 'Choose', headerType: 'image', headerMediaId: 'meta-1', headerMediaAccountId: 7, headerMediaMimeType: 'image/jpeg', headerMediaSize: 1024, buttons: [{ id: 'b', title: 'Go' }] }).headerMedia).toBeUndefined();
+});
+
+test('node save applies the successful multipart upload result and removes embedded base64', () => {
+  const saved = applyInteractiveMediaUpload({ message: 'Choose', headerMediaDataBase64: 'large-base64', headerMediaPreview: 'data:image/jpeg;base64,large-base64' }, {
+    mediaId: 'meta-1234', whatsappAccountId: '7', localMediaRef: 'flow/22/header.jpg',
+    mimeType: 'image/jpeg', fileName: 'header.jpg', size: 1024
+  }, 'image');
+  expect(saved.headerMediaId).toBe('meta-1234');
+  expect(saved.headerMediaAccountId).toBe('7');
+  expect(saved.headerMediaDataBase64).toBe('');
+  expect(saved.headerMediaPreview).toBe('');
 });

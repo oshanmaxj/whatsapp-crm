@@ -26,7 +26,9 @@ const MEDIA_RULES = Object.freeze({
 });
 
 function mediaError(message, code, status = 422) {
-  return Object.assign(new Error(message), { code, status, exposeMessage: true });
+  return Object.assign(new Error(message), {
+    code, status, exposeMessage: true, uploadError: true, rejectedLayer: 'app'
+  });
 }
 
 function safeFilename(value, fallback = 'media') {
@@ -48,7 +50,10 @@ function validateMedia({ mediaType, mimeType, size, fileName }) {
   if (!rule) throw mediaError('Interactive headers support image, video, or document media.', 'INTERACTIVE_MEDIA_TYPE_UNSUPPORTED');
   if (!rule.mimeTypes.has(mime)) throw mediaError(`Unsupported ${type} type: ${mime || 'unknown'}.`, 'INTERACTIVE_MEDIA_MIME_UNSUPPORTED');
   if (!Number.isSafeInteger(bytes) || bytes <= 0) throw mediaError('The selected media file is empty.', 'INTERACTIVE_MEDIA_EMPTY');
-  if (bytes > rule.maxBytes) throw mediaError(`The selected ${type} exceeds the WhatsApp ${Math.floor(rule.maxBytes / 1024 / 1024)} MB limit.`, 'INTERACTIVE_MEDIA_TOO_LARGE');
+  if (bytes > rule.maxBytes) {
+    const label = type.charAt(0).toUpperCase() + type.slice(1);
+    throw mediaError(`${label} exceeds the ${Math.floor(rule.maxBytes / 1024 / 1024)} MB WhatsApp limit.`, 'FILE_TOO_LARGE', 413);
+  }
   return { mediaType: type, mimeType: mime, size: bytes, fileName: safeFilename(fileName, type) };
 }
 
@@ -124,15 +129,19 @@ class InteractiveMediaService {
     this.logger = dependencies.logger || logger;
   }
 
-  async storeAndUpload({ scope = 'flow', scopeId, dataBase64, fileName, mimeType, mediaType, whatsappAccountId }) {
+  async storeAndUpload({ scope = 'flow', scopeId, buffer: suppliedBuffer, dataBase64, fileName, mimeType, mediaType, whatsappAccountId }) {
     if (!whatsappAccountId) throw mediaError('Select a WhatsApp account before uploading interactive media.', 'WHATSAPP_ACCOUNT_REQUIRED');
-    const buffer = decodeBase64(dataBase64);
+    const buffer = Buffer.isBuffer(suppliedBuffer) ? suppliedBuffer : decodeBase64(dataBase64);
     const valid = validateMedia({ mediaType, mimeType, size: buffer.length, fileName });
     validateFileContent(buffer, valid);
     const relative = path.join(safeFilename(scope, 'flow'), safeFilename(scopeId, 'unknown'), `${crypto.randomUUID()}-${valid.fileName}`);
     const filePath = resolvePrivatePath(relative);
-    await fsp.mkdir(path.dirname(filePath), { recursive: true });
-    await fsp.writeFile(filePath, buffer, { flag: 'wx' });
+    try {
+      await fsp.mkdir(path.dirname(filePath), { recursive: true });
+      await fsp.writeFile(filePath, buffer, { flag: 'wx' });
+    } catch (_) {
+      throw mediaError('Unable to store the media file. Try again or contact an administrator.', 'MEDIA_STORAGE_FAILED', 500);
+    }
     try {
       const uploaded = await this.whatsappService.uploadMedia({
         filePath,

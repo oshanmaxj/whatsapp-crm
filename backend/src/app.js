@@ -43,7 +43,7 @@ const defaultJsonParser = express.json({
   }
 });
 app.use((req, res, next) => {
-  if (/^\/api\/(?:flows\/[^/]+\/media|chat\/conversations\/[^/]+\/interactive)$/.test(req.path)) return next();
+  if (/^\/api\/chat\/conversations\/[^/]+\/interactive$/.test(req.path)) return next();
   return defaultJsonParser(req, res, next);
 });
 app.use(express.urlencoded({ extended: false }));

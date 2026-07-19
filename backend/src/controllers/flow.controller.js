@@ -66,7 +66,21 @@ class FlowController {
   async uploadMedia(req, res, next) {
     try {
       await assertFlowAccess(req);
-      return res.status(201).json({ success: true, data: await flowService.uploadFlowMedia(req.params.id, req.body, req.user?.id || null) });
+      if (!req.file?.buffer?.length) {
+        throw Object.assign(new Error('Select a media file before uploading.'), {
+          code: 'MEDIA_FILE_REQUIRED', status: 400, rejectedLayer: 'app', uploadError: true, exposeMessage: true
+        });
+      }
+      return res.status(201).json({
+        success: true,
+        data: await flowService.uploadFlowMedia(req.params.id, {
+          ...req.body,
+          buffer: req.file.buffer,
+          fileName: req.file.originalname,
+          mimeType: req.file.mimetype,
+          size: req.file.size
+        }, req.user?.id || null)
+      });
     } catch (err) { next(err); }
   }
 

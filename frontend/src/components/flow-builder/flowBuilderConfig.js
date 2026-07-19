@@ -24,6 +24,23 @@ export function compatibleButton(button = {}) {
   return { ...button, primaryActionType, primaryActionConfig, automationActions: button.automationActions || [] };
 }
 
+export function applyInteractiveMediaUpload(config, media, headerType) {
+  return {
+    ...config,
+    headerType,
+    headerMediaType: headerType,
+    headerMediaId: media.mediaId || media.whatsappMediaId,
+    headerMediaAccountId: media.whatsappAccountId,
+    headerMediaLocalRef: media.localMediaRef,
+    headerMediaMimeType: media.mimeType,
+    headerMediaFileName: media.fileName,
+    headerMediaSize: media.size,
+    headerMediaDataBase64: '',
+    headerMediaPreview: '',
+    headerMediaUrl: ''
+  };
+}
+
 export function normalizeKeywords(value) {
   if (Array.isArray(value)) {
     return value

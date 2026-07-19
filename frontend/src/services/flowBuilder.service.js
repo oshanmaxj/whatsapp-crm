@@ -6,7 +6,37 @@ export const createFlow = (payload) => api.post('/flows', payload);
 export const updateFlow = (id, payload) => api.patch(`/flows/${id}`, payload);
 export const deleteFlow = (id) => api.delete(`/flows/${id}`);
 export const saveFlowBuilder = (id, payload) => api.post(`/flows/${id}/save-builder`, payload);
-export const uploadFlowMedia = (id, payload, config = {}) => api.post(`/flows/${id}/media`, payload, config);
+function base64Blob(dataBase64, mimeType) {
+  const binary = atob(String(dataBase64 || '').replace(/^data:[^;]+;base64,/, ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mimeType || 'application/octet-stream' });
+}
+
+export const uploadFlowMedia = (id, payload, config = {}) => {
+  const form = new FormData();
+  const fileName = payload.fileName || 'flow-media';
+  const mimeType = payload.mimeType || 'application/octet-stream';
+  form.append('file', base64Blob(payload.dataBase64, mimeType), fileName);
+  if (payload.whatsappAccountId) form.append('whatsappAccountId', String(payload.whatsappAccountId));
+  if (payload.mediaType) form.append('mediaType', payload.mediaType);
+  return api.post(`/flows/${id}/media`, form, { timeout: 120000, ...config });
+};
+
+export function flowMediaUploadError(error, mediaType = 'file') {
+  const status = error?.response?.status;
+  const data = error?.response?.data;
+  const code = data?.error || data?.code;
+  if (code === 'FILE_TOO_LARGE' || status === 413) {
+    if (typeof data?.message === 'string' && data.message) return data.message;
+    return `The ${mediaType} upload was rejected by Nginx or an upstream proxy because the request is too large.`;
+  }
+  if (code === 'INTERACTIVE_MEDIA_MIME_UNSUPPORTED') return data.message || `Unsupported ${mediaType} type.`;
+  if (code === 'MEDIA_STORAGE_FAILED') return data.message || 'CRM storage failed while saving the media.';
+  if (error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) return 'Media upload timed out after 120 seconds. Check the proxy body timeout and connection.';
+  if (!error?.response) return 'The upload was blocked before it reached CRM, likely by Nginx or an upstream proxy. Verify the active HTTPS server block and proxy limits.';
+  return data?.message || error.message || 'Media upload failed.';
+}
 export const publishFlow = (id) => api.post(`/flows/${id}/publish`);
 export const unpublishFlow = (id) => api.post(`/flows/${id}/unpublish`);
 export const duplicateFlow = (id) => api.post(`/flows/${id}/duplicate`);

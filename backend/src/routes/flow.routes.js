@@ -2,6 +2,7 @@ const express = require('express');
 const flowController = require('../controllers/flow.controller');
 const authMiddleware = require('../middleware/auth.middleware');
 const requirePermission = require('../middleware/permission.middleware');
+const flowMediaUpload = require('../middleware/flowMediaUpload.middleware');
 
 const router = express.Router();
 
@@ -14,7 +15,8 @@ router.post('/', requirePermission('flow-builder.create'), flowController.create
 router.patch('/:id', requirePermission('flow-builder.edit'), flowController.update.bind(flowController));
 router.delete('/:id', requirePermission('flow-builder.delete'), flowController.remove.bind(flowController));
 router.post('/:id/save-builder', requirePermission('flow-builder.edit'), flowController.saveBuilder.bind(flowController));
-router.post('/:id/media', express.json({ limit: '140mb' }), requirePermission('flow-builder.edit'), flowController.uploadMedia.bind(flowController));
+router.get('/:id/media/diagnostics', requirePermission('flow-builder.edit'), flowMediaUpload.diagnostics);
+router.post('/:id/media', requirePermission('flow-builder.edit'), flowMediaUpload.flowMediaUpload, flowController.uploadMedia.bind(flowController));
 router.post('/:id/publish', requirePermission('flow-builder.publish'), flowController.publish.bind(flowController));
 router.post('/:id/unpublish', requirePermission('flow-builder.publish'), flowController.unpublish.bind(flowController));
 router.post('/:id/test', requirePermission('flow-builder.test'), flowController.test.bind(flowController));

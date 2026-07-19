@@ -588,7 +588,7 @@ class FlowService {
     if (!whatsappAccountId) throw Object.assign(new Error('Select a WhatsApp account before uploading flow media.'), { status: 422, code: 'WHATSAPP_ACCOUNT_REQUIRED' });
     if (userId) await whatsappAccountAccessService.assertAccess(whatsappAccountId, userId);
     const binding = await interactiveMediaService.storeAndUpload({
-      scope: 'flow', scopeId: flow.id, dataBase64: payload.dataBase64,
+      scope: 'flow', scopeId: flow.id, buffer: payload.buffer, dataBase64: payload.dataBase64,
       fileName: payload.fileName, mimeType: payload.mimeType,
       mediaType: payload.mediaType, whatsappAccountId
     });

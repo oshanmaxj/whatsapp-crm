@@ -17,12 +17,12 @@ class PaymentReceiptJobService {
     this.randomUUID = dependencies.randomUUID || crypto.randomUUID;
   }
 
-  async enqueue(receiptId, jobType, { actorUserId = null, manual = false } = {}) {
+  async enqueue(receiptId, jobType, { actorUserId = null, manual = false, conversationId = null, whatsappAccountId = null } = {}) {
     const stable = manual ? this.randomUUID() : 'auto';
     const dedupeKey = `receipt:${receiptId}:${jobType}:${stable}`;
     const [job] = await this.Job.findOrCreate({
       where: { dedupeKey },
-      defaults: { receiptId, jobType, dedupeKey, actorUserId, manual, status: 'QUEUED', runAfter: new Date() }
+      defaults: { receiptId, jobType, dedupeKey, actorUserId, manual, conversationId, whatsappAccountId, status: 'QUEUED', runAfter: new Date() }
     });
     setImmediate(() => this.processDue().catch((error) => this.logger.warn('payment_receipt_job_wakeup_failed', { message: error.message })));
     return job;
@@ -59,9 +59,15 @@ class PaymentReceiptJobService {
       if (job.jobType === 'GENERATE_PDF') {
         await this.pdfService.generate(job.receiptId);
         const settings = await this.settingsService.get();
-        if (settings.autoSendWhatsapp && !job.manual) await this.enqueueWhatsapp(job.receiptId, { manual: false, actorUserId: job.actorUserId });
+        if (settings.autoSendWhatsapp && !job.manual) await this.enqueueWhatsapp(job.receiptId, {
+          manual: false, actorUserId: job.actorUserId,
+          conversationId: job.conversationId, whatsappAccountId: job.whatsappAccountId
+        });
       } else if (job.jobType === 'SEND_WHATSAPP') {
-        await this.deliveryService.send(job.receiptId, { manual: job.manual, actorUserId: job.actorUserId });
+        await this.deliveryService.send(job.receiptId, {
+          manual: job.manual, actorUserId: job.actorUserId,
+          conversationId: job.conversationId, whatsappAccountId: job.whatsappAccountId
+        });
       } else {
         throw new Error(`Unsupported receipt job type: ${job.jobType}`);
       }

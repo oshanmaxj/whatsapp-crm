@@ -34,6 +34,8 @@ module.exports = (sequelize, DataTypes) => sequelize.define('PaymentReceipt', {
   voidedAt: { type: DataTypes.DATE, allowNull: true },
   whatsappSentAt: { type: DataTypes.DATE, allowNull: true },
   whatsappMessageId: { type: DataTypes.STRING(255), allowNull: true },
+  conversationId: { type: DataTypes.BIGINT, allowNull: true },
+  whatsappAccountId: { type: DataTypes.BIGINT, allowNull: true },
   deletedAt: { type: DataTypes.DATE, allowNull: true }
 }, {
   tableName: 'payment_receipts', timestamps: true, paranoid: true, underscored: true,

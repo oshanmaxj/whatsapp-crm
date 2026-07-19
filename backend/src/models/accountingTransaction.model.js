@@ -11,7 +11,9 @@ module.exports = (sequelize, DataTypes) => {
     relatedStudentId: { type: DataTypes.BIGINT, allowNull: true, field: 'related_student_id' },
     relatedCourseId: { type: DataTypes.BIGINT, allowNull: true, field: 'related_course_id' },
     relatedCampaignId: { type: DataTypes.BIGINT, allowNull: true, field: 'related_campaign_id' },
-    createdBy: { type: DataTypes.BIGINT, allowNull: true, field: 'created_by' }
+    createdBy: { type: DataTypes.BIGINT, allowNull: true, field: 'created_by' },
+    sourceConversationId: { type: DataTypes.BIGINT, allowNull: true, field: 'source_conversation_id' },
+    whatsappAccountId: { type: DataTypes.BIGINT, allowNull: true, field: 'whatsapp_account_id' }
   }, {
     tableName: 'accounting_transactions',
     timestamps: true,

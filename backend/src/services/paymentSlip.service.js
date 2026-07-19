@@ -248,7 +248,16 @@ class PaymentSlipService {
     const source = await Message.findByPk(slip.whatsappMessageId);
     if (!source?.fromNumber) { await PaymentSlip.update({ [field]: null }, { where: { id: slip.id } }); return { status: 'skipped' }; }
     const text = message || 'ඔබගේ payment slip එක ලැබුණා. එය පරීක්ෂා කිරීම සඳහා යොමු කර ඇත.';
-    try { await messageQueueService.enqueue({ channel: 'whatsapp', messageType: 'text', to: source.fromNumber, whatsappAccountId: slip.whatsappAccountId, payload: { text, paymentSlipId: slip.id, acknowledgementType: kind } }); }
+    try { await messageQueueService.enqueue({
+      channel: 'whatsapp', messageType: 'text', to: source.fromNumber,
+      whatsappAccountId: slip.whatsappAccountId, conversationId: slip.conversationId,
+      contactId: slip.contactId || source.contactId,
+      payload: {
+        text, paymentSlipId: slip.id, acknowledgementType: kind,
+        conversationId: slip.conversationId, whatsappAccountId: slip.whatsappAccountId,
+        contactId: slip.contactId || source.contactId, sourceMessageId: source.id
+      }
+    }); }
     catch (error) { await PaymentSlip.update({ [field]: null }, { where: { id: slip.id } }); throw error; }
     slip[field] = new Date();
     return { status: 'queued' };
@@ -319,10 +328,11 @@ class PaymentSlipService {
       const payment = await AccountingTransaction.create({
         type: 'income', date, amount, categoryId: category.id,
         paymentMethod: 'bank', referenceNo: slip.referenceNumber || `WHATSAPP-SLIP-${slip.id}`,
-        description: `Verified WhatsApp payment slip #${slip.id}`, relatedStudentId: selectedStudentId, createdBy: reviewerUserId
+        description: `Verified WhatsApp payment slip #${slip.id}`, relatedStudentId: selectedStudentId, createdBy: reviewerUserId,
+        sourceConversationId: slip.conversationId, whatsappAccountId: slip.whatsappAccountId
       }, { transaction });
       const installmentPaid = money(Number(installment.paidAmount) + amount);
-      await installment.update({ paidAmount: installmentPaid, pendingPaymentAmount: null, paidDate: date, paymentMethod: 'Bank Transfer', transactionReference: slip.referenceNumber, status: 'confirmed', confirmedBy: reviewerUserId, confirmedAt: new Date(), accountingTransactionId: payment.id }, { transaction });
+      await installment.update({ paidAmount: installmentPaid, pendingPaymentAmount: null, paidDate: date, paymentMethod: 'Bank Transfer', transactionReference: slip.referenceNumber, status: 'confirmed', confirmedBy: reviewerUserId, confirmedAt: new Date(), accountingTransactionId: payment.id, sourceConversationId: slip.conversationId, whatsappAccountId: slip.whatsappAccountId }, { transaction });
       const feePaid = money(await FeeInstallment.sum('paidAmount', { where: { studentFeeId: fee.id }, transaction }));
       const balance = money(Math.max(Number(fee.totalAmount) - feePaid, 0));
       await fee.update({ paidAmount: feePaid, balance, status: balance <= 0 ? 'paid' : feePaid > 0 ? 'partial' : fee.status }, { transaction });

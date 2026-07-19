@@ -4,6 +4,7 @@ const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappTemplateService = require('./whatsappTemplate.service');
 const conversationAccessService = require('./conversationAccess.service');
 const { normalizePhone: normalizeWhatsAppNumber } = require('../utils/phone');
+const { Op } = require('sequelize');
 
 function previewText(message) {
   if (!message) return null;
@@ -332,7 +333,7 @@ class ChatService {
   }
 
   async getUnreadCountsForUser(userId) {
-    const where = await conversationAccessService.whereForUser(userId);
+    const where = await conversationAccessService.scopedWhere(userId, { status: { [Op.ne]: 'archived' } });
     const conversations = await Conversation.findAll({
       where,
       attributes: ['id']
@@ -354,7 +355,7 @@ class ChatService {
   }
 
   async getConversationList(userId) {
-    const where = await conversationAccessService.whereForUser(userId);
+    const where = await conversationAccessService.scopedWhere(userId, { status: { [Op.ne]: 'archived' } });
     return Conversation.findAll({
       where,
       order: [['updated_at', 'DESC']]

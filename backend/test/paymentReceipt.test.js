@@ -208,12 +208,16 @@ test('delivery sends once automatically, permits manual resend and audits it', a
   const receipt = row({ id: 1, status: 'ACTIVE', pdfStorageKey: '2026/a.pdf', studentId: 5, studentPhoneSnapshot: '94771234567', receiptNumber: 'RCPT-2026-000001', paidAmount: 25000, remainingBalance: 50000, courseNameSnapshot: 'Course' });
   let sends = 0;
   const audits = [];
+  const conversation = row({ id: 10, contactId: 6, whatsappAccountId: 3, status: 'open' });
+  const outbound = { prepare: async (payload) => ({ payload, conversation, message: row({ id: 30, rawPayload: {} }) }), complete: async () => {}, fail: async () => {} };
   const service = createPaymentReceiptDeliveryService({
     PaymentReceipt: { findByPk: async () => receipt }, Student: { findByPk: async () => ({ id: 5, contactId: 6, phone: '94771234567' }) },
     Conversation: { findOne: async () => ({ id: 10, whatsappAccountId: 3 }) }, Message: { findOne: async () => ({ id: 22 }) },
     receiptStorageService: { resolveKey: () => 'C:\\private\\receipt.pdf' },
     whatsappService: { uploadMedia: async () => ({ id: 'media-1' }), sendMediaMessage: async () => { sends += 1; return { messages: [{ id: `wamid-${sends}` }] }; } },
     auditService: { async record(entry) { audits.push(entry); } }
+    , canonicalConversationService: { resolveCanonicalWhatsAppConversation: async () => conversation }
+    , outboundHistoryService: outbound
   });
   await service.send(1, { manual: false });
   const retry = await service.send(1, { manual: false });
@@ -224,10 +228,12 @@ test('delivery sends once automatically, permits manual resend and audits it', a
 });
 
 test('outside the WhatsApp service window reports the template requirement clearly', async () => {
+  const conversation = { id: 10, contactId: 6, whatsappAccountId: 3, status: 'open' };
   const service = createPaymentReceiptDeliveryService({
     PaymentReceipt: { findByPk: async () => row({ id: 1, status: 'ACTIVE', pdfStorageKey: 'a.pdf', studentId: 5 }) },
     Student: { findByPk: async () => ({ contactId: 6, phone: '9477' }) }, Conversation: { findOne: async () => ({ id: 10, whatsappAccountId: 3 }) },
-    Message: { findOne: async () => null }
+    Message: { findOne: async () => null },
+    canonicalConversationService: { resolveCanonicalWhatsAppConversation: async () => conversation }
   });
   await assert.rejects(() => service.send(1), { code: 'RECEIPT_WHATSAPP_TEMPLATE_REQUIRED' });
 });

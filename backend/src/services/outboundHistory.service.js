@@ -1,140 +1,124 @@
 const { Op } = require('sequelize');
-const { Contact, Conversation, Message } = require('../models');
+const models = require('../models');
 const logger = require('../config/logger');
 const socketService = require('./socket.service');
-const conversationIdentityService = require('./conversationIdentity.service');
+const canonicalConversationService = require('./canonicalWhatsappConversation.service');
 const { normalizePhone, requireNormalizedPhone } = require('../utils/phone');
 
-function contactName(contact, fallback) {
-  return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || fallback || 'WhatsApp contact';
-}
+function createOutboundHistoryService(dependencies = {}) {
+  const Contact = dependencies.Contact || models.Contact;
+  const Message = dependencies.Message || models.Message;
+  const canonical = dependencies.canonicalConversationService || canonicalConversationService;
+  const sockets = dependencies.socketService || socketService;
+  const log = dependencies.logger || logger;
 
-class OutboundHistoryService {
-  async resolveContact({ contactId, phone, name }) {
+  async function resolveContact({ contactId, phone, name }) {
     if (contactId) {
       const byId = await Contact.findByPk(contactId);
       if (byId) return byId;
     }
-
     const normalized = requireNormalizedPhone(phone);
     const candidates = await Contact.findAll({
-      where: {
-        [Op.or]: [
-          { normalizedPhone: normalized },
-          { phone: normalized },
-          { whatsappId: normalized },
-          { phone: { [Op.like]: `%${normalized.slice(-7)}` } },
-          { whatsappId: { [Op.like]: `%${normalized.slice(-7)}` } }
-        ]
-      },
-      limit: 20
+      where: { [Op.or]: [
+        { normalizedPhone: normalized }, { phone: normalized }, { whatsappId: normalized },
+        { phone: { [Op.like]: `%${normalized.slice(-7)}` } },
+        { whatsappId: { [Op.like]: `%${normalized.slice(-7)}` } }
+      ] }, limit: 20
     });
-    let contact = candidates.find((candidate) => (
-      normalizePhone(candidate.phone) === normalized
-      || normalizePhone(candidate.whatsappId) === normalized
-    ));
-    if (contact) return contact;
-
+    const existing = candidates.find((candidate) => normalizePhone(candidate.phone) === normalized || normalizePhone(candidate.whatsappId) === normalized);
+    if (existing) return existing;
     const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-    [contact] = await Contact.findOrCreate({
-      where: { phone: normalized },
-      defaults: {
-        phone: normalized,
-        whatsappId: normalized,
-        firstName: parts.shift() || 'WhatsApp',
-        lastName: parts.join(' ') || null,
-        status: 'active',
-        whatsappAccountId: null
-      }
-    });
-    return contact;
+    const [created] = await Contact.findOrCreate({ where: { phone: normalized }, defaults: {
+      phone: normalized, whatsappId: normalized, firstName: parts.shift() || 'WhatsApp',
+      lastName: parts.join(' ') || null, status: 'active', whatsappAccountId: null
+    } });
+    return created;
   }
 
-  async resolveConversation({ conversationId, contact, leadId, whatsappAccountId = null }) {
-    if (conversationId) {
-      const byId = await Conversation.findByPk(conversationId);
-      if (byId) {
-        whatsappAccountId = byId.whatsappAccountId ?? whatsappAccountId;
-        leadId = byId.leadId || leadId;
-      }
-    }
-
-    const result = await conversationIdentityService.findOrCreateByPhoneAndAccount({
+  async function prepare(payload) {
+    const contact = await resolveContact(payload);
+    const conversation = await canonical.resolveCanonicalWhatsAppConversation({
+      preferredConversationId: payload.conversationId,
+      sourceMessageId: payload.sourceMessageId,
+      paymentSlipId: payload.paymentSlipId,
       contactId: contact.id,
-      phone: contact.phone,
-      whatsappId: contact.whatsappId,
-      leadId,
-      whatsappThreadId: [whatsappAccountId || 'default', contact.whatsappId || normalizePhone(contact.phone)].join(':'),
-      whatsappAccountId,
-      lastMessageAt: new Date()
+      whatsappAccountId: payload.whatsappAccountId
     });
-    return result.conversation;
-  }
-
-  async record(payload) {
-    try {
-      const contact = await this.resolveContact(payload);
-      const conversation = await this.resolveConversation({ ...payload, contact });
-      const now = new Date();
-      const values = {
-        whatsappMessageId: payload.whatsappMessageId || null,
-        conversationId: conversation.id,
-        contactId: contact.id,
-        sentByUserId: payload.sentByUserId || null,
-        direction: 'outbound',
-        channel: 'whatsapp',
-        type: payload.type || 'text',
-        messageType: payload.messageType || payload.type || 'text',
-        text: payload.text || null,
-        mediaId: payload.mediaId || null,
-        mediaUrl: payload.mediaUrl || null,
-        interactiveType: payload.interactiveType || null,
-        buttonPayload: payload.buttonPayload || null,
-        templateName: payload.templateName || null,
-        campaignId: payload.campaignId || null,
-        campaignRecipientId: payload.campaignRecipientId || null,
-        isInternalNotification: Boolean(payload.isInternalNotification),
-        sentToUserId: payload.sentToUserId || null,
-        sentToPhone: payload.sentToPhone || null,
-        fromNumber: payload.fromNumber || null,
-        toNumber: requireNormalizedPhone(payload.isInternalNotification ? payload.sentToPhone : payload.phone),
-        status: payload.status || 'sent',
-        statusUpdatedAt: now,
-        isRead: true,
-        rawPayload: payload.rawPayload || {}
-        , whatsappAccountId: payload.whatsappAccountId || conversation.whatsappAccountId || null
-      };
-
-      let message = values.whatsappMessageId
-        ? await Message.findOne({ where: { whatsappMessageId: values.whatsappMessageId } })
-        : null;
-      if (message) await message.update(values);
-      else message = await Message.create(values);
-
-      const preview = payload.isInternalNotification
-        ? `Assignment notification sent to ${payload.sentToUserName || contactName(null, 'agent')}`
-        : payload.text || payload.templateName || 'WhatsApp message';
-      await conversation.update({
-        lastMessage: preview,
-        lastMessageAt: now,
-        updatedAt: now
-      });
-
-      const event = message.toJSON();
-      socketService.emitToRoom(`conversation_${conversation.id}`, 'chat:message', event);
-      await socketService.emitToConversationAudience(conversation.id, 'chat:message', event);
-      return message;
-    } catch (error) {
-      logger.warn('outbound_chat_history_save_failed', {
-        phone: normalizePhone(payload.phone),
-        campaignId: payload.campaignId || null,
-        campaignRecipientId: payload.campaignRecipientId || null,
-        conversationId: payload.conversationId || null,
-        message: error.message
-      });
-      return null;
+    if (!conversation?.id || !conversation.whatsappAccountId) {
+      throw Object.assign(new Error('Outbound WhatsApp history requires a canonical conversation and account.'), { code: 'WHATSAPP_CONVERSATION_REQUIRED' });
     }
+    const now = new Date();
+    const values = {
+      whatsappMessageId: payload.whatsappMessageId || null,
+      conversationId: conversation.id, contactId: contact.id,
+      whatsappAccountId: conversation.whatsappAccountId,
+      sentByUserId: payload.sentByUserId || null, direction: 'outbound', channel: 'whatsapp',
+      type: payload.type || 'text', messageType: payload.messageType || payload.type || 'text',
+      text: payload.text || null, mediaId: payload.mediaId || null, mediaUrl: payload.mediaUrl || null,
+      interactiveType: payload.interactiveType || null, buttonPayload: payload.buttonPayload || null,
+      templateName: payload.templateName || null, campaignId: payload.campaignId || null,
+      campaignRecipientId: payload.campaignRecipientId || null,
+      isInternalNotification: Boolean(payload.isInternalNotification), sentToUserId: payload.sentToUserId || null,
+      sentToPhone: payload.sentToPhone || null, fromNumber: payload.fromNumber || null,
+      toNumber: requireNormalizedPhone(payload.isInternalNotification ? payload.sentToPhone : payload.phone),
+      status: payload.status || 'pending', statusUpdatedAt: now, isRead: true,
+      rawPayload: payload.rawPayload || {}
+    };
+    let message = payload.historyMessageId ? await Message.findByPk(payload.historyMessageId) : null;
+    if (!message && values.whatsappMessageId) message = await Message.findOne({ where: { whatsappMessageId: values.whatsappMessageId } });
+    if (message) await message.update(values);
+    else message = await Message.create(values);
+    return { contact, conversation, message, payload };
   }
+
+  async function emit(prepared) {
+    const event = prepared.message.toJSON ? prepared.message.toJSON() : prepared.message;
+    sockets.emitToRoom(`conversation_${prepared.conversation.id}`, 'chat:message', event);
+    await sockets.emitToConversationAudience(prepared.conversation.id, 'chat:message', event);
+  }
+
+  async function complete(prepared, result = {}) {
+    const now = new Date();
+    await prepared.message.update({
+      whatsappMessageId: result.whatsappMessageId || prepared.message.whatsappMessageId || null,
+      status: result.status || 'sent', statusUpdatedAt: now,
+      rawPayload: result.rawPayload || prepared.message.rawPayload || {}
+    });
+    await prepared.conversation.update({
+      lastMessage: prepared.payload.text || prepared.payload.templateName || 'WhatsApp message',
+      lastMessageAt: now, updatedAt: now
+    });
+    await emit(prepared);
+    return prepared.message;
+  }
+
+  async function fail(prepared, error) {
+    if (!prepared?.message) return;
+    await prepared.message.update({ status: 'failed', statusUpdatedAt: new Date(), rawPayload: {
+      ...(prepared.message.rawPayload || {}), deliveryError: String(error?.message || error).slice(0, 500)
+    } });
+    await emit(prepared);
+  }
+
+  return {
+    resolveContact, prepare, complete, fail,
+    async record(payload) {
+      try {
+        const prepared = await prepare(payload);
+        return await complete(prepared, {
+          whatsappMessageId: payload.whatsappMessageId,
+          status: payload.status || 'sent', rawPayload: payload.rawPayload
+        });
+      } catch (error) {
+        log.warn('outbound_chat_history_save_failed', {
+          phoneLast4: normalizePhone(payload.phone).slice(-4), campaignId: payload.campaignId || null,
+          conversationId: payload.conversationId || null, message: error.message
+        });
+        return null;
+      }
+    }
+  };
 }
 
-module.exports = new OutboundHistoryService();
+module.exports = createOutboundHistoryService();
+module.exports.createOutboundHistoryService = createOutboundHistoryService;

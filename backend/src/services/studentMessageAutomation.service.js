@@ -160,6 +160,9 @@ class StudentMessageAutomationService {
         to: student.phone,
         scheduledAt: event.scheduledAt || new Date(),
         maxAttempts: 3,
+        whatsappAccountId: event.whatsappAccountId || null,
+        conversationId: event.conversationId || null,
+        contactId: student.contactId || null,
         payload: {
           text: rendered.text,
           automationDispatchId: dispatch.id,
@@ -168,6 +171,11 @@ class StudentMessageAutomationService {
           contactId: student.contactId,
           leadId: student.leadId,
           studentName: student.name,
+          conversationId: event.conversationId || null,
+          whatsappAccountId: event.whatsappAccountId || null,
+          sourceMessageId: event.sourceMessageId || null,
+          paymentSlipId: event.paymentSlipId || null,
+          paymentId: event.paymentId || null,
           buttons: rendered.buttons
         }
       }, event.createdBy || null);

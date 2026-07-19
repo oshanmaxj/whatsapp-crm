@@ -39,6 +39,7 @@ const canonicalScheduledLessonLmsMigration = require('../../migrations/034_canon
 const persistentAuthSessionsMigration = require('../../migrations/035_add_persistent_auth_sessions');
 const whatsappPaymentSlipMigration = require('../../migrations/036_whatsapp_payment_slip_verification');
 const paymentReceiptsMigration = require('../../migrations/038_payment_receipts');
+const canonicalPaymentConversationMigration = require('../../migrations/039_canonical_payment_whatsapp_conversation');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -188,6 +189,8 @@ async function run() {
     console.log('Applied: WhatsApp payment slip verification');
     await paymentReceiptsMigration.up(queryInterface, Sequelize);
     console.log('Applied: canonical payment receipts');
+    await canonicalPaymentConversationMigration.up(queryInterface, Sequelize);
+    console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads
     await safeAddColumn(queryInterface, 'leads', 'ai_score', { type: DataTypes.INTEGER.UNSIGNED, allowNull: true });

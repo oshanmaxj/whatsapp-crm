@@ -27,6 +27,8 @@ class MessageQueueService {
       campaignId: payload.campaignId || null,
       campaignRecipientId: payload.campaignRecipientId || null,
       whatsappAccountId: payload.whatsappAccountId || payload.payload?.whatsappAccountId || null,
+      conversationId: payload.conversationId || payload.payload?.conversationId || null,
+      contactId: payload.contactId || payload.payload?.contactId || null,
       createdBy
     });
   }
@@ -63,22 +65,64 @@ class MessageQueueService {
   async processOne(row) {
     await row.update({ status: 'processing', attempts: row.attempts + 1 });
     if (row.campaignId) await Campaign.update({ status: 'Processing' }, { where: { id: row.campaignId, status: 'Scheduled' } });
+    let preparedHistory = null;
+    let deliveredMessageId = null;
+    let deliveryResponse = null;
+    let deliverySucceeded = false;
     try {
-      const response = await this.dispatch(row);
+      let queuePayload = row.payload || {};
+      const requiresCanonicalHistory = row.channel === 'whatsapp' && (
+        queuePayload.automationTemplateKey === 'payment_confirmation'
+        || queuePayload.paymentSlipId || queuePayload.paymentReceiptId
+      );
+      if (requiresCanonicalHistory) {
+        preparedHistory = await outboundHistoryService.prepare({
+          phone: row.toNumber, name: queuePayload.studentName || null,
+          contactId: row.contactId || queuePayload.contactId || null,
+          conversationId: row.conversationId || queuePayload.conversationId || null,
+          sourceMessageId: queuePayload.sourceMessageId || null,
+          paymentSlipId: queuePayload.paymentSlipId || null,
+          whatsappAccountId: row.whatsappAccountId || queuePayload.whatsappAccountId || null,
+          sentByUserId: row.createdBy || null,
+          type: row.messageType === 'document' ? 'document' : 'text',
+          messageType: queuePayload.paymentReceiptId ? 'payment_receipt' : (queuePayload.paymentSlipId ? 'payment_slip_acknowledgement' : 'automation'),
+          text: queuePayload.text || queuePayload.message || null,
+          mediaId: queuePayload.mediaId || null,
+          status: 'pending', historyMessageId: queuePayload.historyMessageId || null,
+          rawPayload: { source: queuePayload.paymentReceiptId ? 'payment_receipt' : (queuePayload.paymentSlipId ? 'payment_slip' : 'student_automation'), queueId: row.id }
+        });
+        const canonicalPayload = { ...queuePayload, historyMessageId: preparedHistory.message.id };
+        await row.update({
+          payload: canonicalPayload, contactId: preparedHistory.contact.id,
+          conversationId: preparedHistory.conversation.id,
+          whatsappAccountId: preparedHistory.conversation.whatsappAccountId
+        });
+        row.payload = canonicalPayload;
+      }
+      const response = await this.dispatch(row, preparedHistory?.conversation?.whatsappAccountId);
+      deliverySucceeded = true;
+      deliveryResponse = response;
       const externalMessageId = response?.id || response?.messages?.[0]?.id || null;
+      deliveredMessageId = externalMessageId;
       await row.update({
         status: 'sent',
         processedAt: new Date(),
         externalMessageId,
         lastError: null
       });
-      const queuePayload = row.payload || {};
+      if (preparedHistory) {
+        await outboundHistoryService.complete(preparedHistory, {
+          whatsappMessageId: externalMessageId, status: 'sent',
+          rawPayload: { ...(preparedHistory.message.rawPayload || {}), whatsapp: response }
+        });
+      }
+      queuePayload = row.payload || {};
       if (queuePayload.automationDispatchId) {
         await StudentAutomationDispatch.update(
           { status: 'sent' },
           { where: { id: queuePayload.automationDispatchId } }
         );
-        await outboundHistoryService.record({
+        if (!preparedHistory) await outboundHistoryService.record({
           phone: row.toNumber,
           name: queuePayload.studentName || null,
           contactId: queuePayload.contactId || null,
@@ -167,6 +211,23 @@ class MessageQueueService {
       }
       return row;
     } catch (error) {
+      if (deliverySucceeded) {
+        if (preparedHistory && preparedHistory.message.status !== 'sent') {
+          await outboundHistoryService.complete(preparedHistory, {
+            whatsappMessageId: deliveredMessageId, status: 'sent',
+            rawPayload: { ...(preparedHistory.message.rawPayload || {}), whatsapp: deliveryResponse }
+          }).catch((historyError) => logger.error('delivered_payment_message_history_incomplete', {
+            queueId: row.id, conversationId: preparedHistory.conversation.id, message: historyError.message
+          }));
+        }
+        await row.update({ status: 'sent', processedAt: new Date(), externalMessageId: deliveredMessageId, lastError: null });
+        const deliveredPayload = row.payload || {};
+        if (deliveredPayload.automationDispatchId) {
+          await StudentAutomationDispatch.update({ status: 'sent' }, { where: { id: deliveredPayload.automationDispatchId } }).catch(() => null);
+        }
+        return row;
+      }
+      if (preparedHistory) await outboundHistoryService.fail(preparedHistory, error).catch(() => null);
       const hasAttempts = row.attempts < row.maxAttempts;
       await row.update({
         status: hasAttempts ? 'retrying' : 'failed',
@@ -204,12 +265,13 @@ class MessageQueueService {
     }
   }
 
-  async dispatch(row) {
+  async dispatch(row, resolvedWhatsappAccountId = null) {
     const payload = row.payload || {};
+    const whatsappAccountId = resolvedWhatsappAccountId || row.whatsappAccountId;
     if (row.channel !== 'whatsapp') return { id: `system-${row.id}` };
-    if (row.messageType === 'template') return whatsappService.sendTemplateMessage({ ...payload, whatsappAccountId: row.whatsappAccountId, log: false });
-    if (['image', 'document', 'audio', 'video'].includes(row.messageType)) return whatsappService.sendMediaMessage({ ...payload, whatsappAccountId: row.whatsappAccountId, mediaType: row.messageType, log: false });
-    return whatsappService.sendTextMessage({ to: row.toNumber, text: payload.text || payload.message || '', whatsappAccountId: row.whatsappAccountId, log: false });
+    if (row.messageType === 'template') return whatsappService.sendTemplateMessage({ ...payload, whatsappAccountId, log: false });
+    if (['image', 'document', 'audio', 'video'].includes(row.messageType)) return whatsappService.sendMediaMessage({ ...payload, whatsappAccountId, mediaType: row.messageType, log: false });
+    return whatsappService.sendTextMessage({ to: row.toNumber, text: payload.text || payload.message || '', whatsappAccountId, log: false });
   }
 
   async refreshCampaignStatus(campaignId) {
@@ -233,3 +295,4 @@ class MessageQueueService {
 }
 
 module.exports = new MessageQueueService();
+module.exports.MessageQueueService = MessageQueueService;

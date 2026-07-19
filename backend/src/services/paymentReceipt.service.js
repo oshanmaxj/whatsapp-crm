@@ -108,6 +108,8 @@ function createPaymentReceiptService(dependencies = {}) {
       generationSource: input.generationSource,
       verificationTokenHash: tokens.hashToken(rawToken),
       verificationTokenEncrypted: tokens.encryptToken(rawToken),
+      conversationId: input.conversationId || installment?.sourceConversationId || payment.sourceConversationId || null,
+      whatsappAccountId: input.whatsappAccountId || installment?.whatsappAccountId || payment.whatsappAccountId || null,
       status: 'ACTIVE'
     }, { transaction });
 
@@ -129,7 +131,9 @@ function createPaymentReceiptService(dependencies = {}) {
   async function enqueueAfterCommit(result, input, transaction) {
     if (!result.created || input.generatePdf === false) return result;
     const enqueue = () => require('./paymentReceiptJob.service').enqueuePdf(result.receipt.id, {
-      actorUserId: input.actorUserId || null, manual: false
+      actorUserId: input.actorUserId || null, manual: false,
+      conversationId: result.receipt.conversationId || null,
+      whatsappAccountId: result.receipt.whatsappAccountId || null
     }).catch(() => null);
     if (transaction?.afterCommit) transaction.afterCommit(enqueue);
     else setImmediate(enqueue);

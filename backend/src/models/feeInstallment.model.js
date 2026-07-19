@@ -37,6 +37,8 @@ module.exports = (sequelize, DataTypes) => {
     , attributionSource: { type: DataTypes.STRING(40), allowNull: true }
     , overrideReason: { type: DataTypes.TEXT, allowNull: true }
     , overriddenByUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
+    , sourceConversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'source_conversation_id' }
+    , whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'whatsapp_account_id' }
   }, {
     tableName: 'fee_installments',
     timestamps: true,

@@ -37,6 +37,7 @@ const { normalizeSriLankanPhone, requireNormalizedPhone } = require('../utils/ph
 const studentRegistrationNumberService = require('./studentRegistrationNumber.service');
 const paymentReceiptService = require('./paymentReceipt.service');
 const paymentReceiptSettingsService = require('./paymentReceiptSettings.service');
+const canonicalWhatsappConversationService = require('./canonicalWhatsappConversation.service');
 
 function fullName(contact) {
   return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || contact?.phone || 'Student';
@@ -1090,7 +1091,18 @@ class EducationService {
     if (paying <= 0) throw Object.assign(new Error('Payment amount must be greater than 0.'), { status: 400 });
     if (paying > remaining) throw Object.assign(new Error('Payment exceeds installment remaining amount.'), { status: 400 });
     const student = await Student.findByPk(row.fee.studentId);
-    const conversation = student ? await Conversation.findOne({ where: { contactId: student.contactId }, order: [['updated_at', 'DESC']] }) : null;
+    let conversation = null;
+    if (student?.contactId) {
+      try {
+        conversation = await canonicalWhatsappConversationService.resolveCanonicalWhatsAppConversation({
+          preferredConversationId: payload.conversationId || payload.conversation_id || null,
+          contactId: student.contactId,
+          whatsappAccountId: payload.whatsappAccountId || payload.whatsapp_account_id || null
+        });
+      } catch (error) {
+        logger.warn('payment_whatsapp_context_unavailable', { installmentId: row.id, contactId: student.contactId, code: error.code || null });
+      }
+    }
     const ownerUserId = conversation?.assignedUserId || null;
     const requestedCredit = payload.creditedToUserId ?? payload.credited_to_user_id ?? ownerUserId;
     const overriding = String(requestedCredit ?? '') !== String(ownerUserId ?? '');
@@ -1112,6 +1124,7 @@ class EducationService {
       , recordedByUserId: userId, creditedToUserId: requestedCredit || null, conversationOwnerUserId: ownerUserId
       , recordedAt: new Date(), attributionSource: overriding ? 'manual_override' : ownerUserId ? 'conversation_owner' : 'system'
       , overrideReason: overriding ? String(payload.overrideReason).trim() : null, overriddenByUserId: overriding ? userId : null
+      , sourceConversationId: conversation?.id || null, whatsappAccountId: conversation?.whatsappAccountId || null
     });
     await auditService.record({ userId, action: overriding ? 'PAYMENT_CREDIT_OVERRIDDEN' : 'PAYMENT_RECORDED', entityType: 'fee_installment', entityId: row.id, method: 'POST', path: `/api/education/fees/installments/${row.id}/pay`, changes: { studentId: row.fee.studentId, conversationId: conversation?.id || null, recordedByUserId: userId, conversationOwnerUserId: ownerUserId, creditedToUserId: requestedCredit || null, reason: overriding ? payload.overrideReason : null } });
     const fee = await this.getFee(row.studentFeeId);
@@ -1186,6 +1199,8 @@ class EducationService {
             description: context.description,
             relatedStudentId: context.student.id,
             relatedCourseId: context.course?.id || null,
+            sourceConversationId: row.sourceConversationId || existingTransaction.sourceConversationId || null,
+            whatsappAccountId: row.whatsappAccountId || existingTransaction.whatsappAccountId || null,
             createdBy: existingTransaction.createdBy || userId || null
           }, { transaction });
           transactionId = existingTransaction.id;
@@ -1201,6 +1216,8 @@ class EducationService {
             description: context.description,
             relatedStudentId: context.student.id,
             relatedCourseId: context.course?.id || null,
+            sourceConversationId: row.sourceConversationId || null,
+            whatsappAccountId: row.whatsappAccountId || null,
             createdBy: userId || null
           }, { transaction });
           transactionId = replacement.id;
@@ -1228,6 +1245,8 @@ class EducationService {
         description: context.description,
         relatedStudentId: context.student.id,
         relatedCourseId: context.course?.id || null,
+        sourceConversationId: row.sourceConversationId || null,
+        whatsappAccountId: row.whatsappAccountId || null,
         createdBy: userId || null
       }, { transaction });
       transactionId = accountingTransaction.id;
@@ -1398,6 +1417,9 @@ class EducationService {
       paymentMethod: installment.paymentMethod,
       installmentNo: installment.installmentNo,
       installmentDueDate: installment.dueDate,
+      conversationId: installment.sourceConversationId || installment.accountingTransaction?.sourceConversationId || null,
+      whatsappAccountId: installment.whatsappAccountId || installment.accountingTransaction?.whatsappAccountId || null,
+      paymentId: installment.accountingTransactionId || null,
       createdBy: userId
     });
   }

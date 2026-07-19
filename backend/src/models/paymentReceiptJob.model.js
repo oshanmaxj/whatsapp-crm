@@ -9,6 +9,8 @@ module.exports = (sequelize, DataTypes) => sequelize.define('PaymentReceiptJob',
   runAfter: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
   actorUserId: { type: DataTypes.BIGINT, allowNull: true },
   manual: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  conversationId: { type: DataTypes.BIGINT, allowNull: true },
+  whatsappAccountId: { type: DataTypes.BIGINT, allowNull: true },
   lastError: { type: DataTypes.TEXT, allowNull: true },
   completedAt: { type: DataTypes.DATE, allowNull: true }
 }, {

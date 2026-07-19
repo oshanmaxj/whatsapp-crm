@@ -2,6 +2,8 @@ module.exports = (sequelize, DataTypes) => {
   const MessageQueue = sequelize.define('MessageQueue', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    conversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    contactId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     channel: { type: DataTypes.ENUM('whatsapp', 'email', 'system'), allowNull: false, defaultValue: 'whatsapp' },
     messageType: { type: DataTypes.ENUM('text', 'image', 'document', 'audio', 'video', 'template'), allowNull: false, defaultValue: 'text' },
     status: { type: DataTypes.ENUM('queued', 'processing', 'sent', 'failed', 'retrying', 'cancelled'), allowNull: false, defaultValue: 'queued' },

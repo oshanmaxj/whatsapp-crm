@@ -15,6 +15,7 @@
     "reports:smoke": "node src/scripts/smoke_reports.js",
     "commissions:backfill": "node src/scripts/backfill_commissions.js",
     "repair:conversations": "node src/scripts/repair_duplicate_conversations.js",
+    "repair:payment-whatsapp-conversations": "node src/scripts/repair_duplicate_whatsapp_conversations.js",
     "backfill:inbound-whatsapp-conversations": "node src/scripts/backfill_inbound_whatsapp_conversations.js",
     "backfill:payment-receipts": "node src/scripts/backfill_payment_receipts.js",
     "migrate:lms-curriculum": "node src/scripts/migrate_lms_curriculum.js",

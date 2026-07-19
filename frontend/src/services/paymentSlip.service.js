@@ -8,3 +8,7 @@ export const approvePaymentSlip = (id, payload) => api.post(`/payment-slips/${id
 export const rejectPaymentSlip = (id, payload) => api.post(`/payment-slips/${id}/reject`, payload);
 export const markPaymentSlipDuplicate = (id, payload) => api.post(`/payment-slips/${id}/duplicate`, payload);
 export const fetchPaymentSlipFile = (id) => api.get(`/payment-slips/${id}/file`, { responseType: 'blob' });
+export const getStudentFeeOptions = (studentId) => api.get(`/payment-slips/students/${studentId}/fee-options`);
+export const getOutstandingInstallments = (feeId) => api.get(`/payment-slips/fees/${feeId}/outstanding-installments`);
+export const createStudentFeePlan = (studentId, payload = {}) => api.post(`/payment-slips/students/${studentId}/fee-plan`, payload);
+export const generateFeeInstallments = (feeId) => api.post(`/payment-slips/fees/${feeId}/installments`);

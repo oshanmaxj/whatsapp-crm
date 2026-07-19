@@ -4,13 +4,14 @@ const path = require('path');
 const { Op } = require('sequelize');
 const {
   sequelize, PaymentSlip, PaymentSlipDetectionJob, Message, Media, Conversation, Contact, Lead, Student,
-  StudentFee, FeeInstallment, Course, Batch, AccountingCategory, AccountingTransaction, Notification
+  StudentFee, StudentEnrollment, FeeInstallment, Course, Batch, AccountingCategory, AccountingTransaction, Notification
 } = require('../models');
 const { extractPaymentSlipFromMedia } = require('./paymentSlipExtraction.service');
 const { matchPaymentSlipOwner } = require('./paymentSlipMatching.service');
 const { detectWhatsAppPaymentSlip } = require('./paymentSlipDetection.service');
 const messageQueueService = require('./messageQueue.service');
 const auditService = require('./audit.service');
+const educationService = require('./education.service');
 const logger = require('../config/logger');
 
 const SUPPORTED = new Set(['image/jpeg', 'image/png', 'application/pdf']);
@@ -68,6 +69,101 @@ async function privatizeMedia({ media, message, slip, evidence, transaction }) {
 }
 
 class PaymentSlipService {
+  async feeOptions(studentId) {
+    const student = await Student.findByPk(studentId, { attributes: ['id', 'studentNo', 'name'] });
+    if (!student) throw safeError('Student not found.', 404, 'STUDENT_NOT_FOUND');
+    const [fees, enrollments] = await Promise.all([
+      StudentFee.findAll({
+        where: { studentId, status: { [Op.in]: ['pending', 'partial', 'overdue'] } },
+        include: [{ model: Course, as: 'course', attributes: ['id', 'name', 'feeAmount', 'defaultInstallmentCount'], required: false }],
+        order: [['created_at', 'DESC']]
+      }),
+      StudentEnrollment.findAll({
+        where: { studentId, enrollmentStatus: 'active' },
+        include: [
+          { model: Course, as: 'course', attributes: ['id', 'name', 'feeAmount', 'defaultInstallmentCount'], required: false },
+          { model: StudentFee, as: 'fees', attributes: ['id'], where: { status: { [Op.ne]: 'cancelled' } }, required: false }
+        ],
+        order: [['enrolled_at', 'DESC']]
+      })
+    ]);
+    const options = fees
+      .filter((fee) => !['paid', 'free', 'cancelled'].includes(fee.status) && money(fee.balance) > 0)
+      .map((fee) => ({
+        id: fee.id,
+        courseName: fee.course?.name || 'Course',
+        totalAmount: money(fee.totalAmount),
+        paidAmount: money(fee.paidAmount),
+        remainingBalance: money(fee.balance),
+        status: fee.status
+      }));
+    return {
+      student: { id: student.id, studentNo: student.studentNo, name: student.name },
+      options,
+      autoSelectId: options.length === 1 ? options[0].id : null,
+      enrollments: enrollments.filter((enrollment) => !(enrollment.fees || []).length).map((enrollment) => ({
+        id: enrollment.id,
+        courseName: enrollment.course?.name || 'Course',
+        courseFee: money(enrollment.course?.feeAmount),
+        defaultInstallmentCount: Math.max(Number(enrollment.course?.defaultInstallmentCount) || 1, 1)
+      }))
+    };
+  }
+
+  async outstandingInstallmentOptions(studentFeeId) {
+    const fee = await StudentFee.findByPk(studentFeeId, { attributes: ['id', 'studentId', 'status', 'balance'] });
+    if (!fee) throw safeError('Student fee not found.', 404, 'STUDENT_FEE_NOT_FOUND');
+    const rows = await FeeInstallment.findAll({
+      where: { studentFeeId, status: { [Op.in]: ['pending', 'due_soon', 'due_today', 'partially_paid', 'overdue', 'rejected'] } },
+      order: [['due_date', 'ASC'], ['installment_no', 'ASC']]
+    });
+    const options = rows.map((item) => ({
+      id: item.id,
+      installmentNo: item.installmentNo,
+      amount: money(item.amount),
+      paidAmount: money(item.paidAmount),
+      remainingBalance: money(Math.max(Number(item.amount) - Number(item.paidAmount), 0)),
+      dueDate: item.dueDate,
+      status: item.status
+    })).filter((item) => item.remainingBalance > 0);
+    return {
+      studentFeeId: fee.id,
+      options,
+      autoSelectId: options.length === 1 ? options[0].id : null,
+      suggestedConfirmedAmount: options.length === 1 ? options[0].remainingBalance : null
+    };
+  }
+
+  async createFeePlan(studentId, payload = {}, actor = null) {
+    const current = await this.feeOptions(studentId);
+    if (current.options.length) throw safeError('An active fee record already exists for this student.', 409, 'ACTIVE_FEE_EXISTS');
+    const enrollment = payload.enrollmentId
+      ? current.enrollments.find((item) => String(item.id) === String(payload.enrollmentId))
+      : current.enrollments.length === 1 ? current.enrollments[0] : null;
+    if (!enrollment) {
+      throw safeError(current.enrollments.length ? 'Select an active enrollment before creating the fee plan.' : 'No active enrollment is available for this student.', 422, 'ACTIVE_ENROLLMENT_REQUIRED');
+    }
+    return educationService.createFee({
+      studentId,
+      enrollmentId: enrollment.id,
+      paymentType: enrollment.defaultInstallmentCount > 1 ? 'installment' : 'full',
+      installmentCount: enrollment.defaultInstallmentCount,
+      originalAmount: enrollment.courseFee,
+      dueDate: payload.dueDate || new Date().toISOString().slice(0, 10),
+      notes: 'Created from Payment Slip Review'
+    }, actor);
+  }
+
+  async generateInstallments(studentFeeId) {
+    const fee = await educationService.getFee(studentFeeId);
+    if ((fee.installments || []).length) throw safeError('An installment plan already exists.', 409, 'INSTALLMENTS_ALREADY_EXIST');
+    return educationService.updateFee(studentFeeId, {
+      paymentType: fee.paymentType,
+      installmentCount: fee.paymentType === 'installment' ? Math.max(Number(fee.installmentCount || fee.course?.defaultInstallmentCount) || 1, 1) : 1,
+      dueDate: fee.dueDate || new Date().toISOString().slice(0, 10)
+    });
+  }
+
   async messageContext(messageId, transaction) {
     const message = await Message.findByPk(messageId, { transaction });
     if (!message || message.direction !== 'inbound' || !['image', 'document'].includes(message.type)) throw safeError('Inbound image or PDF message not found.', 404, 'SLIP_MESSAGE_NOT_FOUND');

@@ -4,6 +4,10 @@ const paymentSlipService = require('../services/paymentSlip.service');
 const auditService = require('../services/audit.service');
 
 class PaymentSlipController {
+  async feeOptions(req, res, next) { try { res.json({ success: true, data: await paymentSlipService.feeOptions(req.params.studentId) }); } catch (error) { next(error); } }
+  async installmentOptions(req, res, next) { try { res.json({ success: true, data: await paymentSlipService.outstandingInstallmentOptions(req.params.feeId) }); } catch (error) { next(error); } }
+  async createFeePlan(req, res, next) { try { res.status(201).json({ success: true, data: await paymentSlipService.createFeePlan(req.params.studentId, req.body, req.user) }); } catch (error) { next(error); } }
+  async generateInstallments(req, res, next) { try { res.status(201).json({ success: true, data: await paymentSlipService.generateInstallments(req.params.feeId) }); } catch (error) { next(error); } }
   async list(req, res, next) { try { res.json({ success: true, data: await paymentSlipService.list(req.query) }); } catch (error) { next(error); } }
   async get(req, res, next) { try { res.json({ success: true, data: await paymentSlipService.get(req.params.id) }); } catch (error) { next(error); } }
   async mark(req, res, next) {

@@ -10,7 +10,8 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import {
   createWhatsAppAccount, deactivateWhatsAppAccount, getWhatsAppAccounts,
-  setDefaultWhatsAppAccount, testWhatsAppAccount, updateWhatsAppAccount
+  setDefaultWhatsAppAccount, testWhatsAppAccount, updateWhatsAppAccount,
+  checkWhatsAppWebhook, subscribeWhatsAppWebhook, overrideWhatsAppWebhook
 } from '../services/whatsappAccount.service';
 
 const emptyForm = {
@@ -25,6 +26,9 @@ export default function WhatsAppAccountsPage() {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [diagnostic, setDiagnostic] = useState(null);
+  const [diagnosticAccountId, setDiagnosticAccountId] = useState(null);
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false);
 
   const load = () => getWhatsAppAccounts(true).then((response) => setAccounts(response.data.data || []));
   useEffect(() => { load().catch((error) => setMessage({ severity: 'error', text: error.response?.data?.message || 'Unable to load WhatsApp numbers.' })); }, []);
@@ -51,6 +55,18 @@ export default function WhatsAppAccountsPage() {
     catch (error) { setMessage({ severity: 'error', text: error.response?.data?.message || error.message }); }
     finally { setBusy(false); }
   };
+  const webhookAction = async (accountId, task, success) => {
+    try {
+      setBusy(true);
+      const response = await task();
+      setDiagnostic(response.data.data);
+      setDiagnosticAccountId(accountId);
+      setDiagnosticOpen(true);
+      setMessage({ severity: 'success', text: success });
+    } catch (error) {
+      setMessage({ severity: 'error', text: error.response?.data?.message || error.message });
+    } finally { setBusy(false); }
+  };
 
   return (
     <Stack spacing={2.5}>
@@ -74,6 +90,8 @@ export default function WhatsAppAccountsPage() {
                 <TableCell>{account.statistics?.conversations || 0}</TableCell>
                 <TableCell align="right">
                   <Button size="small" disabled={busy} onClick={() => action(() => testWhatsAppAccount(account.id), 'WhatsApp connection verified.')}>Verify WhatsApp Connection</Button>
+                  <Button size="small" disabled={busy} onClick={() => webhookAction(account.id, () => checkWhatsAppWebhook(account.id), 'Webhook subscription checked.')}>Check Webhook Subscription</Button>
+                  <Button size="small" disabled={busy} onClick={() => webhookAction(account.id, () => subscribeWhatsAppWebhook(account.id), 'CRM app webhook subscription confirmed.')}>Subscribe Webhook</Button>
                   {!account.isDefault && account.status === 'active' && <Button size="small" disabled={busy} startIcon={<CheckCircleOutlineIcon />} onClick={() => action(() => setDefaultWhatsAppAccount(account.id), 'Default WhatsApp number updated.')}>Set default</Button>}
                   <IconButton onClick={() => beginEdit(account)}><EditOutlinedIcon /></IconButton>
                   {account.status === 'active' && <IconButton color="error" disabled={busy || account.isDefault} onClick={() => action(() => deactivateWhatsAppAccount(account.id), 'WhatsApp number deactivated.')}><DeleteOutlineIcon /></IconButton>}
@@ -97,6 +115,28 @@ export default function WhatsAppAccountsPage() {
           <TextField label="App secret (optional)" type="password" value={form.appSecret} onChange={(event) => setForm({ ...form, appSecret: event.target.value })} />
         </Stack></DialogContent>
         <DialogActions><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="contained" disabled={busy || !form.name || !form.phoneNumberId || (!editing && !form.accessToken)} onClick={save}>Save</Button></DialogActions>
+      </Dialog>
+      <Dialog open={diagnosticOpen} onClose={() => setDiagnosticOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>WhatsApp connection diagnostics</DialogTitle>
+        <DialogContent>
+          {diagnostic && <Stack spacing={1.5} sx={{ pt: 1 }}>
+            {String(diagnostic.connectionVerificationResult || '').startsWith('warning:') && (
+              <Alert severity="warning">{diagnostic.connectionVerificationResult.replace(/^warning:\s*/, '')}. An authorized administrator can replace it with the CRM callback.</Alert>
+            )}
+            <Typography>WABA ID last four digits: {diagnostic.wabaIdLastFour || 'not configured'}</Typography>
+            <Typography>Phone Number ID last four digits: {diagnostic.phoneNumberIdLastFour || 'not configured'}</Typography>
+            <Typography>CRM app ID: {diagnostic.crmAppId || 'not configured'}</Typography>
+            <Typography>Subscription: {diagnostic.subscribed ? 'subscribed' : 'not subscribed'}</Typography>
+            <Typography>Callback source: {diagnostic.callbackSource}</Typography>
+            <Typography>Connection verification result: {diagnostic.connectionVerificationResult}</Typography>
+          </Stack>}
+        </DialogContent>
+        <DialogActions>
+          {diagnostic?.callbackSource === 'override' && String(diagnostic.connectionVerificationResult || '').startsWith('warning:') && (
+            <Button color="warning" disabled={busy} onClick={() => webhookAction(diagnosticAccountId, () => overrideWhatsAppWebhook(diagnosticAccountId), 'CRM webhook callback override confirmed.')}>Use CRM callback</Button>
+          )}
+          <Button onClick={() => setDiagnosticOpen(false)}>Close</Button>
+        </DialogActions>
       </Dialog>
     </Stack>
   );

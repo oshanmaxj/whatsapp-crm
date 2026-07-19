@@ -29,11 +29,6 @@ function decrypt(value) {
   return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64')), decipher.final()]).toString('utf8');
 }
 
-function mask(value) {
-  const text = String(value || '');
-  return text ? `${text.slice(0, 4)}****${text.slice(-4)}` : '';
-}
-
 function clean(value) {
   return value == null ? '' : String(value).trim();
 }
@@ -63,11 +58,13 @@ function serialize(row) {
   if (!data) return null;
   delete data.accessTokenEncrypted;
   delete data.appSecretEncrypted;
+  delete data.webhookVerifyToken;
   return {
     ...data,
     connectionStatus: data.connectionStatus || data.status || 'connected',
-    accessToken: mask(decrypt(row.accessTokenEncrypted)),
-    appSecret: mask(decrypt(row.appSecretEncrypted))
+    accessTokenConfigured: Boolean(row.accessTokenEncrypted),
+    appSecretConfigured: Boolean(row.appSecretEncrypted),
+    webhookVerifyTokenConfigured: Boolean(row.webhookVerifyToken)
   };
 }
 
@@ -76,7 +73,152 @@ function lastFour(value) {
   return text ? text.slice(-4) : null;
 }
 
+const CRM_WEBHOOK_URL = 'https://api.firstofsolutions.com/api/webhooks/whatsapp';
+
+function graphFailure(error, fallback) {
+  const meta = error.response?.data?.error || {};
+  return Object.assign(new Error(fallback), {
+    status: error.response?.status === 401 ? 401 : 502,
+    code: 'WHATSAPP_WEBHOOK_SUBSCRIPTION_FAILED',
+    metaCode: meta.code == null ? null : String(meta.code),
+    metaSubcode: meta.error_subcode == null ? null : String(meta.error_subcode),
+    exposeMessage: true
+  });
+}
+
+function subscriptionAppId(item) {
+  return clean(item?.whatsapp_business_api_data?.id || item?.app_id || item?.id);
+}
+
+function subscriptionOverride(item) {
+  return clean(item?.override_callback_uri || item?.callback_url);
+}
+
 class WhatsAppAccountService {
+  async graphRequest(config, method, objectId, edge = '', data = undefined) {
+    return axios.request({
+      method,
+      url: `${config.apiBaseUrl}/${config.apiVersion}/${objectId}${edge}`,
+      headers: {
+        Authorization: `Bearer ${config.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      ...(data === undefined ? {} : { data }),
+      timeout: 15000
+    });
+  }
+
+  validateWebhookConfig(config, { requireVerifyToken = false } = {}) {
+    if (!/^\d+$/.test(config.businessAccountId || '')) {
+      throw Object.assign(new Error('A numeric WABA ID is required for webhook subscription management.'), { status: 400, code: 'WHATSAPP_WABA_ID_REQUIRED' });
+    }
+    if (!/^\d+$/.test(config.phoneNumberId || '') || !config.accessToken) {
+      throw Object.assign(new Error('The selected WhatsApp account credentials are incomplete.'), { status: 400, code: 'WHATSAPP_CONFIGURATION_INVALID' });
+    }
+    if (!/^\d+$/.test(clean(config.appId))) {
+      throw Object.assign(new Error('A numeric CRM Meta App ID is required to confirm the subscription.'), { status: 400, code: 'WHATSAPP_APP_ID_REQUIRED' });
+    }
+    if (requireVerifyToken && !config.verifyToken) {
+      throw Object.assign(new Error('A webhook verify token is required to override the callback.'), { status: 400, code: 'WHATSAPP_VERIFY_TOKEN_REQUIRED' });
+    }
+  }
+
+  async fetchSubscriptions(config) {
+    try {
+      const response = await this.graphRequest(config, 'get', config.businessAccountId, '/subscribed_apps');
+      return Array.isArray(response.data?.data) ? response.data.data : [];
+    } catch (error) {
+      throw graphFailure(error, 'Unable to check the WABA webhook subscription.');
+    }
+  }
+
+  async verifySelectedPhone(config) {
+    try {
+      const response = await this.graphRequest(config, 'get', config.phoneNumberId);
+      return clean(response.data?.id) === clean(config.phoneNumberId);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  diagnosticFrom(config, subscriptions, phoneVerified) {
+    const appSubscription = subscriptions.find((item) => subscriptionAppId(item) === clean(config.appId));
+    const overrides = subscriptions.map(subscriptionOverride).filter(Boolean);
+    const crmOverride = subscriptionOverride(appSubscription);
+    const whatChimpOverride = overrides.some((url) => /whatchimp/i.test(url));
+    const mismatchedOverride = Boolean(crmOverride && crmOverride !== CRM_WEBHOOK_URL);
+    const subscribed = Boolean(appSubscription);
+    let connectionVerificationResult = 'verified';
+    if (!phoneVerified) connectionVerificationResult = 'selected phone number verification failed';
+    else if (!subscribed) connectionVerificationResult = 'CRM app is not subscribed';
+    else if (whatChimpOverride) connectionVerificationResult = 'warning: WhatChimp callback override detected';
+    else if (mismatchedOverride) connectionVerificationResult = 'warning: callback override does not use the CRM webhook';
+    return {
+      wabaIdLastFour: lastFour(config.businessAccountId),
+      phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+      crmAppId: clean(config.appId),
+      subscribed,
+      callbackSource: overrides.length ? 'override' : 'app default',
+      connectionVerificationResult
+    };
+  }
+
+  async checkWebhookSubscription(id, userId = null) {
+    if (userId) await whatsappAccountAccessService.assertAccess(id, userId);
+    const config = await this.runtimeConfig(id);
+    this.validateWebhookConfig(config);
+    const subscriptions = await this.fetchSubscriptions(config);
+    const phoneVerified = await this.verifySelectedPhone(config);
+    return this.diagnosticFrom(config, subscriptions, phoneVerified);
+  }
+
+  async subscribeWebhook(id, userId = null) {
+    if (userId) await whatsappAccountAccessService.assertAccess(id, userId);
+    const config = await this.runtimeConfig(id);
+    this.validateWebhookConfig(config);
+    let subscriptions = await this.fetchSubscriptions(config);
+    if (!subscriptions.some((item) => subscriptionAppId(item) === clean(config.appId))) {
+      try {
+        await this.graphRequest(config, 'post', config.businessAccountId, '/subscribed_apps', {});
+      } catch (error) {
+        throw graphFailure(error, 'Unable to subscribe the CRM app to the WABA webhook.');
+      }
+      subscriptions = await this.fetchSubscriptions(config);
+      if (!subscriptions.some((item) => subscriptionAppId(item) === clean(config.appId))) {
+        throw Object.assign(new Error('Meta did not confirm the CRM app in the WABA subscriptions.'), { status: 502, code: 'WHATSAPP_SUBSCRIPTION_NOT_CONFIRMED', exposeMessage: true });
+      }
+    }
+    return this.diagnosticFrom(config, subscriptions, await this.verifySelectedPhone(config));
+  }
+
+  async overrideWebhookCallback(id, userId = null) {
+    if (userId) await whatsappAccountAccessService.assertAccess(id, userId);
+    const config = await this.runtimeConfig(id);
+    this.validateWebhookConfig(config, { requireVerifyToken: true });
+    let subscriptions = await this.fetchSubscriptions(config);
+    if (!subscriptions.some((item) => subscriptionAppId(item) === clean(config.appId))) {
+      try {
+        await this.graphRequest(config, 'post', config.businessAccountId, '/subscribed_apps', {});
+      } catch (error) {
+        throw graphFailure(error, 'Unable to subscribe the CRM app before overriding its callback.');
+      }
+    }
+    try {
+      await this.graphRequest(config, 'post', config.businessAccountId, '/subscribed_apps', {
+        override_callback_uri: CRM_WEBHOOK_URL,
+        verify_token: config.verifyToken
+      });
+    } catch (error) {
+      throw graphFailure(error, 'Unable to override the WABA callback URL.');
+    }
+    subscriptions = await this.fetchSubscriptions(config);
+    const appSubscription = subscriptions.find((item) => subscriptionAppId(item) === clean(config.appId));
+    if (!appSubscription || subscriptionOverride(appSubscription) !== CRM_WEBHOOK_URL) {
+      throw Object.assign(new Error('Meta did not confirm the CRM webhook callback override.'), { status: 502, code: 'WHATSAPP_CALLBACK_NOT_CONFIRMED', exposeMessage: true });
+    }
+    return this.diagnosticFrom(config, subscriptions, await this.verifySelectedPhone(config));
+  }
+
   async backfillUnassigned(accountId) {
     const models = [Conversation, Message, Contact, Lead, WhatsAppTemplate, Campaign, CampaignRecipient, MessageQueue, Flow, FlowRun, AutoReply, WhatsAppComplianceLog];
     await Promise.all(models.map((model) => model?.rawAttributes?.whatsappAccountId

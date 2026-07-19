@@ -13,4 +13,7 @@ router.delete('/:id', requirePermission('connect-whatsapp.edit'), controller.dea
 router.post('/:id/set-default', requirePermission('connect-whatsapp.edit'), controller.setDefault.bind(controller));
 router.post('/:id/test-connection', requirePermission('connect-whatsapp.edit'), controller.test.bind(controller));
 router.get('/:id/diagnostic', requirePermission('connect-whatsapp.edit'), controller.diagnostic.bind(controller));
+router.get('/:id/webhook-subscription', requirePermission('connect-whatsapp.edit'), controller.checkWebhook.bind(controller));
+router.post('/:id/webhook-subscription', requirePermission('connect-whatsapp.edit'), controller.subscribeWebhook.bind(controller));
+router.post('/:id/webhook-callback-override', requirePermission('connect-whatsapp.edit'), controller.overrideWebhook.bind(controller));
 module.exports = router;

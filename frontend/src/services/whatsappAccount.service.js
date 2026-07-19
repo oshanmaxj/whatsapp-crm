@@ -7,3 +7,6 @@ export const updateWhatsAppAccount = (id, payload) => api.patch(`/whatsapp-accou
 export const deactivateWhatsAppAccount = (id) => api.delete(`/whatsapp-accounts/${id}`);
 export const setDefaultWhatsAppAccount = (id) => api.post(`/whatsapp-accounts/${id}/set-default`);
 export const testWhatsAppAccount = (id) => api.post(`/whatsapp-accounts/${id}/test-connection`);
+export const checkWhatsAppWebhook = (id) => api.get(`/whatsapp-accounts/${id}/webhook-subscription`);
+export const subscribeWhatsAppWebhook = (id) => api.post(`/whatsapp-accounts/${id}/webhook-subscription`);
+export const overrideWhatsAppWebhook = (id) => api.post(`/whatsapp-accounts/${id}/webhook-callback-override`);

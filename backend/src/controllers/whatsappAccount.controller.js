@@ -15,5 +15,8 @@ class WhatsAppAccountController {
   async setDefault(req, res, next) { try { return ok(res, await service.setDefault(req.params.id)); } catch (error) { return next(error); } }
   async test(req, res, next) { try { return ok(res, await service.testConnection(req.params.id)); } catch (error) { return next(error); } }
   async diagnostic(req, res, next) { try { return ok(res, await service.safeDiagnostic(req.params.id)); } catch (error) { return next(error); } }
+  async checkWebhook(req, res, next) { try { return ok(res, await service.checkWebhookSubscription(req.params.id, req.user?.id)); } catch (error) { return next(error); } }
+  async subscribeWebhook(req, res, next) { try { return ok(res, await service.subscribeWebhook(req.params.id, req.user?.id)); } catch (error) { return next(error); } }
+  async overrideWebhook(req, res, next) { try { return ok(res, await service.overrideWebhookCallback(req.params.id, req.user?.id)); } catch (error) { return next(error); } }
 }
 module.exports = new WhatsAppAccountController();

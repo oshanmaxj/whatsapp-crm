@@ -251,6 +251,25 @@ class WhatsappService {
     }).catch((error) => logger.warn('whatsapp_webhook_diagnostic_save_failed', { message: error.message }));
   }
 
+  async resolveInboundAccount(value, whatsappMessageId = null) {
+    const phoneNumberId = value?.metadata?.phone_number_id || null;
+    if (!/^\d+$/.test(String(phoneNumberId || ''))) {
+      await this.recordUnconfiguredPhone(phoneNumberId, whatsappMessageId);
+      return null;
+    }
+    try {
+      return await this.getRuntimeConfig(null, { phoneNumberId });
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      await this.recordUnconfiguredPhone(phoneNumberId, whatsappMessageId);
+      return null;
+    }
+  }
+
+  canonicalInboundThreadId(whatsappAccountId, from) {
+    return `${whatsappAccountId}:${normalizePhone(from)}`;
+  }
+
   async getWhatsAppConfig(whatsappAccountId = null, options = {}) {
     let accountConfig = null;
     try {
@@ -722,6 +741,7 @@ class WhatsappService {
     for (const entry of entries) {
       const changes = Array.isArray(entry.changes) ? entry.changes : [];
       for (const change of changes) {
+        if (change.field && change.field !== 'messages') continue;
         const value = change.value || {};
         const messages = Array.isArray(value.messages) ? value.messages : [];
         const statuses = Array.isArray(value.statuses) ? value.statuses : [];
@@ -785,21 +805,13 @@ class WhatsappService {
 
     const from = message.from;
     const webhookPhoneNumberId = value.metadata?.phone_number_id || null;
-    if (!/^\d+$/.test(String(webhookPhoneNumberId || ''))) {
-      await this.recordUnconfiguredPhone(webhookPhoneNumberId, message.id || null);
-      return null;
-    }
-    let config;
-    try {
-      config = await this.getRuntimeConfig(null, { phoneNumberId: webhookPhoneNumberId });
-    } catch (error) {
-      if (error.status !== 404) throw error;
-      await this.recordUnconfiguredPhone(webhookPhoneNumberId, message.id || null);
-      return null;
-    }
+    const config = await this.resolveInboundAccount(value, message.id || null);
+    if (!config) return null;
     const whatsappAccountId = config.whatsappAccountId || null;
     const to = webhookPhoneNumberId || config.phoneNumberId;
-    const threadId = [to, from].filter(Boolean).join(':');
+    // One canonical thread per customer and CRM WhatsApp account. The WABA
+    // phone ID is used only to resolve the exact account above.
+    const threadId = this.canonicalInboundThreadId(whatsappAccountId, from);
     const messageType = parsed.rawType;
     const text = parsed.text;
     const mediaId = message[messageType]?.id || null;

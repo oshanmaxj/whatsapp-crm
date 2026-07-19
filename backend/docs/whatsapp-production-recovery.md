@@ -55,7 +55,9 @@ ORDER BY m.created_at DESC
 LIMIT 100;
 ```
 
-Use `GET /api/whatsapp-accounts/:id/diagnostic` as an authenticated administrator. It returns only the configuration source, database account ID, final four phone-ID digits, Graph version, token presence, active flag, and send-enabled flag.
+Use **Check Webhook Subscription** on the selected WhatsApp Accounts row as an authenticated administrator. It verifies the selected phone ID with that same account token, queries `GET /{WABA_ID}/subscribed_apps`, and confirms the configured CRM App ID. The response contains only WABA/phone-ID final four digits, CRM App ID, subscribed state, callback source, and the connection result. It never returns a callback URL or credential.
+
+If the CRM App ID is absent, use **Subscribe Webhook**. This idempotently calls `POST /{WABA_ID}/subscribed_apps` and then reads the subscriptions again; a successful POST alone is not treated as confirmation. If the diagnostic warns about a WhatChimp or other non-CRM override, use **Use CRM callback**. The server supplies the configured verify token internally and confirms Meta reports `https://api.firstofsolutions.com/api/webhooks/whatsapp`; do not place the verify token in a browser request, shell command, or log.
 
 ## Route and proxy checks
 
@@ -83,8 +85,7 @@ git status --short
 git pull --ff-only
 cd backend
 npm ci
-npm run migrate:whatsapp-connection
-node --test
+node --test test/whatsappWebhookSubscription.test.js test/whatsappConnection.test.js test/inboundWhatsappContact.test.js
 pm2 restart whatsapp_crm_backend --update-env
 pm2 save
 pm2 logs whatsapp_crm_backend --lines 200 --nostream | grep -vEi 'access[_-]?token|authorization|bearer|app[_-]?secret'
@@ -93,7 +94,7 @@ npm ci
 npm run build
 ```
 
-The frontend rebuild is required because the account page now exposes the **Verify WhatsApp Connection** action. `npm ci` is safe for a lockfile-based deployment; no new dependency was added. Deploy the generated frontend build using the site's existing Nginx/static-release procedure.
+No database migration is required for webhook subscription management. The frontend rebuild is required because the account page now exposes **Check Webhook Subscription**, **Subscribe Webhook**, and the guarded callback override. `npm ci` is safe for a lockfile-based deployment; no new dependency was added. Deploy the generated frontend build using the site's existing Nginx/static-release procedure.
 
 ## Secure credential correction and rotation
 

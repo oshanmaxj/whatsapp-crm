@@ -66,8 +66,17 @@ export function nodeConfigErrors(nodeType, config = {}) {
   if (nodeType === 'interactive_message' && config.headerType === 'text') {
     require('headerText', 'Enter header text.');
   }
-  if (nodeType === 'interactive_message' && config.headerType === 'media') {
-    require('headerMediaUrl', 'Select media or enter a media URL.');
+  if (nodeType === 'interactive_message' && ['image', 'video', 'document', 'media'].includes(config.headerType)) {
+    const type = config.headerType === 'media' ? (config.headerMediaType || 'image') : config.headerType;
+    if (!(config.headerMediaDataBase64 || config.headerMediaId || config.headerMediaLocalRef || config.headerMediaUrl)) errors.headerMedia = 'Select media before saving.';
+    const allowed = type === 'image'
+      ? ['image/jpeg', 'image/png']
+      : type === 'video'
+        ? ['video/mp4', 'video/3gpp']
+        : ['application/pdf', 'text/plain', 'text/csv', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'];
+    if (config.headerMediaMimeType && !allowed.includes(config.headerMediaMimeType)) errors.headerMedia = `Unsupported ${type} type.`;
+    const max = type === 'image' ? 5 * 1024 * 1024 : type === 'video' ? 16 * 1024 * 1024 : 100 * 1024 * 1024;
+    if (Number(config.headerMediaSize || 0) > max) errors.headerMedia = `File exceeds the WhatsApp ${max / 1024 / 1024} MB limit.`;
   }
   if (['interactive_message', 'button_message'].includes(nodeType)) {
     const buttons = Array.isArray(config.buttons) ? config.buttons : [];

@@ -27,3 +27,8 @@ test('advanced trigger and action validation supports Unicode and required actio
   const errors = nodeConfigErrors('button_message', { message: 'Choose', buttons: [{ id: 'b1', title: 'Go', primaryActionType: 'START_FLOW', primaryActionConfig: {} }] });
   expect(errors.button_0_value).toMatch(/published flow/i);
 });
+
+test('interactive media headers require a valid uploaded or pending source', () => {
+  expect(nodeConfigErrors('interactive_message', { message: 'Choose', headerType: 'image', buttons: [{ id: 'b', title: 'Go' }] }).headerMedia).toMatch(/select/i);
+  expect(nodeConfigErrors('interactive_message', { message: 'Choose', headerType: 'image', headerMediaId: 'meta-1', headerMediaAccountId: 7, headerMediaMimeType: 'image/jpeg', headerMediaSize: 1024, buttons: [{ id: 'b', title: 'Go' }] }).headerMedia).toBeUndefined();
+});

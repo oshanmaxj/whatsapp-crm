@@ -1,10 +1,11 @@
-const { Contact, Conversation, Message, PaymentSlip, User } = require('../models');
+const { Contact, Conversation, Message, PaymentSlip, User, sequelize } = require('../models');
 const whatsappService = require('./whatsapp.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappTemplateService = require('./whatsappTemplate.service');
 const conversationAccessService = require('./conversationAccess.service');
 const { normalizePhone: normalizeWhatsAppNumber } = require('../utils/phone');
 const { Op } = require('sequelize');
+const interactiveMediaService = require('./interactiveMedia.service');
 
 function previewText(message) {
   if (!message) return null;
@@ -169,6 +170,85 @@ class ChatService {
         errorMessage: whatsappError?.error_user_msg || whatsappError?.message || error.message,
         rawPayload: { whatsappError: metaError }
       }).catch(() => {});
+      error.messageRecord = await this.getMessageWithReplyPreview(message.id);
+      throw error;
+    }
+  }
+
+  async sendChatInteractive({ conversationId, senderId, body, footer = null, header = null, buttons = [], clientRequestId = null }) {
+    await conversationAccessService.assertConversationAccess(conversationId, senderId);
+    const conversation = await this.canonicalConversation(conversationId, [
+      { model: Contact, as: 'contact', attributes: ['id', 'phone', 'whatsappId'] }
+    ]);
+    if (!conversation?.whatsappAccountId) throw Object.assign(new Error('Canonical conversation does not have a WhatsApp account.'), { status: 422, code: 'WHATSAPP_ACCOUNT_REQUIRED' });
+    const toNumber = normalizeWhatsAppNumber(conversation.contact?.whatsappId || conversation.contact?.phone);
+    if (!toNumber) throw Object.assign(new Error('Conversation contact does not have a phone number'), { status: 400 });
+    const messageBody = String(body || '').trim();
+    if (!messageBody) throw Object.assign(new Error('Interactive message body is required.'), { status: 422, code: 'INTERACTIVE_BODY_REQUIRED' });
+    if (!Array.isArray(buttons) || buttons.length < 1 || buttons.length > 3) throw Object.assign(new Error('Interactive reply messages require 1 to 3 buttons.'), { status: 422, code: 'INTERACTIVE_BUTTONS_INVALID' });
+    const normalizedButtons = buttons.map((button, index) => ({
+      id: String(button.id || `button_${index + 1}`).slice(0, 160),
+      title: String(button.title || '').trim().slice(0, 20)
+    }));
+    if (normalizedButtons.some((button) => !button.title)) throw Object.assign(new Error('Every interactive button requires a title.'), { status: 422, code: 'INTERACTIVE_BUTTONS_INVALID' });
+    const compliance = await whatsappComplianceService.canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId);
+    if (!compliance.canSend) throw Object.assign(new Error('Template required to message this customer.'), { status: 409, code: 'TEMPLATE_REQUIRED' });
+
+    let existing = null;
+    if (clientRequestId) {
+      existing = await Message.findOne({ where: {
+        conversationId: conversation.id,
+        direction: 'outbound',
+        [Op.and]: sequelize.where(sequelize.json('raw_payload.clientRequestId'), String(clientRequestId).slice(0, 100))
+      } }).catch(() => null);
+      if (existing?.status === 'sent' && existing.whatsappMessageId) return this.getMessageWithReplyPreview(existing.id);
+    }
+    let requestedHeader = header;
+    if (header?.dataBase64) {
+      const binding = await interactiveMediaService.storeAndUpload({
+        scope: 'conversation', scopeId: conversation.id,
+        dataBase64: header.dataBase64, fileName: header.fileName,
+        mimeType: header.mimeType, mediaType: header.type,
+        whatsappAccountId: conversation.whatsappAccountId
+      });
+      requestedHeader = { type: binding.mediaType, ...binding };
+    } else if (!requestedHeader && existing?.rawPayload?.mediaBinding) {
+      requestedHeader = { type: existing.rawPayload.mediaBinding.mediaType, ...existing.rawPayload.mediaBinding };
+    }
+    const resolved = await interactiveMediaService.resolveHeader(requestedHeader, { whatsappAccountId: conversation.whatsappAccountId, interactiveType: 'button' });
+    const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
+    const values = {
+      conversationId: conversation.id, contactId: conversation.contactId, sentByUserId: senderId,
+      direction: 'outbound', type: 'text', messageType: 'interactive', interactiveType: 'button',
+      text: messageBody, fromNumber: runtimeConfig.phoneNumberId || null, toNumber,
+      status: 'pending', statusUpdatedAt: new Date(), isRead: true,
+      whatsappAccountId: conversation.whatsappAccountId,
+      rawPayload: {
+        clientRequestId: clientRequestId ? String(clientRequestId).slice(0, 100) : null,
+        headerType: resolved.header?.type || 'none', mediaBinding: resolved.binding || null,
+        buttons: normalizedButtons
+      }
+    };
+    const message = existing || await Message.create(values);
+    if (existing) await existing.update({ ...values, whatsappMessageId: null, errorCode: null, errorSubcode: null, errorMessage: null });
+    try {
+      const response = await whatsappService.sendInteractiveMessage({
+        to: toNumber, body: messageBody, footer, header: resolved.header,
+        buttons: normalizedButtons, log: false, whatsappAccountId: conversation.whatsappAccountId
+      });
+      if (!response?.id) throw Object.assign(new Error('Meta did not return a WhatsApp message ID.'), { status: 502, code: 'WHATSAPP_MESSAGE_ID_MISSING' });
+      await message.update({ whatsappMessageId: response.id, status: 'sent', statusUpdatedAt: new Date(), rawPayload: { ...values.rawPayload, whatsappMessageId: response.id } });
+      await conversation.update({ lastMessage: messageBody, lastMessageAt: new Date() });
+      return this.getMessageWithReplyPreview(message.id);
+    } catch (error) {
+      const meta = error.whatsappApiResponse?.error || error.response?.data?.error || error.metaError?.error || {};
+      await message.update({
+        status: 'failed', statusUpdatedAt: new Date(),
+        errorCode: meta.code == null ? (error.code || null) : String(meta.code),
+        errorSubcode: meta.error_subcode == null ? null : String(meta.error_subcode),
+        errorMessage: String(meta.error_user_msg || meta.message || error.message).slice(0, 500),
+        rawPayload: { ...values.rawPayload, deliveryError: { code: meta.code || error.code || null, subcode: meta.error_subcode || null, type: meta.type || null, message: String(meta.error_user_msg || meta.message || error.message).slice(0, 500) } }
+      }).catch(() => null);
       error.messageRecord = await this.getMessageWithReplyPreview(message.id);
       throw error;
     }

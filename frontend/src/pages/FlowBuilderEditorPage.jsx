@@ -358,6 +358,7 @@ function Editor() {
     <FlowNodeConfigDialog
       node={selected}
       flowId={id}
+      whatsappAccountId={flow?.whatsappAccountId || null}
       open={editorOpen}
       departments={departments}
       users={users}

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Autocomplete, Box, Button, Card, CardActionArea, Checkbox, Chip, Dialog, DialogActions,
-  DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, MenuItem,
+  DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, LinearProgress, MenuItem,
   Paper, Stack, TextField, Typography
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
@@ -100,6 +100,63 @@ function MediaPicker({ label, accept, value, onChange, error, fileNameField, onF
       </Typography>
     </Stack>
   );
+}
+
+const INTERACTIVE_MEDIA_RULES = {
+  image: { accept: 'image/jpeg,image/png', maxBytes: 5 * 1024 * 1024, label: 'JPG or PNG up to 5 MB' },
+  video: { accept: 'video/mp4,video/3gpp', maxBytes: 16 * 1024 * 1024, label: 'MP4 or 3GPP up to 16 MB' },
+  document: { accept: '.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx', maxBytes: 100 * 1024 * 1024, label: 'PDF, Office, text, or CSV up to 100 MB' }
+};
+
+function InteractiveHeaderMediaPicker({ type, config, set, error, progress }) {
+  const rule = INTERACTIVE_MEDIA_RULES[type];
+  const selectFile = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const allowed = type === 'image'
+      ? ['image/jpeg', 'image/png']
+      : type === 'video'
+        ? ['video/mp4', 'video/3gpp']
+        : ['application/pdf', 'text/plain', 'text/csv', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'];
+    if (!allowed.includes(file.type)) { set('headerMediaError', `Unsupported ${type} type.`); return; }
+    if (!file.size) { set('headerMediaError', 'The selected file is empty.'); return; }
+    if (file.size > rule.maxBytes) { set('headerMediaError', `File exceeds the WhatsApp ${Math.floor(rule.maxBytes / 1024 / 1024)} MB limit.`); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      set('headerMediaDataBase64', dataUrl.split(',')[1] || '');
+      set('headerMediaPreview', dataUrl);
+      set('headerMediaMimeType', file.type);
+      set('headerMediaFileName', file.name);
+      set('headerMediaSize', file.size);
+      set('headerMediaId', '');
+      set('headerMediaAccountId', '');
+      set('headerMediaLocalRef', '');
+      set('headerMediaUrl', '');
+      set('headerMediaError', '');
+    };
+    reader.readAsDataURL(file);
+  };
+  const remove = () => ['headerMediaDataBase64', 'headerMediaPreview', 'headerMediaMimeType', 'headerMediaFileName', 'headerMediaSize', 'headerMediaId', 'headerMediaAccountId', 'headerMediaLocalRef', 'headerMediaUrl', 'headerMediaError'].forEach((field) => set(field, ''));
+  const preview = config.headerMediaPreview || (/^https:\/\//i.test(config.headerMediaUrl || '') ? config.headerMediaUrl : '');
+  const configured = Boolean(config.headerMediaDataBase64 || config.headerMediaId || config.headerMediaLocalRef || config.headerMediaUrl);
+  return <Stack spacing={1}>
+    <Stack direction="row" spacing={1} alignItems="center">
+      <Button component="label" variant="outlined" startIcon={<UploadFileIcon />}>
+        {configured ? 'Replace file' : 'Select file'}
+        <input hidden type="file" accept={rule.accept} onChange={selectFile} />
+      </Button>
+      {configured && <Button color="error" onClick={remove}>Remove</Button>}
+    </Stack>
+    <Typography variant="caption" color="text.secondary">{rule.label}. The source is stored privately and uploaded separately for each WhatsApp account.</Typography>
+    {(error || config.headerMediaError) && <Alert severity="error">{error || config.headerMediaError}</Alert>}
+    {progress > 0 && progress < 100 && <Stack spacing={0.5}><LinearProgress variant="determinate" value={progress} /><Typography variant="caption">Uploading to Meta: {progress}%</Typography></Stack>}
+    {type === 'image' && preview && <Box component="img" src={preview} alt="Interactive header preview" sx={{ maxWidth: 320, maxHeight: 180, objectFit: 'contain', borderRadius: 1 }} />}
+    {type === 'video' && preview && <Box component="video" src={preview} controls sx={{ maxWidth: 360, maxHeight: 220, borderRadius: 1 }} />}
+    {config.headerMediaFileName && <Chip size="small" label={`${config.headerMediaFileName} (${Math.ceil(Number(config.headerMediaSize || 0) / 1024)} KB)`} sx={{ alignSelf: 'flex-start' }} />}
+    {config.headerMediaId && <Alert severity="success">Media is uploaded for WhatsApp account {config.headerMediaAccountId || 'unknown'}.</Alert>}
+  </Stack>;
 }
 
 function ImageSourceEditor({ config, set, errors }) {
@@ -296,17 +353,18 @@ function OptionEditor({ label, value, onChange, error }) {
 function WhatsAppPreview({ type, config, label }) {
   const buttons = config.buttons || [];
   const body = config.message || config.question || config.prompt || config.caption || 'Your message preview will appear here.';
-  const mediaUrl = config.mediaUrl || config.imageUrl || config.headerMediaUrl;
+  const mediaUrl = config.mediaUrl || config.imageUrl || config.headerMediaPreview || config.headerMediaUrl;
+  const interactiveHeaderType = config.headerType === 'media' ? config.headerMediaType : config.headerType;
   return (
     <Box sx={{ bgcolor: '#efeae2', borderRadius: 3, minHeight: 500, p: 2, backgroundImage: 'radial-gradient(#d8d1c7 0.7px, transparent 0.7px)', backgroundSize: '12px 12px' }}>
       <Typography variant="caption" fontWeight={800} color="text.secondary">LIVE WHATSAPP PREVIEW</Typography>
       <Paper elevation={2} sx={{ mt: 2, ml: 'auto', maxWidth: 340, borderRadius: '12px 12px 3px 12px', overflow: 'hidden', bgcolor: '#d9fdd3' }}>
-        {mediaUrl && ['image_message', 'video_message', 'interactive_message'].includes(type) && config.headerMediaType !== 'document' && (
-          type === 'video_message' || (type === 'interactive_message' && config.headerMediaType === 'video')
+        {mediaUrl && ['image_message', 'video_message', 'interactive_message'].includes(type) && interactiveHeaderType !== 'document' && (
+          type === 'video_message' || (type === 'interactive_message' && interactiveHeaderType === 'video')
             ? <Box component="video" src={mediaUrl} controls sx={{ width: '100%', maxHeight: 190, display: 'block', bgcolor: '#111' }} />
             : <Box component="img" src={mediaUrl} alt="" sx={{ width: '100%', maxHeight: 190, objectFit: 'cover', display: 'block' }} />
         )}
-        {type === 'interactive_message' && config.headerMediaType === 'document' && mediaUrl && <Chip size="small" label="Header document" sx={{ m: 1 }} />}
+        {type === 'interactive_message' && interactiveHeaderType === 'document' && (mediaUrl || config.headerMediaFileName) && <Chip size="small" label={config.headerMediaFileName || 'Header document'} sx={{ m: 1 }} />}
         {type === 'interactive_message' && config.headerType === 'text' && config.headerText && (
           <Typography fontWeight={800} sx={{ px: 1.5, pt: 1.25 }}>{config.headerText}</Typography>
         )}
@@ -321,11 +379,12 @@ function WhatsAppPreview({ type, config, label }) {
   );
 }
 
-export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDelete, departments = [], users = [], actionOptions = {}, flowId }) {
+export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDelete, departments = [], users = [], actionOptions = {}, flowId, whatsappAccountId }) {
   const [label, setLabel] = useState('');
   const [config, setConfig] = useState({});
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const initialRef = useRef('');
 
   useEffect(() => {
@@ -333,9 +392,22 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
     const nextConfig = clone(node.data.config);
     if (Array.isArray(nextConfig.buttons)) nextConfig.buttons = nextConfig.buttons.map(compatibleButton);
     if (Array.isArray(nextConfig.rows)) nextConfig.rows = nextConfig.rows.map(compatibleButton);
+    if (node.data.nodeType === 'interactive_message' && nextConfig.headerType === 'media') {
+      nextConfig.headerType = nextConfig.headerMediaType || 'image';
+      const dataMatch = String(nextConfig.headerMediaUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+      if (dataMatch) {
+        nextConfig.headerMediaMimeType = dataMatch[1];
+        nextConfig.headerMediaDataBase64 = dataMatch[2];
+        nextConfig.headerMediaPreview = nextConfig.headerMediaUrl;
+        nextConfig.headerMediaSize = Math.floor((dataMatch[2].length * 3) / 4);
+        nextConfig.headerMediaFileName ||= `interactive-header.${nextConfig.headerType === 'image' ? 'jpg' : nextConfig.headerType === 'video' ? 'mp4' : 'pdf'}`;
+        nextConfig.headerMediaUrl = '';
+      }
+    }
     setLabel(node.data.label || '');
     setConfig(nextConfig);
     setErrors({});
+    setUploadProgress(0);
     initialRef.current = JSON.stringify({ label: node.data.label || '', config: nextConfig });
   }, [node, open]);
 
@@ -367,6 +439,33 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
           whatsappMediaId: response.data.data.whatsappMediaId,
           fileDataBase64: ''
         };
+      }
+      if (node.data.nodeType === 'interactive_message' && ['image', 'video', 'document', 'media'].includes(nextConfig.headerType) && nextConfig.headerMediaDataBase64) {
+        const headerType = nextConfig.headerType === 'media' ? (nextConfig.headerMediaType || 'image') : nextConfig.headerType;
+        setUploadProgress(1);
+        const response = await uploadFlowMedia(flowId, {
+          whatsappAccountId,
+          mediaType: headerType,
+          fileName: nextConfig.headerMediaFileName,
+          mimeType: nextConfig.headerMediaMimeType,
+          dataBase64: nextConfig.headerMediaDataBase64
+        }, { onUploadProgress: (event) => setUploadProgress(event.total ? Math.min(99, Math.round((event.loaded * 100) / event.total)) : 50) });
+        const media = response.data.data;
+        nextConfig = {
+          ...nextConfig,
+          headerType,
+          headerMediaType: headerType,
+          headerMediaId: media.mediaId || media.whatsappMediaId,
+          headerMediaAccountId: media.whatsappAccountId,
+          headerMediaLocalRef: media.localMediaRef,
+          headerMediaMimeType: media.mimeType,
+          headerMediaFileName: media.fileName,
+          headerMediaSize: media.size,
+          headerMediaDataBase64: '',
+          headerMediaPreview: '',
+          headerMediaUrl: ''
+        };
+        setUploadProgress(100);
       }
       onSave({ label: label.trim(), config: nextConfig });
     } catch (error) {
@@ -408,13 +507,10 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
     form = <>
       <Section title="Header" description="Optional content shown above the message body.">
         <Grid container spacing={1}>
-          {[['none', 'None'], ['text', 'Text'], ['media', 'Media']].map(([value, text]) => <Grid item xs={4} key={value}><Card variant="outlined" sx={{ borderColor: (config.headerType || 'none') === value ? 'primary.main' : 'divider' }}><CardActionArea onClick={() => set('headerType', value)} sx={{ p: 1.5, textAlign: 'center' }}><Typography fontWeight={700}>{text}</Typography></CardActionArea></Card></Grid>)}
+          {[['none', 'None'], ['text', 'Text'], ['image', 'Image'], ['video', 'Video'], ['document', 'Document']].map(([value, text]) => <Grid item xs={6} sm key={value}><Card variant="outlined" sx={{ borderColor: (config.headerType || 'none') === value ? 'primary.main' : 'divider' }}><CardActionArea onClick={() => set('headerType', value)} sx={{ p: 1.5, textAlign: 'center' }}><Typography fontWeight={700}>{text}</Typography></CardActionArea></Card></Grid>)}
         </Grid>
         {config.headerType === 'text' && field('headerText', 'Header text', { inputProps: { maxLength: 60 }, helperText: errors.headerText || `${(config.headerText || '').length} / 60` })}
-        {config.headerType === 'media' && <>
-          {field('headerMediaType', 'Media type', { select: true, value: config.headerMediaType || 'image', children: [<MenuItem key="image" value="image">Image</MenuItem>, <MenuItem key="video" value="video">Video</MenuItem>, <MenuItem key="document" value="document">File</MenuItem>] })}
-          <MediaPicker label="Header media" accept={config.headerMediaType === 'video' ? 'video/*' : config.headerMediaType === 'document' ? '*/*' : 'image/*'} value={config.headerMediaUrl} onChange={(value) => set('headerMediaUrl', value)} error={errors.headerMediaUrl} />
-        </>}
+        {['image', 'video', 'document'].includes(config.headerType) && <InteractiveHeaderMediaPicker type={config.headerType} config={config} set={set} error={errors.headerMedia} progress={uploadProgress} />}
       </Section>
       <Section title="Message body"><MessageField value={config.message || ''} onChange={(value) => set('message', value)} error={errors.message} /></Section>
       <Section title="Footer">{field('footer', 'Footer text', { inputProps: { maxLength: 60 }, helperText: `${(config.footer || '').length} / 60` })}</Section>

@@ -217,6 +217,54 @@ function safeApiError(error) {
   };
 }
 
+function buildInteractivePayload({ to, body, footer = null, header = null, buttons = [], sections = [], buttonText = 'Choose' }) {
+  const interactiveType = sections.length ? 'list' : 'button';
+  const interactive = { type: interactiveType, body: { text: String(body || 'Please choose an option') } };
+  if (footer) interactive.footer = { text: String(footer).slice(0, 60) };
+  if (header) {
+    const headerType = String(header.type || '').toLowerCase();
+    if (headerType === 'text' && header.text) interactive.header = { type: 'text', text: String(header.text).slice(0, 60) };
+    else if (['image', 'video', 'document'].includes(headerType)) {
+      if (interactiveType !== 'button') throw Object.assign(new Error('WhatsApp list messages support text headers only.'), { status: 422, code: 'INTERACTIVE_HEADER_COMBINATION_UNSUPPORTED' });
+      const source = header[headerType] || {};
+      const id = source.id || header.id || header.mediaId;
+      const link = source.link || header.link || header.url;
+      if (!id && !link) throw Object.assign(new Error('Interactive media header requires a Meta media ID or public HTTPS link.'), { status: 422, code: 'INTERACTIVE_MEDIA_MISSING' });
+      interactive.header = {
+        type: headerType,
+        [headerType]: {
+          ...(id ? { id: String(id) } : { link: String(link) }),
+          ...(headerType === 'document' && (source.filename || header.filename) ? { filename: String(source.filename || header.filename).slice(0, 240) } : {})
+        }
+      };
+    } else throw Object.assign(new Error('Interactive header format is invalid.'), { status: 422, code: 'INTERACTIVE_HEADER_INVALID' });
+  }
+  if (interactiveType === 'list') {
+    interactive.action = {
+      button: String(buttonText || 'Choose').slice(0, 20),
+      sections: sections.map((section) => ({
+        title: section.title || 'Options',
+        rows: (section.rows || []).map((row) => ({
+          id: String(row.id || row.payload || row.title),
+          title: String(row.title || row.label || row.id).slice(0, 24),
+          description: row.description || undefined
+        }))
+      }))
+    };
+  } else {
+    interactive.action = {
+      buttons: buttons.slice(0, 3).map((button) => ({
+        type: 'reply',
+        reply: {
+          id: String(button.id || button.payload || button.title || button.label),
+          title: String(button.title || button.label || button.id).slice(0, 20)
+        }
+      }))
+    };
+  }
+  return { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'interactive', interactive };
+}
+
 const MEDIA_EXTENSIONS = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -437,46 +485,36 @@ class WhatsappService {
 
   async sendInteractiveMessage({ to, body, footer = null, header = null, buttons = [], sections = [], buttonText = 'Choose', log = false, whatsappAccountId = null }) {
     const config = await this.getRuntimeConfig(whatsappAccountId);
-    const interactive = {
-      type: sections.length ? 'list' : 'button',
-      body: { text: body || 'Please choose an option' }
-    };
-    if (footer) interactive.footer = { text: footer };
-    if (header?.text) interactive.header = { type: 'text', text: header.text };
-    else if (header?.url && ['image', 'video', 'document'].includes(header.type)) {
-      interactive.header = {
-        type: header.type,
-        [header.type]: {
-          link: header.url,
-          ...(header.type === 'document' && header.filename ? { filename: header.filename } : {})
-        }
-      };
+    const payload = buildInteractivePayload({ to, body, footer, header, buttons, sections, buttonText });
+    const headerType = payload.interactive.header?.type || 'none';
+    const mediaId = ['image', 'video', 'document'].includes(headerType) ? payload.interactive.header[headerType]?.id : null;
+    logger.info('whatsapp_interactive_send_attempt', {
+      whatsappAccountId: config.whatsappAccountId || null,
+      phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+      recipientLastFour: lastFour(to),
+      interactiveType: payload.interactive.type,
+      headerType,
+      metaMediaIdLastFour: lastFour(mediaId)
+    });
+    let response;
+    try {
+      response = await this.sendRequest(payload, { config, attempts: 1 });
+      logger.info('whatsapp_interactive_send_success', {
+        whatsappAccountId: config.whatsappAccountId || null,
+        interactiveType: payload.interactive.type,
+        headerType,
+        whatsappMessageIdLastFour: lastFour(response?.id)
+      });
+    } catch (error) {
+      logger.error('whatsapp_interactive_send_failed', {
+        whatsappAccountId: config.whatsappAccountId || null,
+        phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+        interactiveType: payload.interactive.type,
+        headerType,
+        ...safeApiError(error)
+      });
+      throw error;
     }
-    if (sections.length) {
-      interactive.action = {
-        button: buttonText,
-        sections: sections.map((section) => ({
-          title: section.title || 'Options',
-          rows: (section.rows || []).map((row) => ({
-            id: String(row.id || row.payload || row.title),
-            title: String(row.title || row.label || row.id),
-            description: row.description || undefined
-          }))
-        }))
-      };
-    } else {
-      interactive.action = {
-        buttons: buttons.slice(0, 3).map((button) => ({
-          type: 'reply',
-          reply: {
-            id: String(button.id || button.payload || button.title || button.label),
-            title: String(button.title || button.label || button.id).slice(0, 20)
-          }
-        }))
-      };
-    }
-    const payload = { messaging_product: 'whatsapp', to, type: 'interactive', interactive };
-    const response = await this.sendRequest(payload, { config });
     if (log) {
       await this.logMessage({
         whatsappMessageId: response.id, direction: 'outbound', type: 'text',
@@ -512,7 +550,7 @@ class WhatsappService {
     return this.sendRequest(payload, { config });
   }
 
-  async uploadMedia({ filePath, mimeType, whatsappAccountId = null }) {
+  async uploadMedia({ filePath, mimeType, mediaType = null, fileSize = null, whatsappAccountId = null }) {
     const config = await this.getWhatsAppConfig(whatsappAccountId);
     if (!config.accessToken || !config.phoneNumberId) {
       const error = new Error('WhatsApp Cloud API credentials are not configured');
@@ -524,11 +562,12 @@ class WhatsappService {
     const uploadUrl = `${config.apiBaseUrl}/${config.apiVersion}/${config.phoneNumberId}/media`;
 
     logger.info('meta_media_upload_attempt', {
-      tokenSource: config.tokenSource,
-      hasToken: Boolean(config.accessToken),
+      whatsappAccountId: config.whatsappAccountId || null,
       phoneNumberIdLastFour: lastFour(config.phoneNumberId),
       graphApiVersion: config.apiVersion,
+      mediaType,
       mimeType: mimeType || null,
+      mediaSize: fileSize == null ? null : Number(fileSize),
       filePathExists: fileExists
     });
 
@@ -541,6 +580,7 @@ class WhatsappService {
     const createForm = () => {
       const form = new FormData();
       form.append('messaging_product', 'whatsapp');
+      form.append('type', mimeType || 'application/octet-stream');
       form.append('file', fs.createReadStream(filePath), {
         contentType: mimeType || 'application/octet-stream'
       });
@@ -559,16 +599,24 @@ class WhatsappService {
         });
       });
       logger.info('meta_media_upload_response', {
+        whatsappAccountId: config.whatsappAccountId || null,
+        phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+        mediaType,
         mimeType: mimeType || null,
-        responseData: response.data
+        mediaSize: fileSize == null ? null : Number(fileSize),
+        metaMediaIdLastFour: lastFour(response.data?.id),
+        uploadSucceeded: Boolean(response.data?.id)
       });
       return response.data;
     } catch (error) {
       logger.error('meta_media_upload_failed', {
+        whatsappAccountId: config.whatsappAccountId || null,
+        phoneNumberIdLastFour: lastFour(config.phoneNumberId),
+        mediaType,
         mimeType: mimeType || null,
-        message: error.message,
-        status: error.response?.status || null,
-        responseData: error.response?.data || null
+        mediaSize: fileSize == null ? null : Number(fileSize),
+        uploadSucceeded: false,
+        ...safeApiError(error)
       });
       if (error.response?.data) {
         error.exposeResponseData = true;
@@ -676,7 +724,7 @@ class WhatsappService {
     const { client } = await this.requestClient(config);
 
     try {
-      const response = await this.retryRequest(() => client.post('/messages', payload));
+      const response = await this.retryRequest(() => client.post('/messages', payload), Number(options.attempts || 3));
       return options.fullResponseData
         ? response.data
         : response.data?.messages?.[0] || response.data;
@@ -1390,6 +1438,7 @@ class WhatsappService {
 }
 
 module.exports = new WhatsappService();
+module.exports.buildInteractivePayload = buildInteractivePayload;
 module.exports.validateOutbound = validateOutbound;
 module.exports.normalizeConfig = normalizeConfig;
 module.exports.safeApiError = safeApiError;

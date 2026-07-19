@@ -17,6 +17,11 @@ export const sendConversationMessage = (conversationId, payload) => api.post(
   typeof payload === 'string' ? { text: payload } : payload
 );
 export const sendConversationTemplate = (conversationId, payload) => api.post(`${PREFIX}/conversations/${conversationId}/template`, payload);
+export const sendConversationInteractive = (conversationId, payload, onUploadProgress) => api.post(
+  `${PREFIX}/conversations/${conversationId}/interactive`,
+  payload,
+  { onUploadProgress }
+);
 export const getUnreadCount = () => api.get(`${PREFIX}/unread`);
 export const getNotes = (conversationId) => api.get('/notes', { params: { conversationId } });
 export const createNote = (payload) => api.post('/notes', payload);

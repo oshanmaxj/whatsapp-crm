@@ -76,6 +76,39 @@ class ChatController {
     }
   }
 
+  async sendInteractive(req, res) {
+    try {
+      const message = await chatService.sendChatInteractive({
+        conversationId: req.params.conversationId,
+        senderId: req.user.id,
+        body: req.body.body,
+        footer: req.body.footer,
+        header: req.body.header,
+        buttons: req.body.buttons,
+        clientRequestId: req.body.clientRequestId
+      });
+      const payload = message?.toJSON ? message.toJSON() : message;
+      socketService.emitToRoom(`conversation_${req.params.conversationId}`, 'chat:message', payload);
+      await socketService.emitToConversationAudience(req.params.conversationId, 'chat:message', payload);
+      return res.status(201).json({ success: true, data: payload });
+    } catch (error) {
+      const meta = error.whatsappApiResponse?.error || error.response?.data?.error || error.metaError?.error || {};
+      logger.warn('chat_interactive_send_failed', {
+        conversationId: req.params.conversationId,
+        userId: req.user?.id || null,
+        code: meta.code || error.code || null,
+        subcode: meta.error_subcode || null,
+        type: meta.type || null,
+        message: meta.error_user_msg || meta.message || error.message
+      });
+      return res.status(error.response ? 502 : (error.status || 500)).json({
+        success: false, code: error.code || 'WHATSAPP_INTERACTIVE_SEND_FAILED',
+        message: meta.error_user_msg || meta.message || error.message || 'Unable to send interactive message',
+        data: error.messageRecord?.toJSON ? error.messageRecord.toJSON() : error.messageRecord
+      });
+    }
+  }
+
   async sendTemplate(req, res) {
     try {
       const templateName = String(req.body.templateName || '').trim();

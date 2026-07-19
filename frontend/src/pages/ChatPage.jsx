@@ -16,6 +16,7 @@ import {
   getTemplates,
   getUnreadCount,
   sendConversationMessage,
+  sendConversationInteractive,
   sendConversationTemplate,
   setConversationLabels,
   updateConversation,
@@ -662,6 +663,26 @@ function ChatPage() {
     }
   }, [selected, newMessage, replyToMessage, loadDetails, loadConversations]);
 
+  const handleSendInteractive = useCallback(async (payload, setProgress = () => {}) => {
+    if (!selected) return;
+    setSending(true);
+    try {
+      const response = await sendConversationInteractive(selected, payload, (event) => {
+        setProgress(event.total ? Math.min(90, Math.round((event.loaded * 90) / event.total)) : 45);
+      });
+      setProgress(100);
+      const sentMessage = response.data?.data;
+      if (sentMessage?.id != null) {
+        seenSocketMessageIdsRef.current.add(String(sentMessage.id));
+        setMessages((current) => safeArray(current).some((item) => String(item.id) === String(sentMessage.id)) ? current : [...safeArray(current), sentMessage]);
+      }
+      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to send interactive message.');
+      throw requestError;
+    } finally { setSending(false); }
+  }, [selected, loadDetails, loadConversations]);
+
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0];
     await sendAttachment(file);
@@ -817,6 +838,7 @@ function ChatPage() {
               setNewMessage(value);
             }}
             onSend={handleSendMessage}
+            onSendInteractive={handleSendInteractive}
             onAttach={() => fileInputRef.current?.click()}
             onDropFile={sendAttachment}
             onSaveTemplate={handleSaveTemplate}

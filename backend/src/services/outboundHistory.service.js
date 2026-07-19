@@ -94,9 +94,23 @@ function createOutboundHistoryService(dependencies = {}) {
 
   async function fail(prepared, error) {
     if (!prepared?.message) return;
-    await prepared.message.update({ status: 'failed', statusUpdatedAt: new Date(), rawPayload: {
-      ...(prepared.message.rawPayload || {}), deliveryError: String(error?.message || error).slice(0, 500)
-    } });
+    const meta = error?.whatsappApiResponse?.error || error?.response?.data?.error || error?.metaError?.error || {};
+    const errorMessage = String(meta.error_user_msg || meta.message || error?.message || error).slice(0, 500);
+    await prepared.message.update({
+      status: 'failed', statusUpdatedAt: new Date(),
+      errorCode: meta.code == null ? (error?.code || null) : String(meta.code),
+      errorSubcode: meta.error_subcode == null ? null : String(meta.error_subcode),
+      errorMessage,
+      rawPayload: {
+        ...(prepared.message.rawPayload || {}),
+        deliveryError: {
+          code: meta.code == null ? (error?.code || null) : String(meta.code),
+          subcode: meta.error_subcode == null ? null : String(meta.error_subcode),
+          type: meta.type || null,
+          message: errorMessage
+        }
+      }
+    });
     await emit(prepared);
   }
 

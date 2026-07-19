@@ -18,6 +18,7 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import { agentName, contactName, formatDateTime, formatTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
+import InteractiveMessageDialog from './InteractiveMessageDialog';
 
 function StatusTicks({ message }) {
   if (message.direction !== 'outbound') return null;
@@ -523,6 +524,7 @@ export function MessageComposer({
   value,
   onChange,
   onSend,
+  onSendInteractive,
   onAttach,
   onSaveTemplate,
   quickReplies,
@@ -537,6 +539,7 @@ export function MessageComposer({
 }) {
   const [emojiAnchor, setEmojiAnchor] = useState(null);
   const [templateAnchor, setTemplateAnchor] = useState(null);
+  const [interactiveOpen, setInteractiveOpen] = useState(false);
   const slashQuery = value.startsWith('/') ? value.slice(1).trim().toLowerCase() : null;
   const matchingQuickReplies = slashQuery === null
     ? []
@@ -612,6 +615,7 @@ export function MessageComposer({
       )}
       <Stack direction="row" alignItems="flex-end" gap={0.4}>
         <Tooltip title="Attach media"><span><IconButton disabled={!selected} onClick={onAttach}><AttachFileIcon /></IconButton></span></Tooltip>
+        <Button size="small" variant="outlined" disabled={!selected || !windowOpen || sending} onClick={() => setInteractiveOpen(true)} sx={{ mb: 0.35, minWidth: 86, borderRadius: 2.5, textTransform: 'none' }}>Interactive</Button>
         <Button
           size="small"
           variant="outlined"
@@ -671,6 +675,7 @@ export function MessageComposer({
           </span>
         </Tooltip>
       </Stack>
+      <InteractiveMessageDialog open={interactiveOpen} onClose={() => setInteractiveOpen(false)} onSend={onSendInteractive} sending={sending} />
     </Box>
   );
 }
@@ -687,6 +692,7 @@ export function ChatArea({
   composerValue,
   onComposerChange,
   onSend,
+  onSendInteractive,
   onAttach,
   onDropFile,
   onSaveTemplate,
@@ -743,6 +749,7 @@ export function ChatArea({
         value={composerValue}
         onChange={onComposerChange}
         onSend={onSend}
+        onSendInteractive={onSendInteractive}
         onAttach={onAttach}
         onSaveTemplate={onSaveTemplate}
         quickReplies={quickReplies}

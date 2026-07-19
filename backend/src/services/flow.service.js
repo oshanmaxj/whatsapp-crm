@@ -1,6 +1,3 @@
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const { Op, fn, col } = require('sequelize');
 const {
   Contact,
@@ -29,6 +26,7 @@ const whatsappAccountService = require('./whatsappAccount.service');
 const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
 const flowActionService = require('./flowAction.service');
 const triggerMatcher = require('./flowTriggerMatcher.service');
+const interactiveMediaService = require('./interactiveMedia.service');
 
 const MAX_NESTED_FLOW_DEPTH = Number(process.env.MAX_NESTED_FLOW_DEPTH || 5);
 
@@ -326,9 +324,12 @@ class FlowService {
         addRequired(missing(config.message), 'Message body is required.');
       }
       if (node.nodeType === 'interactive_message') {
-        addRequired(config.headerType === 'text' && missing(config.headerText), 'Header text is required.');
-        addRequired(config.headerType === 'media' && missing(config.headerMediaUrl), 'Header media is required.');
+        const headerType = config.headerType === 'media' ? (config.headerMediaType || 'image') : (config.headerType || 'none');
+        addRequired(headerType === 'text' && missing(config.headerText), 'Header text is required.');
+        addRequired(['image', 'video', 'document'].includes(headerType) && missing(config.headerMediaId || config.headerMediaLocalRef || config.headerMediaUrl), 'Header media is required.');
+        addRequired(!['none', 'text', 'image', 'video', 'document'].includes(headerType), 'Interactive header type is invalid.');
       }
+      if (node.nodeType === 'list_message') addRequired(['image', 'video', 'document', 'media'].includes(config.headerType), 'WhatsApp list messages support text headers only.');
       if (node.nodeType === 'image_message' || node.nodeType === 'video_message' || node.nodeType === 'audio_message') {
         if (node.nodeType === 'image_message') {
           const sourceType = config.sourceType || (config.whatsappMediaId ? 'media_id' : 'url');
@@ -581,30 +582,17 @@ class FlowService {
     });
   }
 
-  async uploadFlowMedia(flowId, payload = {}) {
+  async uploadFlowMedia(flowId, payload = {}, userId = null) {
     const flow = await this.get(flowId);
-    const mimeType = String(payload.mimeType || '').toLowerCase();
-    const allowed = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
-    if (!allowed.has(mimeType)) {
-      throw Object.assign(new Error('Flow images must be JPG, PNG, or WebP.'), { status: 422 });
-    }
-    const rawBase64 = String(payload.dataBase64 || '').replace(/^data:[^;]+;base64,/, '');
-    const buffer = Buffer.from(rawBase64, 'base64');
-    if (!buffer.length) throw Object.assign(new Error('Uploaded image is empty.'), { status: 422 });
-    const safeName = String(payload.fileName || `flow-image-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const tempPath = path.join(os.tmpdir(), `${Date.now()}-${safeName}`);
-    try {
-      fs.writeFileSync(tempPath, buffer);
-      const response = await whatsappService.uploadMedia({
-        filePath: tempPath,
-        mimeType,
-        whatsappAccountId: flow.whatsappAccountId || payload.whatsappAccountId || null
-      });
-      if (!response?.id) throw Object.assign(new Error('WhatsApp media upload did not return a media ID.'), { status: 502 });
-      return { whatsappMediaId: response.id, meta: response };
-    } finally {
-      fs.unlink(tempPath, () => {});
-    }
+    const whatsappAccountId = payload.whatsappAccountId || flow.whatsappAccountId || null;
+    if (!whatsappAccountId) throw Object.assign(new Error('Select a WhatsApp account before uploading flow media.'), { status: 422, code: 'WHATSAPP_ACCOUNT_REQUIRED' });
+    if (userId) await whatsappAccountAccessService.assertAccess(whatsappAccountId, userId);
+    const binding = await interactiveMediaService.storeAndUpload({
+      scope: 'flow', scopeId: flow.id, dataBase64: payload.dataBase64,
+      fileName: payload.fileName, mimeType: payload.mimeType,
+      mediaType: payload.mediaType, whatsappAccountId
+    });
+    return { whatsappMediaId: binding.mediaId, ...binding };
   }
 
   firstNode(flow) {
@@ -942,20 +930,60 @@ class FlowService {
     let sentMediaId = null;
     let sentMediaUrl = null;
     let sentInteractiveType = null;
+    let preparedHistory = null;
     if (node.nodeType === 'text_message' || node.nodeType.startsWith('ai_')) {
       response = await whatsappService.sendTextMessage({ to, text, log: false, whatsappAccountId: context.whatsappAccountId });
     } else if (['button_message', 'interactive_message'].includes(node.nodeType)) {
       const buttons = normalizeButtons(config.buttons).slice(0, 3);
       if (!buttons.length) throw Object.assign(new Error('Interactive button node requires at least one button.'), { status: 422 });
-      const header = config.header || (
-        config.headerType === 'text'
-          ? { type: 'text', text: config.headerText }
-          : config.headerType === 'media'
-            ? { type: config.headerMediaType || 'image', url: config.headerMediaUrl }
-            : null
-      );
+      const headerType = config.headerType === 'media' ? (config.headerMediaType || 'image') : (config.headerType || 'none');
+      const requestedHeader = config.header || (headerType === 'text'
+        ? { type: 'text', text: config.headerText }
+        : ['image', 'video', 'document'].includes(headerType)
+          ? {
+              type: headerType,
+              mediaId: config.headerMediaId || config.whatsappMediaId || null,
+              whatsappAccountId: config.headerMediaAccountId || null,
+              localMediaRef: config.headerMediaLocalRef || null,
+              mimeType: config.headerMediaMimeType || null,
+              size: config.headerMediaSize || null,
+              fileName: config.headerMediaFileName || null,
+              url: config.headerMediaUrl && !String(config.headerMediaUrl).startsWith('data:') ? config.headerMediaUrl : null
+            }
+          : null);
+      const resolvedHeader = await interactiveMediaService.resolveHeader(requestedHeader, { whatsappAccountId: context.whatsappAccountId, interactiveType: 'button' });
+      const header = resolvedHeader.header;
+      if (resolvedHeader.binding?.mediaId && resolvedHeader.binding.mediaId !== config.headerMediaId) {
+        Object.assign(config, {
+          headerType,
+          headerMediaId: resolvedHeader.binding.mediaId,
+          headerMediaAccountId: resolvedHeader.binding.whatsappAccountId,
+          headerMediaLocalRef: resolvedHeader.binding.localMediaRef,
+          headerMediaMimeType: resolvedHeader.binding.mimeType,
+          headerMediaSize: resolvedHeader.binding.size,
+          headerMediaFileName: resolvedHeader.binding.fileName,
+          headerMediaUrl: null
+        });
+        await node.update({ configJson: config }).catch(() => null);
+      }
       const encoded = buttons.map((button) => ({ ...button, id: encodedButtonId(context.flowId, node.nodeKey, button.id) }));
-      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, header, buttons: encoded, log: false, whatsappAccountId: context.whatsappAccountId });
+      const historyMap = context.flowOutboundHistory || (context.flowOutboundHistory = {});
+      preparedHistory = await outboundHistoryService.prepare({
+        historyMessageId: historyMap[node.nodeKey] || null,
+        conversationId: context.conversationId || context.conversation?.id || null,
+        contactId: context.contactId || context.contact?.id || null,
+        phone: to,
+        type: 'text', messageType: 'flow_automation', text,
+        interactiveType: 'button', status: 'pending', whatsappAccountId: context.whatsappAccountId,
+        rawPayload: { source: 'flow', flowId: context.flowId, nodeKey: node.nodeKey, interactiveType: 'button', headerType }
+      });
+      historyMap[node.nodeKey] = preparedHistory.message.id;
+      try {
+        response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, header, buttons: encoded, log: false, whatsappAccountId: context.whatsappAccountId });
+      } catch (error) {
+        await outboundHistoryService.fail(preparedHistory, error);
+        throw error;
+      }
       sentInteractiveType = 'button';
     } else if (node.nodeType === 'list_message' || node.nodeType === 'appointment_booking') {
       const rows = node.nodeType === 'appointment_booking'
@@ -998,7 +1026,13 @@ class FlowService {
       storedType = 'location';
       response = await whatsappService.sendLocationMessage({ to, ...config, log: false, whatsappAccountId: context.whatsappAccountId });
     }
-    await outboundHistoryService.record({
+    if (preparedHistory) {
+      await outboundHistoryService.complete(preparedHistory, {
+        whatsappMessageId: response?.id || null,
+        status: 'sent',
+        rawPayload: { ...(preparedHistory.message.rawPayload || {}), whatsappMessageId: response?.id || null }
+      });
+    } else await outboundHistoryService.record({
       conversationId: context.conversationId || context.conversation?.id || null,
       contactId: context.contactId || context.contact?.id || null,
       leadId: context.leadId || context.lead?.id || null,

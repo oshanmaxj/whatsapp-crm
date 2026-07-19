@@ -66,7 +66,7 @@ class FlowController {
   async uploadMedia(req, res, next) {
     try {
       await assertFlowAccess(req);
-      return res.status(201).json({ success: true, data: await flowService.uploadFlowMedia(req.params.id, req.body) });
+      return res.status(201).json({ success: true, data: await flowService.uploadFlowMedia(req.params.id, req.body, req.user?.id || null) });
     } catch (err) { next(err); }
   }
 

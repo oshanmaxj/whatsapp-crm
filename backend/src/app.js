@@ -36,12 +36,16 @@ app.use(helmet({
 }));
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json({
+const defaultJsonParser = express.json({
   limit: '30mb',
   verify(req, res, buffer) {
     if (req.originalUrl?.startsWith('/api/webhooks/whatsapp')) req.rawBody = Buffer.from(buffer);
   }
-}));
+});
+app.use((req, res, next) => {
+  if (/^\/api\/(?:flows\/[^/]+\/media|chat\/conversations\/[^/]+\/interactive)$/.test(req.path)) return next();
+  return defaultJsonParser(req, res, next);
+});
 app.use(express.urlencoded({ extended: false }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev', {
   stream: logger.stream,

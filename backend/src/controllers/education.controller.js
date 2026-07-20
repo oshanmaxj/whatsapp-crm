@@ -4,18 +4,21 @@ const ok = (res, data, status = 200) => res.status(status).json({ success: true,
 
 class EducationController {
   async listCourses(req, res, next) { try { return ok(res, await educationService.listCourses(req.query)); } catch (err) { next(err); } }
+  async searchCourses(req, res, next) { try { return ok(res, await educationService.searchCourses(req.query)); } catch (err) { next(err); } }
   async getCourse(req, res, next) { try { return ok(res, await educationService.getCourse(req.params.id)); } catch (err) { next(err); } }
   async createCourse(req, res, next) { try { return ok(res, await educationService.createCourse(req.body), 201); } catch (err) { next(err); } }
   async updateCourse(req, res, next) { try { return ok(res, await educationService.updateCourse(req.params.id, req.body)); } catch (err) { next(err); } }
   async deleteCourse(req, res, next) { try { return ok(res, await educationService.deleteCourse(req.params.id)); } catch (err) { next(err); } }
 
   async listBatches(req, res, next) { try { return ok(res, await educationService.listBatches(req.query)); } catch (err) { next(err); } }
+  async searchBatches(req, res, next) { try { return ok(res, await educationService.searchBatches(req.query)); } catch (err) { next(err); } }
   async getBatch(req, res, next) { try { return ok(res, await educationService.getBatch(req.params.id)); } catch (err) { next(err); } }
   async createBatch(req, res, next) { try { return ok(res, await educationService.createBatch(req.body), 201); } catch (err) { next(err); } }
   async updateBatch(req, res, next) { try { return ok(res, await educationService.updateBatch(req.params.id, req.body)); } catch (err) { next(err); } }
   async deleteBatch(req, res, next) { try { return ok(res, await educationService.deleteBatch(req.params.id)); } catch (err) { next(err); } }
 
   async listStudents(req, res, next) { try { return ok(res, await educationService.listStudents(req.query)); } catch (err) { next(err); } }
+  async searchStudents(req, res, next) { try { return ok(res, await educationService.searchStudents(req.query)); } catch (err) { next(err); } }
   async getStudentProfile(req, res, next) { try { return ok(res, await educationService.getStudentProfile(req.params.id)); } catch (err) { next(err); } }
   async getStudent(req, res, next) { try { return ok(res, await educationService.getStudent(req.params.id)); } catch (err) { next(err); } }
   async listStudentEnrollments(req, res, next) { try { return ok(res, await educationService.listStudentEnrollments(req.params.id)); } catch (err) { next(err); } }

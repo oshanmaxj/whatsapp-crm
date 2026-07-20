@@ -103,6 +103,21 @@ function serialize(model) {
   return model && typeof model.toJSON === 'function' ? model.toJSON() : model;
 }
 
+function pageOptions(query = {}, defaultLimit = 20) {
+  const page = Math.max(Number.parseInt(query.page, 10) || 1, 1);
+  const limit = Math.min(Math.max(Number.parseInt(query.limit, 10) || defaultLimit, 1), 100);
+  return { page, limit, offset: (page - 1) * limit };
+}
+
+function pagedResult(result, page, limit) {
+  const count = Array.isArray(result.count) ? result.count.length : Number(result.count || 0);
+  return { items: result.rows, page, limit, total: count, hasMore: page * limit < count };
+}
+
+function textQuery(query = {}) {
+  return String(query.q ?? query.search ?? '').trim();
+}
+
 function feeDisplayStatus(fee, nextInstallment) {
   if (!fee) return 'Pending';
   if (fee.paymentType === 'free_card' || fee.status === 'free') return 'Free Card';
@@ -187,8 +202,25 @@ class EducationService {
   async listCourses(query = {}) {
     const where = {};
     if (query.status) where.status = query.status;
-    if (query.search) where.name = { [Op.iLike]: `%${query.search}%` };
-    return Course.findAll({ where, include: this.courseInclude(), order: [['created_at', 'DESC']] });
+    const q = textQuery(query);
+    if (q) where[Op.or] = [...['name', 'code', 'category'].map((field) => ({ [field]: { [Op.iLike]: `%${q}%` } })), ...(['active', 'inactive', 'archived'].includes(q.toLowerCase()) ? [{ status: q.toLowerCase() }] : [])];
+    const options = { where, include: this.courseInclude(), order: [['created_at', 'DESC']] };
+    if (!query.page && !query.limit) return Course.findAll(options);
+    const { page, limit, offset } = pageOptions(query);
+    return pagedResult(await Course.findAndCountAll({ ...options, limit, offset, distinct: true }), page, limit);
+  }
+
+  async searchCourses(query = {}) {
+    const { page, limit, offset } = pageOptions(query);
+    const where = {};
+    if (query.status) where.status = query.status;
+    const q = textQuery(query);
+    if (q) where[Op.or] = [...['name', 'code', 'category'].map((field) => ({ [field]: { [Op.iLike]: `%${q}%` } })), ...(['active', 'inactive', 'archived'].includes(q.toLowerCase()) ? [{ status: q.toLowerCase() }] : [])];
+    const result = await Course.findAndCountAll({
+      where, attributes: ['id', 'code', 'name', 'category', 'status', 'feeAmount', 'defaultInstallmentCount'],
+      order: [['name', 'ASC'], ['id', 'ASC']], limit, offset
+    });
+    return pagedResult(result, page, limit);
   }
 
   async getCourse(id) {
@@ -218,11 +250,39 @@ class EducationService {
     const where = {};
     if (query.courseId) where.courseId = query.courseId;
     if (query.status) where.status = query.status;
-    return Batch.findAll({
+    const q = textQuery(query);
+    if (q) where[Op.or] = [
+      { name: { [Op.iLike]: `%${q}%` } }, { code: { [Op.iLike]: `%${q}%` } },
+      ...(['upcoming', 'active', 'completed', 'cancelled'].includes(q.toLowerCase()) ? [{ status: q.toLowerCase() }] : []),
+      ...(/^\d{4}-\d{2}-\d{2}$/.test(q) ? [{ startDate: q }] : []),
+      { '$course.name$': { [Op.iLike]: `%${q}%` } }, { '$course.code$': { [Op.iLike]: `%${q}%` } }
+    ];
+    const options = {
       where,
       include: [{ model: Course, as: 'course' }, { model: User, as: 'trainer', attributes: ['id', 'firstName', 'lastName', 'email'] }],
       order: [['created_at', 'DESC']]
+    };
+    if (!query.page && !query.limit) return Batch.findAll(options);
+    const { page, limit, offset } = pageOptions(query);
+    return pagedResult(await Batch.findAndCountAll({ ...options, limit, offset, distinct: true }), page, limit);
+  }
+
+  async searchBatches(query = {}) {
+    const { page, limit, offset } = pageOptions(query);
+    const where = {};
+    if (query.courseId) where.courseId = query.courseId;
+    if (query.status) where.status = query.status;
+    const q = textQuery(query);
+    if (q) where[Op.or] = [
+      { name: { [Op.iLike]: `%${q}%` } }, { code: { [Op.iLike]: `%${q}%` } },
+      { '$course.name$': { [Op.iLike]: `%${q}%` } }, { '$course.code$': { [Op.iLike]: `%${q}%` } }
+    ];
+    const result = await Batch.findAndCountAll({
+      where, attributes: ['id', 'courseId', 'name', 'code', 'startDate', 'status'],
+      include: [{ model: Course, as: 'course', attributes: ['id', 'code', 'name'], required: false }],
+      order: [['name', 'ASC'], ['id', 'ASC']], limit, offset, distinct: true, subQuery: false
     });
+    return pagedResult(result, page, limit);
   }
 
   async getBatch(id) {
@@ -253,14 +313,51 @@ class EducationService {
     if (query.courseId) where['$enrollments.course_id$'] = query.courseId;
     if (query.batchId) where['$enrollments.batch_id$'] = query.batchId;
     if (query.status) where.status = query.status;
-    if (query.search) {
+    if (query.enrollmentStatus) where['$enrollments.enrollment_status$'] = query.enrollmentStatus;
+    const q = textQuery(query);
+    if (q) {
       where[Op.or] = [
-        { name: { [Op.iLike]: `%${query.search}%` } },
-        { phone: { [Op.iLike]: `%${query.search}%` } },
-        { studentNo: { [Op.iLike]: `%${query.search}%` } }
+        { name: { [Op.iLike]: `%${q}%` } }, { phone: { [Op.iLike]: `%${q}%` } },
+        { studentNo: { [Op.iLike]: `%${q}%` } }, { email: { [Op.iLike]: `%${q}%` } },
+        { '$contact.phone$': { [Op.iLike]: `%${q}%` } }, { '$contact.email$': { [Op.iLike]: `%${q}%` } },
+        { '$enrollments.course.name$': { [Op.iLike]: `%${q}%` } }, { '$enrollments.course.code$': { [Op.iLike]: `%${q}%` } },
+        { '$enrollments.batch.name$': { [Op.iLike]: `%${q}%` } }, { '$enrollments.batch.code$': { [Op.iLike]: `%${q}%` } }
       ];
     }
-    return Student.findAll({ where, include: this.studentInclude(), order: [['created_at', 'DESC']], distinct: true });
+    if (query.paymentStatus) where['$fees.status$'] = query.paymentStatus;
+    const options = { where, include: this.studentInclude(), order: [['created_at', 'DESC']], distinct: true, subQuery: false };
+    if (!query.page && !query.limit) return Student.findAll(options);
+    const { page, limit, offset } = pageOptions(query);
+    return pagedResult(await Student.findAndCountAll({ ...options, limit, offset }), page, limit);
+  }
+
+  async searchStudents(query = {}) {
+    const { page, limit, offset } = pageOptions(query);
+    const where = {};
+    if (query.status) where.status = query.status;
+    if (query.courseId) where['$enrollments.course_id$'] = query.courseId;
+    if (query.batchId) where['$enrollments.batch_id$'] = query.batchId;
+    const q = textQuery(query);
+    if (q) {
+      const phone = q.replace(/\D/g, '');
+      where[Op.or] = [
+        { studentNo: { [Op.iLike]: `%${q}%` } }, { name: { [Op.iLike]: `%${q}%` } },
+        { phone: { [Op.iLike]: `%${phone || q}%` } }, { email: { [Op.iLike]: `%${q}%` } },
+        { '$contact.phone$': { [Op.iLike]: `%${phone || q}%` } }, { '$contact.email$': { [Op.iLike]: `%${q}%` } }
+      ];
+    }
+    const result = await Student.findAndCountAll({
+      where, attributes: ['id', 'studentNo', 'name', 'phone', 'email', 'status'],
+      include: [
+        { model: Contact, as: 'contact', required: false, attributes: ['phone', 'email'] },
+        { model: StudentEnrollment, as: 'enrollments', required: false, attributes: ['id', 'courseId', 'batchId', 'enrollmentStatus'], include: [
+          { model: Course, as: 'course', required: false, attributes: ['id', 'code', 'name', 'feeAmount', 'defaultInstallmentCount'] },
+          { model: Batch, as: 'batch', required: false, attributes: ['id', 'code', 'name'] }
+        ] }
+      ],
+      order: [['name', 'ASC'], ['id', 'ASC']], limit, offset, distinct: true, subQuery: false
+    });
+    return pagedResult(result, page, limit);
   }
 
   async getStudent(id) {
@@ -869,19 +966,50 @@ class EducationService {
   async listFees(query = {}) {
     const where = {};
     if (query.studentId) where.studentId = query.studentId;
+    if (query.courseId) where.courseId = query.courseId;
+    if (query.batchId) where.batchId = query.batchId;
+    if (query.paymentType) where.paymentType = query.paymentType;
     if (query.status) where.status = query.status;
-    const rows = await StudentFee.findAll({
+    if (query.hasOutstandingBalance === 'true') where.balance = { [Op.gt]: 0 };
+    if (query.paymentState === 'fully_paid') where.balance = 0;
+    if (query.paymentState === 'partial') where[Op.and] = [{ paidAmount: { [Op.gt]: 0 } }, { balance: { [Op.gt]: 0 } }];
+    if (query.paymentState === 'unpaid') where.paidAmount = 0;
+    if (query.paymentState === 'overdue') where.status = 'overdue';
+    if (query.paymentState === 'outstanding') where.balance = { [Op.gt]: 0 };
+    if (query.dateFrom || query.dateTo) {
+      where.createdAt = {};
+      if (query.dateFrom) where.createdAt[Op.gte] = new Date(`${query.dateFrom}T00:00:00`);
+      if (query.dateTo) where.createdAt[Op.lte] = new Date(`${query.dateTo}T23:59:59.999`);
+    }
+    const q = textQuery(query);
+    if (q) where[Op.or] = [
+      { '$student.student_no$': { [Op.iLike]: `%${q}%` } }, { '$student.name$': { [Op.iLike]: `%${q}%` } },
+      { '$student.phone$': { [Op.iLike]: `%${q.replace(/\D/g, '') || q}%` } },
+      { '$course.name$': { [Op.iLike]: `%${q}%` } }, { '$course.code$': { [Op.iLike]: `%${q}%` } },
+      { '$batch.name$': { [Op.iLike]: `%${q}%` } }, { '$batch.code$': { [Op.iLike]: `%${q}%` } },
+      ...(['pending', 'partial', 'paid', 'free', 'overdue', 'cancelled'].includes(q.toLowerCase()) ? [{ status: q.toLowerCase() }] : [])
+    ];
+    const includes = [
+      { model: Student, as: 'student', include: [{ model: Contact, as: 'contact' }] },
+      { model: Course, as: 'course' },
+      { model: Batch, as: 'batch' },
+      { model: FeeInstallment, as: 'installments', include: [{ model: PaymentReceipt, as: 'receipts', required: false }] }
+    ];
+    const allowedSorts = { newest: ['created_at', 'DESC'], oldest: ['created_at', 'ASC'], balance_desc: ['balance', 'DESC'], balance_asc: ['balance', 'ASC'], student: [{ model: Student, as: 'student' }, 'name', 'ASC'] };
+    const order = [allowedSorts[query.sort] || allowedSorts.newest];
+    const options = {
       where,
-      include: [
-        { model: Student, as: 'student', include: [{ model: Contact, as: 'contact' }] },
-        { model: Course, as: 'course' },
-        { model: Batch, as: 'batch' },
-        { model: FeeInstallment, as: 'installments', include: [{ model: PaymentReceipt, as: 'receipts', required: false }] }
-      ],
-      order: [['created_at', 'DESC']]
-    });
-    await this.markOverdue(rows);
-    return rows;
+      include: includes, order, distinct: true, subQuery: false
+    };
+    if (!query.page && !query.limit) {
+      const rows = await StudentFee.findAll(options);
+      await this.markOverdue(rows);
+      return rows;
+    }
+    const { page, limit, offset } = pageOptions(query);
+    const result = await StudentFee.findAndCountAll({ ...options, limit, offset });
+    await this.markOverdue(result.rows);
+    return pagedResult(result, page, limit);
   }
 
   async feePayload(payload, existing = null) {

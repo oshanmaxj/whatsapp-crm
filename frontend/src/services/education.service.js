@@ -25,16 +25,19 @@ const normalizeStudentPayload = (payload = {}) => ({
 });
 
 export const listCourses = (params = {}) => api.get('/courses', { params });
+export const searchCourses = (q = '', page = 1, limit = 20, filters = {}) => api.get('/courses/search', { params: { q, page, limit, ...filters } });
 export const createCourse = (payload) => api.post('/courses', payload);
 export const updateCourse = (id, payload) => api.patch(`/courses/${id}`, payload);
 export const deleteCourse = (id) => api.delete(`/courses/${id}`);
 
 export const listBatches = (params = {}) => api.get('/batches', { params });
+export const searchBatches = (q = '', page = 1, limit = 20, filters = {}) => api.get('/batches/search', { params: { q, page, limit, ...filters } });
 export const createBatch = (payload) => api.post('/batches', payload);
 export const updateBatch = (id, payload) => api.patch(`/batches/${id}`, payload);
 export const deleteBatch = (id) => api.delete(`/batches/${id}`);
 
 export const listStudents = (params = {}) => api.get('/students', { params });
+export const searchStudents = (q = '', page = 1, limit = 20, filters = {}) => api.get('/students/search', { params: { q, page, limit, ...filters } });
 export const getStudentProfile = (id) => api.get(`/students/${id}/profile`);
 export const createStudent = (payload) => api.post('/students', normalizeStudentPayload(payload));
 export const updateStudent = (id, payload) => api.patch(`/students/${id}`, normalizeStudentPayload(payload));

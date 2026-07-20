@@ -8,18 +8,21 @@ const router = express.Router();
 router.use(authMiddleware.authenticate);
 
 router.get('/courses', educationController.listCourses.bind(educationController));
+router.get('/courses/search', educationController.searchCourses.bind(educationController));
 router.get('/courses/:id', educationController.getCourse.bind(educationController));
 router.post('/courses', educationController.createCourse.bind(educationController));
 router.patch('/courses/:id', educationController.updateCourse.bind(educationController));
 router.delete('/courses/:id', educationController.deleteCourse.bind(educationController));
 
 router.get('/batches', educationController.listBatches.bind(educationController));
+router.get('/batches/search', educationController.searchBatches.bind(educationController));
 router.get('/batches/:id', educationController.getBatch.bind(educationController));
 router.post('/batches', educationController.createBatch.bind(educationController));
 router.patch('/batches/:id', educationController.updateBatch.bind(educationController));
 router.delete('/batches/:id', educationController.deleteBatch.bind(educationController));
 
 router.get('/students', educationController.listStudents.bind(educationController));
+router.get('/students/search', educationController.searchStudents.bind(educationController));
 router.get('/students/:id/profile', educationController.getStudentProfile.bind(educationController));
 router.get('/students/:id/notes', educationController.listStudentNotes.bind(educationController));
 router.post('/students/:id/notes', educationController.createStudentNote.bind(educationController));

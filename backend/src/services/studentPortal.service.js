@@ -466,7 +466,8 @@ class StudentPortalService {
     let completedCount = 0;
     const safeTopics = topics.map((topicRow) => {
       const topic = topicRow.toJSON();
-      const lessons = (topic.lessons || []).map((raw) => {
+      const uniqueLessons = [...new Map((topic.lessons || []).map((lesson) => [String(lesson.id), lesson])).values()];
+      const lessons = uniqueLessons.map((raw) => {
         const lesson = applyBatchOverride(raw, raw.batchOverrides?.[0]);
         if (lesson.status === 'hidden' || lesson.status === 'archived') return null;
         const progress = lesson.progress?.[0] || null;
@@ -485,8 +486,9 @@ class StudentPortalService {
       return { id: topic.id, title: topic.title, summary: topic.summary, sortOrder: topic.sortOrder, lessons };
     });
     const totalLessons = safeTopics.reduce((sum, topic) => sum + topic.lessons.filter((lesson) => !lesson.locked).length, 0);
+    const courseData = { ...course.toJSON(), access: true, topics: safeTopics };
     return {
-      course: course.toJSON(), enrollment: { id: enrollment.id, batchId: enrollment.batchId, enrolledAt: enrollment.enrolledAt },
+      course: courseData, enrollment: { id: enrollment.id, batchId: enrollment.batchId, enrolledAt: enrollment.enrolledAt },
       enrollmentAccess, topics: safeTopics,
       progress: { completedLessons: completedCount, totalLessons, percentage: totalLessons ? Math.round(completedCount / totalLessons * 100) : 0 }
     };

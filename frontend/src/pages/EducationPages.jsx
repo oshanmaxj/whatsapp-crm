@@ -3,7 +3,7 @@ import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControl, Grid,
   IconButton, InputLabel, LinearProgress, MenuItem, Paper, Select, Stack, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TextField, Typography
+  TableContainer, TableHead, TableRow, TextField, Typography, Pagination, Tooltip
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -13,12 +13,14 @@ import PaymentsIcon from '@mui/icons-material/Payments';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import AsyncSearchSelect from '../components/AsyncSearchSelect';
 import { downloadReceipt, saveBlob } from '../services/paymentReceipt.service';
 import {
   confirmInstallmentPayment, convertLeadToStudent, createAttendance, createBatch, createCertificate, createCourse, createFee, createStudent, deleteAttendance,
   deleteBatch, deleteCertificate, deleteCourse, deleteFee, deleteStudent, listAttendance, listBatches,
   listCertificates, listCourses, listFees, listStudents, payInstallment, rejectInstallmentPayment, reverseInstallmentPayment, sendFeeReminder, updateAttendance,
-  updateBatch, updateCertificate, updateCourse, updateFee, updateStudent, resetStudentPortalPassword
+  updateBatch, updateCertificate, updateCourse, updateFee, updateStudent, resetStudentPortalPassword,
+  searchStudents, searchCourses, searchBatches
 } from '../services/education.service';
 import { getAccessPayload, hasAnyPermission } from '../utils/access';
 
@@ -72,7 +74,7 @@ const modules = {
       paymentType: 'full', installmentCount: 1, dueDate: new Date().toISOString().slice(0, 10), notes: '',
       paymentAmount: '', paymentMethod: 'Cash', transactionReference: '', paidDate: new Date().toISOString().slice(0, 10)
     },
-    columns: ['student.name', 'course.name', 'batch.name', 'originalAmount', 'discountAmount', 'totalAmount', 'paidAmount', 'balance', 'paymentType', 'installmentCount', 'nextDueDate', 'status']
+    columns: ['studentSummary', 'courseBatch', 'totalAmount', 'paidAmount', 'balance', 'paymentType', 'installmentCount', 'status']
   },
   attendance: {
     title: 'Attendance Tracking',
@@ -102,10 +104,12 @@ function money(value) {
 }
 
 function moneyText(value) {
-  return money(value).toFixed(2);
+  return new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', minimumFractionDigits: 2 }).format(money(value));
 }
 
 function getValue(row, path) {
+  if (path === 'studentSummary') return row.student?.name || '-';
+  if (path === 'courseBatch') return row.course?.name || '-';
   if (path === 'currentCourses') return [...new Set((row.enrollments || []).filter((item) => item.enrollmentStatus === 'active').map((item) => item.course?.name).filter(Boolean))].join(', ') || '-';
   if (path === 'currentBatches') return [...new Set((row.enrollments || []).filter((item) => item.enrollmentStatus === 'active').map((item) => item.batch?.name).filter(Boolean))].join(', ') || '-';
   if (path === 'nextDueDate') {
@@ -119,9 +123,14 @@ function getValue(row, path) {
 
 function normalizePayload(form) {
   const payload = {};
-  Object.entries(form).forEach(([key, value]) => { payload[key] = value === '' ? null : value; });
+  Object.entries(form).forEach(([key, value]) => { if (!key.startsWith('_')) payload[key] = value === '' ? null : value; });
   return payload;
 }
+
+const optionData = (response) => response.data.data;
+const loadStudentOptions = async (q, page, limit, filters) => optionData(await searchStudents(q, page, limit, filters));
+const loadCourseOptions = async (q, page, limit, filters) => optionData(await searchCourses(q, page, limit, filters));
+const loadBatchOptions = async (q, page, limit, filters) => optionData(await searchBatches(q, page, limit, filters));
 
 function normalizeStudentEnrollments(enrollments = []) {
   return enrollments
@@ -162,8 +171,7 @@ function courseDefaultInstallments(courses, courseId) {
 }
 
 function studentLabel(student) {
-  const courses = (student.enrollments || []).filter((item) => item.enrollmentStatus === 'active').map((item) => item.course?.name).filter(Boolean).join(', ');
-  return [student.studentNo, student.name, courses || student.course?.name].filter(Boolean).join(' - ');
+  return [student.studentNo || student.registration_no, student.name, student.phone || student.contact?.phone].filter(Boolean).join(' — ');
 }
 
 function contactName(contact) {
@@ -176,6 +184,7 @@ function contactName(contact) {
 
 function lookupId(rows, value, courseId = null) {
   if (!value) return '';
+  if (!rows.length && /^\d+$/.test(String(value))) return value;
   const direct = rows.find((item) => String(item.id) === String(value));
   if (direct) return direct.id;
   const normalized = String(value).trim().toLowerCase();
@@ -237,16 +246,24 @@ function Field({ name, value, onChange, moduleKey, form, lookups }) {
   if (name === 'leadSource') return <TextField label="Lead Source" value={value || ''} fullWidth disabled />;
   if (name === 'studentPortalPassword') return <TextField type="password" label="Student Portal Password" helperText="Leave blank to auto-generate a password; students can also use WhatsApp OTP." value={value || ''} onChange={(e) => onChange(name, e.target.value)} fullWidth />;
   if (name === 'courseId') {
-    const activeCourses = lookups.courses.filter((course) => !['batches', 'students'].includes(moduleKey) || course.status === 'active');
-    return <FormControl fullWidth required={moduleKey === 'batches' || moduleKey === 'students'}><InputLabel>Course</InputLabel><Select label="Course" value={value || ''} onChange={(e) => onChange(name, e.target.value)}>{activeCourses.map((course) => <MenuItem key={course.id} value={course.id}>{courseLabel(course)}</MenuItem>)}{activeCourses.length === 0 && <MenuItem disabled>No active courses available</MenuItem>}</Select></FormControl>;
+    const selected = form._courseOption || lookups.courses.find((course) => String(course.id) === String(value));
+    return <AsyncSearchSelect label="Course" value={value} selectedOption={selected} loadOptions={loadCourseOptions}
+      filters={['batches', 'students'].includes(moduleKey) ? { status: 'active' } : {}}
+      getOptionLabel={courseLabel} required={moduleKey === 'batches' || moduleKey === 'students'}
+      placeholder="Search code, title or category" onChange={(option) => onChange(name, option?.id || '', option)} />;
   }
   if (name === 'batchId') {
     const courseId = String(form.courseId || '');
-    const batches = lookups.batches.filter((batch) => String(batch.courseId) === courseId);
-    return <FormControl fullWidth disabled={!courseId || batches.length === 0} required={moduleKey === 'students'}><InputLabel>Batch</InputLabel><Select label="Batch" value={value || ''} onChange={(e) => onChange(name, e.target.value)}>{batches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{batchLabel(batch)}</MenuItem>)}{!courseId && <MenuItem disabled>Select a course first</MenuItem>}{courseId && batches.length === 0 && <MenuItem disabled>No batches available for this course</MenuItem>}</Select></FormControl>;
+    const selected = form._batchOption || lookups.batches.find((batch) => String(batch.id) === String(value));
+    return <AsyncSearchSelect label="Batch" value={value} selectedOption={selected} loadOptions={loadBatchOptions}
+      filters={{ courseId }} disabled={!courseId} getOptionLabel={batchLabel} required={moduleKey === 'students'}
+      placeholder="Search batch code or name" onChange={(option) => onChange(name, option?.id || '', option)} />;
   }
   if (name === 'studentId') {
-    return <FormControl fullWidth required><InputLabel>Student</InputLabel><Select label="Student" value={value || ''} onChange={(e) => onChange(name, e.target.value)}>{lookups.students.map((student) => <MenuItem key={student.id} value={student.id}>{studentLabel(student)}</MenuItem>)}{lookups.students.length === 0 && <MenuItem disabled>No students available</MenuItem>}</Select></FormControl>;
+    const selected = form._studentOption || lookups.students.find((student) => String(student.id) === String(value));
+    return <AsyncSearchSelect label="Student" value={value} selectedOption={selected} loadOptions={loadStudentOptions}
+      getOptionLabel={studentLabel} required placeholder="Search student number, name, phone or email"
+      onChange={(option) => onChange(name, option?.id || '', option)} />;
   }
   const type = name.toLowerCase().includes('date') || name === 'issuedAt' ? 'date' : name.toLowerCase().includes('amount') || name.includes('Id') || name.includes('Weeks') || name.includes('Count') || name === 'capacity' ? 'number' : 'text';
   return <TextField label={label} type={type} value={value || ''} onChange={(e) => onChange(name, e.target.value)} multiline={name === 'notes' || name === 'description'} minRows={name === 'notes' || name === 'description' ? 3 : undefined} InputLabelProps={type === 'date' ? { shrink: true } : undefined} fullWidth />;
@@ -258,13 +275,15 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
     ...current,
     enrollments: (current.enrollments || []).map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item)
   }));
-  const updateCourse = (index, courseId) => {
+  const updateCourse = (index, courseId, courseOption) => {
     const enrollment = enrollments[index] || {};
     const feePlan = enrollment.feePlan || enrollment.paymentType || 'full';
     update(index, {
       courseId,
       batchId: '',
-      ...(feePlan === 'installment' ? { installments: courseDefaultInstallments(lookups.courses, courseId) } : {})
+      _courseOption: courseOption || null,
+      _batchOption: null,
+      ...(feePlan === 'installment' ? { installments: safeInstallmentCount(courseOption?.defaultInstallmentCount) } : {})
     });
   };
   const updateFeePlan = (index, feePlan) => {
@@ -288,7 +307,6 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
       </Stack>
       <Stack spacing={1.5}>
         {enrollments.map((enrollment, index) => {
-          const batches = lookups.batches.filter((batch) => String(batch.courseId) === String(enrollment.courseId));
           const feePlan = enrollment.feePlan || enrollment.paymentType || 'full';
           return <Box key={enrollment.id || index} sx={{
             display: 'grid',
@@ -300,13 +318,12 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
             alignItems: 'center',
             minWidth: 0
           }}>
-            <TextField select label="Course" value={enrollment.courseId || ''} onChange={(event) => updateCourse(index, event.target.value)} fullWidth required sx={{ minWidth: 0 }}>
-              {lookups.courses.filter((course) => course.status === 'active' || String(course.id) === String(enrollment.courseId)).map((course) => <MenuItem key={course.id} value={course.id}>{courseLabel(course)}</MenuItem>)}
-            </TextField>
-            <TextField select label="Batch (optional)" value={enrollment.batchId || ''} onChange={(event) => update(index, { batchId: event.target.value })} fullWidth disabled={!enrollment.courseId} sx={{ minWidth: 0 }}>
-              <MenuItem value="">All-course lessons</MenuItem>
-              {batches.map((batch) => <MenuItem key={batch.id} value={batch.id}>{batchLabel(batch)}</MenuItem>)}
-            </TextField>
+            <AsyncSearchSelect label="Course" value={enrollment.courseId} selectedOption={enrollment._courseOption || enrollment.course}
+              loadOptions={loadCourseOptions} filters={{ status: 'active' }} getOptionLabel={courseLabel} required
+              placeholder="Search course" onChange={(option) => updateCourse(index, option?.id || '', option)} />
+            <AsyncSearchSelect label="Batch (optional)" value={enrollment.batchId} selectedOption={enrollment._batchOption || enrollment.batch}
+              loadOptions={loadBatchOptions} filters={{ courseId: enrollment.courseId }} getOptionLabel={batchLabel}
+              disabled={!enrollment.courseId} placeholder="Search batch" onChange={(option) => update(index, { batchId: option?.id || '', _batchOption: option })} />
             <TextField select label="Status" value={enrollment.status || enrollment.enrollmentStatus || 'active'} onChange={(event) => update(index, { status: event.target.value })} sx={{ minWidth: { xs: '100%', md: 140 } }}>
               {['active', 'completed', 'suspended', 'cancelled', 'expired'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
             </TextField>
@@ -325,7 +342,7 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
 }
 
 function FeeFields({ form, setForm, lookups, selectedStudent = null, lockStudent = false }) {
-  const student = selectedStudent || lookups.students.find((item) => String(item.id) === String(form.studentId));
+  const student = selectedStudent || form._studentOption || lookups.students.find((item) => String(item.id) === String(form.studentId));
   const activeEnrollments = (student?.enrollments || []).filter((item) => item.enrollmentStatus === 'active');
   const enrollment = activeEnrollments.find((item) => String(item.id) === String(form.enrollmentId))
     || activeEnrollments.find((item) => String(item.courseId) === String(form.courseId) && String(item.batchId || '') === String(form.batchId || ''))
@@ -333,10 +350,11 @@ function FeeFields({ form, setForm, lookups, selectedStudent = null, lockStudent
   const course = enrollment?.course || student?.course;
   const batch = enrollment?.batch || student?.batch;
   const totals = discountPreview(form);
-  const set = (name, value) => setForm((current) => {
+  const set = (name, value, option = null) => setForm((current) => {
     const next = { ...current, [name]: value };
     if (name === 'studentId') {
-      const selected = lookups.students.find((item) => String(item.id) === String(value));
+      const selected = option || lookups.students.find((item) => String(item.id) === String(value));
+      next._studentOption = selected || null;
       const selectedEnrollment = (selected?.enrollments || []).find((item) => item.enrollmentStatus === 'active');
       next.enrollmentId = selectedEnrollment?.id || '';
       next.courseId = selectedEnrollment?.courseId || '';
@@ -406,29 +424,34 @@ function EducationModulePage({ moduleKey }) {
   const [installmentFee, setInstallmentFee] = useState(null);
   const [payTarget, setPayTarget] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ amount: '', paymentMethod: 'Cash', transactionReference: '', paidDate: new Date().toISOString().slice(0, 10), notes: '' });
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [filters, setFilters] = useState({});
+  const [page, setPage] = useState(1);
+  const [resultMeta, setResultMeta] = useState({ total: 0, page: 1, limit: 20 });
+  const filterKey = JSON.stringify(filters);
   const access = getAccessPayload();
   const canConfirmPayment = access.isSystemAdmin ||
     (access.roles || []).some((role) => ['admin', 'accountant', 'manager'].includes(String(role).toLowerCase())) ||
     hasAnyPermission(['fees.confirm_payment', 'accounting.confirm_income']);
   const canEditStudents = access.isSystemAdmin || access.permissions?.includes('students.edit');
+  const canDelete = access.isSystemAdmin || hasAnyPermission([`${moduleKey}.delete`, 'education.delete']);
 
   const totals = useMemo(() => ({
-    total: rows.length,
+    total: resultMeta.total || rows.length,
     active: rows.filter((row) => ['active', 'enrolled', 'present', 'issued', 'paid', 'free'].includes(row.status)).length,
     pending: rows.filter((row) => ['pending', 'partial', 'overdue', 'draft'].includes(row.status)).length
-  }), [rows]);
+  }), [rows, resultMeta.total]);
 
   const load = async () => {
     try {
       setLoading(true);
-      const [response, coursesRes, batchesRes, studentsRes] = await Promise.all([
-        config.list(),
-        ['batches', 'students', 'fees', 'attendance', 'certificates'].includes(moduleKey) ? listCourses() : Promise.resolve({ data: { data: [] } }),
-        ['students', 'fees', 'attendance', 'certificates'].includes(moduleKey) ? listBatches() : Promise.resolve({ data: { data: [] } }),
-        ['fees', 'attendance', 'certificates'].includes(moduleKey) ? listStudents() : Promise.resolve({ data: { data: [] } })
-      ]);
-      setRows(response.data.data || []);
-      setLookups({ courses: coursesRes.data.data || [], batches: batchesRes.data.data || [], students: studentsRes.data.data || [] });
+      const serverPage = ['students', 'fees'].includes(moduleKey);
+      const publicFilters = Object.fromEntries(Object.entries(filters).filter(([key]) => !key.startsWith('_')));
+      const response = await config.list(serverPage ? { q: debouncedSearch, page, limit: 20, ...publicFilters } : {});
+      const data = response.data.data || [];
+      setRows(data.items || data);
+      setResultMeta(data.items ? data : { total: data.length, page: 1, limit: data.length || 20 });
     } catch (err) {
       setError(err.response?.data?.message || `Unable to load ${config.title}.`);
     } finally {
@@ -436,13 +459,16 @@ function EducationModulePage({ moduleKey }) {
     }
   };
 
-  useEffect(() => { load(); }, [moduleKey]);
+  useEffect(() => {
+    const timer = setTimeout(() => { setPage(1); setDebouncedSearch(search); }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => { load(); }, [moduleKey, debouncedSearch, page, filterKey]);
 
   useEffect(() => {
     const state = location.state || {};
     if (moduleKey !== 'students' || !state.openCreate || consumedNavigationStateRef.current) return;
-    if (!lookups.courses.length) return;
-
     consumedNavigationStateRef.current = true;
     conversionFlowRef.current = true;
     setEditing(null);
@@ -456,6 +482,9 @@ function EducationModulePage({ moduleKey }) {
     setEditing(row);
     const next = { ...config.initial };
     Object.keys(next).forEach((key) => { next[key] = row[key] ?? ''; });
+    if (row.student) next._studentOption = row.student;
+    if (row.course) next._courseOption = row.course;
+    if (row.batch) next._batchOption = row.batch;
     setForm(next);
     setDialogOpen(true);
   };
@@ -610,12 +639,42 @@ function EducationModulePage({ moduleKey }) {
       </Stack>
     </Paper>
 
+    {['students', 'fees'].includes(moduleKey) && <Paper sx={{ p: 2, border: '1px solid #e8edf2' }} elevation={0}>
+      <Stack spacing={1.5}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(260px,2fr) repeat(3,minmax(170px,1fr))' }, gap: 1.5 }}>
+          <TextField label={moduleKey === 'fees' ? 'Search student, course, batch or status' : 'Search student number, name, phone, course or batch'} value={search} onChange={(event) => setSearch(event.target.value)} />
+          <AsyncSearchSelect label="Course filter" value={filters.courseId || ''} selectedOption={filters._courseOption} loadOptions={loadCourseOptions} getOptionLabel={courseLabel}
+            onChange={(option) => { setPage(1); setFilters((current) => ({ ...current, courseId: option?.id || '', batchId: '', _courseOption: option, _batchOption: null })); }} />
+          <AsyncSearchSelect label="Batch filter" value={filters.batchId || ''} selectedOption={filters._batchOption} loadOptions={loadBatchOptions} filters={{ courseId: filters.courseId }} getOptionLabel={batchLabel}
+            onChange={(option) => { setPage(1); setFilters((current) => ({ ...current, batchId: option?.id || '', _batchOption: option })); }} />
+          <TextField select label="Status" value={filters.status || ''} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, status: event.target.value })); }}>
+            <MenuItem value="">All statuses</MenuItem>
+            {(moduleKey === 'fees' ? ['pending', 'partial', 'paid', 'free', 'overdue', 'cancelled'] : ['enrolled', 'active', 'completed', 'dropped', 'suspended']).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
+          </TextField>
+        </Box>
+        {moduleKey === 'fees' && <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(5,minmax(150px,1fr))' }, gap: 1.5 }}>
+          <TextField select label="Payment type" value={filters.paymentType || ''} onChange={(event) => setFilters((current) => ({ ...current, paymentType: event.target.value }))}><MenuItem value="">All types</MenuItem>{paymentTypes.map((item) => <MenuItem key={item} value={item}>{item.replaceAll('_', ' ')}</MenuItem>)}</TextField>
+          <TextField select label="Payment state" value={filters.paymentState || ''} onChange={(event) => setFilters((current) => ({ ...current, paymentState: event.target.value }))}><MenuItem value="">Any balance</MenuItem>{['outstanding', 'fully_paid', 'partial', 'unpaid', 'overdue'].map((item) => <MenuItem key={item} value={item}>{item.replaceAll('_', ' ')}</MenuItem>)}</TextField>
+          <TextField type="date" label="From" value={filters.dateFrom || ''} InputLabelProps={{ shrink: true }} onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))} />
+          <TextField type="date" label="To" value={filters.dateTo || ''} InputLabelProps={{ shrink: true }} onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))} />
+          <TextField select label="Sort" value={filters.sort || 'newest'} onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value }))}>{['newest', 'oldest', 'balance_desc', 'balance_asc', 'student'].map((item) => <MenuItem key={item} value={item}>{item.replaceAll('_', ' ')}</MenuItem>)}</TextField>
+        </Box>}
+        {moduleKey === 'students' && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+          <TextField select fullWidth label="Enrollment status" value={filters.enrollmentStatus || ''} onChange={(event) => setFilters((current) => ({ ...current, enrollmentStatus: event.target.value }))}><MenuItem value="">All enrollments</MenuItem>{['active', 'completed', 'suspended', 'cancelled', 'expired'].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField>
+          <TextField select fullWidth label="Payment status" value={filters.paymentStatus || ''} onChange={(event) => setFilters((current) => ({ ...current, paymentStatus: event.target.value }))}><MenuItem value="">All payment statuses</MenuItem>{['pending', 'partial', 'paid', 'free', 'overdue', 'cancelled'].map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField>
+        </Stack>}
+        <Stack direction="row" justifyContent="space-between" alignItems="center"><Typography color="text.secondary">{resultMeta.total} results</Typography><Button onClick={() => { setSearch(''); setFilters({}); setPage(1); }}>Clear filters</Button></Stack>
+      </Stack>
+    </Paper>}
+
     <Paper sx={{ border: '1px solid #e8edf2', overflow: 'hidden' }} elevation={0}>
       {loading && <LinearProgress />}
-      <TableContainer><Table><TableHead><TableRow>{config.columns.map((column) => <TableCell key={column}>{column}</TableCell>)}<TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-        {rows.map((row) => <TableRow hover key={row.id}>{config.columns.map((column) => <TableCell key={column}>{column === 'status' ? <Chip size="small" label={getValue(row, column)} /> : getValue(row, column)}</TableCell>)}<TableCell align="right"><Stack direction="row" spacing={0.5} justifyContent="flex-end">{moduleKey === 'students' && <><IconButton component={RouterLink} to={`/students/${row.id}`}><VisibilityIcon /></IconButton>{canEditStudents && <Button size="small" startIcon={<LockResetIcon />} onClick={() => resetPortalPassword(row)}>Reset Portal Password</Button>}</>}{moduleKey === 'fees' && <IconButton onClick={() => setInstallmentFee(row)}><VisibilityIcon /></IconButton>}<IconButton onClick={() => openEdit(row)}><EditIcon /></IconButton><IconButton color="error" onClick={() => remove(row)}><DeleteOutlineIcon /></IconButton></Stack></TableCell></TableRow>)}
+      <TableContainer sx={{ display: { xs: moduleKey === 'fees' ? 'none' : 'block', md: 'block' } }}><Table size={moduleKey === 'fees' ? 'small' : 'medium'}><TableHead><TableRow>{config.columns.map((column) => <TableCell key={column}>{column.replaceAll(/([A-Z])/g, ' $1').replaceAll('.', ' / ')}</TableCell>)}<TableCell align="right" sx={{ position: 'sticky', right: 0, bgcolor: 'background.paper', zIndex: 2 }}>Actions</TableCell></TableRow></TableHead><TableBody>
+        {rows.map((row) => <TableRow hover key={row.id}>{config.columns.map((column) => <TableCell key={column}>{column === 'status' ? <Chip size="small" label={getValue(row, column)} /> : column === 'studentSummary' ? <Box><Typography variant="body2" fontWeight={750}>{row.student?.name || '-'}</Typography><Typography variant="caption" color="text.secondary">{row.student?.studentNo || '-'}</Typography></Box> : column === 'courseBatch' ? <Box><Typography variant="body2">{row.course?.name || '-'}</Typography><Typography variant="caption" color="text.secondary">{row.batch?.name || 'All batches'}</Typography></Box> : getValue(row, column)}</TableCell>)}<TableCell align="right" sx={{ position: 'sticky', right: 0, bgcolor: 'background.paper', zIndex: 1 }}><Stack direction="row" spacing={0.25} justifyContent="flex-end">{moduleKey === 'students' && <><Tooltip title="View"><IconButton component={RouterLink} to={`/students/${row.id}`}><VisibilityIcon /></IconButton></Tooltip>{canEditStudents && <Tooltip title="Reset portal password"><IconButton onClick={() => resetPortalPassword(row)}><LockResetIcon /></IconButton></Tooltip>}</>}{moduleKey === 'fees' && <><Tooltip title="View installments"><IconButton onClick={() => setInstallmentFee(row)}><VisibilityIcon /></IconButton></Tooltip><Tooltip title="Record payment"><span><IconButton onClick={() => openPay((row.installments || []).find((item) => !['paid', 'cancelled', 'pending_confirmation'].includes(item.status)))} disabled={!(row.installments || []).some((item) => !['paid', 'cancelled', 'pending_confirmation'].includes(item.status))}><PaymentsIcon /></IconButton></span></Tooltip>{(row.installments || []).flatMap((item) => item.receipts || []).find((item) => item.status === 'ACTIVE') && <Tooltip title="Receipt"><IconButton onClick={() => openReceipt((row.installments || []).flatMap((item) => item.receipts || []).find((item) => item.status === 'ACTIVE'))}><ReceiptLongIcon /></IconButton></Tooltip>}</>}<Tooltip title="Edit"><IconButton onClick={() => openEdit(row)}><EditIcon /></IconButton></Tooltip>{canDelete && <Tooltip title="Delete"><IconButton color="error" onClick={() => remove(row)}><DeleteOutlineIcon /></IconButton></Tooltip>}</Stack></TableCell></TableRow>)}
         {!loading && rows.length === 0 && <TableRow><TableCell colSpan={config.columns.length + 1}><Box sx={{ py: 5, textAlign: 'center' }}><Typography fontWeight={800}>No records found</Typography><Typography color="text.secondary">Create the first record for this module.</Typography></Box></TableCell></TableRow>}
       </TableBody></Table></TableContainer>
+      {moduleKey === 'fees' && <Stack sx={{ display: { xs: 'flex', md: 'none' }, p: 1.5 }} spacing={1.5}>{rows.map((row) => <Paper variant="outlined" key={row.id} sx={{ p: 2 }}><Typography fontWeight={850}>{row.student?.name}</Typography><Typography variant="caption" color="text.secondary">{row.student?.studentNo} · {row.course?.name} · {row.batch?.name || 'All batches'}</Typography><Stack direction="row" justifyContent="space-between" sx={{ my: 1.5 }}><Box><Typography variant="caption">Balance</Typography><Typography fontWeight={800}>{moneyText(row.balance)}</Typography></Box><Chip size="small" label={row.status} /></Stack><Stack direction="row"><Button size="small" onClick={() => setInstallmentFee(row)}>View</Button><Button size="small" onClick={() => openEdit(row)}>Edit</Button>{canDelete && <Button size="small" color="error" onClick={() => remove(row)}>Delete</Button>}</Stack></Paper>)}</Stack>}
+      {['students', 'fees'].includes(moduleKey) && resultMeta.total > resultMeta.limit && <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}><Pagination page={page} count={Math.ceil(resultMeta.total / resultMeta.limit)} onChange={(_, next) => setPage(next)} /></Box>}
     </Paper>
 
     <Dialog
@@ -626,7 +685,7 @@ function EducationModulePage({ moduleKey }) {
       PaperProps={{ sx: { width: { xs: '95vw', md: 'min(1100px, 95vw)' }, maxWidth: '95vw', maxHeight: '92vh' } }}
     >
       <DialogTitle>{editing ? 'Edit Record' : 'Add Record'}</DialogTitle>
-      <DialogContent dividers sx={{ overflowY: 'auto' }}>{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '' } : {}) }))} /></Grid>)}{moduleKey === 'students' && <StudentEnrollmentFields form={form} setForm={setForm} lookups={lookups} />}</Grid>}</DialogContent>
+      <DialogContent dividers sx={{ overflowY: 'auto' }}>{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value, option) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '', _courseOption: option, _batchOption: null } : {}), ...(name === 'batchId' ? { _batchOption: option } : {}), ...(name === 'studentId' ? { _studentOption: option } : {}) }))} /></Grid>)}{moduleKey === 'students' && <StudentEnrollmentFields form={form} setForm={setForm} lookups={lookups} />}</Grid>}</DialogContent>
       <DialogActions><Button onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button><Button variant="contained" onClick={save} disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button></DialogActions>
     </Dialog>
 

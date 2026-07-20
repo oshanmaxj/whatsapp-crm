@@ -232,3 +232,4 @@ module.exports.safeFilename = safeFilename;
 module.exports.publicHttpsUrl = publicHttpsUrl;
 module.exports.validatePublicMediaUrl = validatePublicMediaUrl;
 module.exports.validateFileContent = validateFileContent;
+module.exports.resolvePrivatePath = resolvePrivatePath;

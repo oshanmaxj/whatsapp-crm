@@ -1,4 +1,5 @@
 const models = require('../models');
+const { normalizeMessagePresentation } = require('./messagePresentation.service');
 
 function requiredId(value, field) {
   if (value === null || value === undefined || value === '') {
@@ -85,12 +86,12 @@ function createInboundWhatsappMessageService(dependencies = {}) {
 
 function buildInboundSocketPayload(messageRecord, values = {}) {
   const conversationId = requiredId(values.conversationId, 'conversationId');
-  return {
+  return normalizeMessagePresentation({
     ...(messageRecord?.toJSON ? messageRecord.toJSON() : messageRecord || {}),
     ...values,
     conversationId,
     conversation_id: conversationId
-  };
+  });
 }
 
 module.exports = createInboundWhatsappMessageService();

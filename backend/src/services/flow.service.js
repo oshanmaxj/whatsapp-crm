@@ -916,7 +916,9 @@ class FlowService {
 
   async executeMessageNode(node, config, context, realSendEnabled) {
     const to = config.to || context.contact?.phone || context.phone;
-    let text = render(config.message || config.caption || node.label || '', context);
+    const mediaNode = ['image_message', 'video_message', 'audio_message', 'file_document'].includes(node.nodeType);
+    const explicitContent = config.message ?? config.caption;
+    let text = render(explicitContent || (mediaNode ? '' : node.label || ''), context);
     if ((node.nodeType === 'ai_reply' || node.nodeType === 'ai_assistant') && realSendEnabled) {
       text = await aiService.previewReply({
         messageText: [config.prompt || config.assistantInstructions, context.latestMessage].filter(Boolean).join('\n\n'),
@@ -930,6 +932,8 @@ class FlowService {
     let sentMediaId = null;
     let sentMediaUrl = null;
     let sentInteractiveType = null;
+    let canonicalMedia = null;
+    let canonicalInteractive = null;
     let preparedHistory = null;
     if (node.nodeType === 'text_message' || node.nodeType.startsWith('ai_')) {
       response = await whatsappService.sendTextMessage({ to, text, log: false, whatsappAccountId: context.whatsappAccountId });
@@ -953,6 +957,14 @@ class FlowService {
           : null);
       const resolvedHeader = await interactiveMediaService.resolveHeader(requestedHeader, { whatsappAccountId: context.whatsappAccountId, interactiveType: 'button' });
       const header = resolvedHeader.header;
+      let headerCrmUrl = resolvedHeader.binding?.url || null;
+      if (resolvedHeader.binding?.mediaId && !resolvedHeader.binding?.localMediaRef && !headerCrmUrl) {
+        const downloaded = await whatsappService.downloadAndStoreMedia(resolvedHeader.binding.mediaId, {
+          fileName: resolvedHeader.binding.fileName, mimeType: resolvedHeader.binding.mimeType,
+          whatsappAccountId: context.whatsappAccountId
+        }).catch(() => null);
+        headerCrmUrl = downloaded?.storageUrl || null;
+      }
       if (resolvedHeader.binding?.mediaId && resolvedHeader.binding.mediaId !== config.headerMediaId) {
         Object.assign(config, {
           headerType,
@@ -967,15 +979,38 @@ class FlowService {
         await node.update({ configJson: config }).catch(() => null);
       }
       const encoded = buttons.map((button) => ({ ...button, id: encodedButtonId(context.flowId, node.nodeKey, button.id) }));
+      const headerPresentation = header ? (header.type === 'text'
+        ? { type: 'text', text: header.text }
+        : {
+            type: header.type,
+            mediaUrl: headerCrmUrl,
+            mimeType: resolvedHeader.binding?.mimeType || null,
+            filename: header.type === 'document' ? resolvedHeader.binding?.fileName || null : null,
+            whatsappMediaId: resolvedHeader.binding?.mediaId || null,
+            localMediaRef: resolvedHeader.binding?.localMediaRef || null,
+            size: resolvedHeader.binding?.size || null
+          }) : null;
+      canonicalInteractive = {
+        kind: 'button', header: headerPresentation, body: text || null, footer: config.footer || null,
+        buttons: encoded.map((button, index) => ({ id: button.id, title: button.title, order: index, actionType: button.actionType || button.primaryActionType || 'reply' }))
+      };
+      canonicalMedia = resolvedHeader.binding ? {
+        type: resolvedHeader.binding.mediaType, whatsappMediaId: resolvedHeader.binding.mediaId,
+        localMediaRef: resolvedHeader.binding.localMediaRef || null, url: headerCrmUrl,
+        mimeType: resolvedHeader.binding.mimeType, size: resolvedHeader.binding.size,
+        originalFilename: resolvedHeader.binding.fileName, filename: resolvedHeader.binding.mediaType === 'document' ? resolvedHeader.binding.fileName : null,
+        caption: null
+      } : null;
       const historyMap = context.flowOutboundHistory || (context.flowOutboundHistory = {});
       preparedHistory = await outboundHistoryService.prepare({
         historyMessageId: historyMap[node.nodeKey] || null,
         conversationId: context.conversationId || context.conversation?.id || null,
         contactId: context.contactId || context.contact?.id || null,
         phone: to,
-        type: 'text', messageType: 'flow_automation', text,
+        type: 'text', messageType: 'interactive', text,
         interactiveType: 'button', status: 'pending', whatsappAccountId: context.whatsappAccountId,
-        rawPayload: { source: 'flow', flowId: context.flowId, nodeKey: node.nodeKey, interactiveType: 'button', headerType }
+        media: canonicalMedia, interactive: canonicalInteractive,
+        rawPayload: { source: 'flow', flowId: context.flowId, nodeKey: node.nodeKey }
       });
       historyMap[node.nodeKey] = preparedHistory.message.id;
       try {
@@ -993,7 +1028,29 @@ class FlowService {
         ? config.sections
         : [{ title: config.sectionTitle || 'Options', rows }];
       const encodedSections = sections.map((section) => ({ ...section, rows: (section.rows || []).map((row, index) => ({ ...row, id: encodedButtonId(context.flowId, node.nodeKey, row.id || row.payload || `row_${index + 1}`) })) }));
-      response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, sections: encodedSections, buttonText: String(config.buttonText || 'Choose').slice(0, 20), log: false, whatsappAccountId: context.whatsappAccountId });
+      canonicalInteractive = {
+        kind: 'list', body: text || null, footer: config.footer || null, buttonText: String(config.buttonText || 'Choose').slice(0, 20),
+        sections: encodedSections.map((section, sectionIndex) => ({
+          title: section.title || null, order: sectionIndex,
+          rows: (section.rows || []).map((row, index) => ({ id: row.id, title: row.title, description: row.description || null, order: index }))
+        }))
+      };
+      const historyMap = context.flowOutboundHistory || (context.flowOutboundHistory = {});
+      preparedHistory = await outboundHistoryService.prepare({
+        historyMessageId: historyMap[node.nodeKey] || null,
+        conversationId: context.conversationId || context.conversation?.id || null,
+        contactId: context.contactId || context.contact?.id || null, phone: to,
+        type: 'text', messageType: 'interactive', text, interactiveType: 'list', status: 'pending',
+        whatsappAccountId: context.whatsappAccountId, interactive: canonicalInteractive,
+        rawPayload: { source: 'flow', flowId: context.flowId, nodeKey: node.nodeKey }
+      });
+      historyMap[node.nodeKey] = preparedHistory.message.id;
+      try {
+        response = await whatsappService.sendInteractiveMessage({ to, body: text, footer: config.footer, sections: encodedSections, buttonText: String(config.buttonText || 'Choose').slice(0, 20), log: false, whatsappAccountId: context.whatsappAccountId });
+      } catch (error) {
+        await outboundHistoryService.fail(preparedHistory, error);
+        throw error;
+      }
       sentInteractiveType = 'list';
     } else if (node.nodeType === 'whatsapp_flow') {
       response = await whatsappService.sendWhatsAppFlowMessage({
@@ -1009,19 +1066,34 @@ class FlowService {
         if (!mediaId) throw Object.assign(new Error('WhatsApp media ID is required for this image node.'), { status: 422 });
         response = await whatsappService.sendMediaMessage({ to, mediaType: 'image', mediaId, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
         sentMediaId = mediaId;
+        const localMediaRef = config.mediaLocalRef || config.localMediaRef || null;
+        if (!localMediaRef) {
+          const downloaded = await whatsappService.downloadAndStoreMedia(mediaId, {
+            fileName: config.fileName, mimeType: config.mimeType, whatsappAccountId: context.whatsappAccountId
+          }).catch(() => null);
+          sentMediaUrl = downloaded?.storageUrl || null;
+        }
+        canonicalMedia = { type: 'image', whatsappMediaId: mediaId, localMediaRef, url: sentMediaUrl, mimeType: config.mimeType || null, size: config.mediaSize || config.size || 0, originalFilename: config.fileName || null, filename: null, caption: text || null };
       } else {
         sentMediaUrl = requireHttpsUrl(imageUrl, 'Image URL');
         response = await whatsappService.sendMediaMessage({ to, mediaType: 'image', url: sentMediaUrl, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
+        canonicalMedia = { type: 'image', url: sentMediaUrl, filename: null, caption: text || null };
       }
     } else if (node.nodeType === 'video_message') {
       storedType = 'video';
-      response = await whatsappService.sendMediaMessage({ to, mediaType: 'video', url: config.mediaUrl, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
+      sentMediaUrl = config.mediaUrl;
+      response = await whatsappService.sendMediaMessage({ to, mediaType: 'video', url: sentMediaUrl, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
+      canonicalMedia = { type: 'video', url: sentMediaUrl, filename: null, caption: text || null };
     } else if (node.nodeType === 'audio_message') {
       storedType = 'audio';
-      response = await whatsappService.sendMediaMessage({ to, mediaType: 'audio', url: config.mediaUrl, log: false, whatsappAccountId: context.whatsappAccountId });
+      sentMediaUrl = config.mediaUrl;
+      response = await whatsappService.sendMediaMessage({ to, mediaType: 'audio', url: sentMediaUrl, log: false, whatsappAccountId: context.whatsappAccountId });
+      canonicalMedia = { type: 'audio', url: sentMediaUrl, filename: null, caption: null };
     } else if (node.nodeType === 'file_document') {
       storedType = 'document';
-      response = await whatsappService.sendMediaMessage({ to, mediaType: 'document', url: config.fileUrl, filename: config.fileName, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
+      sentMediaUrl = config.fileUrl;
+      response = await whatsappService.sendMediaMessage({ to, mediaType: 'document', url: sentMediaUrl, filename: config.fileName, caption: text, log: false, whatsappAccountId: context.whatsappAccountId });
+      canonicalMedia = { type: 'document', url: sentMediaUrl, filename: config.fileName || null, originalFilename: config.fileName || null, caption: text || null };
     } else if (node.nodeType === 'location') {
       storedType = 'location';
       response = await whatsappService.sendLocationMessage({ to, ...config, log: false, whatsappAccountId: context.whatsappAccountId });
@@ -1044,9 +1116,11 @@ class FlowService {
       mediaId: sentMediaId,
       mediaUrl: sentMediaUrl,
       interactiveType: sentInteractiveType,
+      media: canonicalMedia,
+      interactive: canonicalInteractive,
       status: 'sent',
       whatsappAccountId: context.whatsappAccountId || null,
-      rawPayload: { source: 'flow', flowId: context.flowId || null, nodeKey: node.nodeKey, whatsapp: response }
+      rawPayload: { source: 'flow', flowId: context.flowId || null, nodeKey: node.nodeKey, whatsappMessageId: response?.id || null }
     });
     return { status: 'completed', response, to, text, nodeType: node.nodeType };
   }

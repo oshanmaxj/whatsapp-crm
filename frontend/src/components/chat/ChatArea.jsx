@@ -47,19 +47,22 @@ function StatusTicks({ message }) {
 }
 
 function MessageMedia({ message, onMediaLoad }) {
-  const src = resolveMediaUrl(message.mediaUrl);
+  const media = message.media || message.rawPayload?.media || {};
+  const mediaType = media.type || media.mediaType || message.type;
+  const src = resolveMediaUrl(media.url || message.mediaUrl);
   if (!src) return null;
 
-  if (message.type === 'image' || message.type === 'sticker') {
-    return <Box component="img" src={src} alt={message.text || 'Message attachment'} loading="lazy" onLoad={onMediaLoad} sx={{ display: 'block', width: '100%', maxHeight: 340, objectFit: 'cover', borderRadius: 1.5, mb: 0.75 }} />;
+  if (mediaType === 'image' || mediaType === 'sticker') {
+    return <Box component="img" src={src} alt={message.caption || 'Message attachment'} loading="lazy" onLoad={onMediaLoad} sx={{ display: 'block', width: '100%', maxHeight: 340, objectFit: 'cover', borderRadius: 1.5, mb: 0.75 }} />;
   }
-  if (message.type === 'video') {
+  if (mediaType === 'video') {
     return <Box component="video" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} sx={{ display: 'block', width: '100%', maxHeight: 340, borderRadius: 1.5, mb: 0.75 }} />;
   }
-  if (message.type === 'audio') {
+  if (mediaType === 'audio') {
     return <Box component="audio" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} sx={{ display: 'block', width: '100%', minWidth: 250, my: 0.5 }} />;
   }
-  const fileName = message.rawPayload?.document?.filename
+  const fileName = media.filename
+    || message.rawPayload?.document?.filename
     || message.rawPayload?.file?.fileName
     || message.rawPayload?.fileName
     || message.rawPayload?.filename
@@ -111,7 +114,9 @@ function messageBadges(message) {
   const badges = [];
   if (messageType === 'broadcast') badges.push({ label: 'Broadcast', color: 'primary' });
   if (message.type === 'template') badges.push({ label: 'Template', color: 'secondary' });
-  if (messageType === 'button_reply' || interactiveType === 'button_reply' || interactiveType === 'button') {
+  if (message.direction === 'outbound' && (messageType === 'interactive' || message.interactive)) {
+    badges.push({ label: 'Interactive', color: 'primary' });
+  } else if (messageType === 'button_reply' || interactiveType === 'button_reply' || interactiveType === 'button') {
     badges.push({ label: 'Button Reply', color: 'success' });
   } else if (interactiveType === 'list_reply') {
     badges.push({ label: 'List Reply', color: 'success' });
@@ -122,18 +127,39 @@ function messageBadges(message) {
 }
 
 function messageBodyText(message) {
-  const text = message.text || message.templateName || '';
+  const reply = message.interactiveReply || message.rawPayload?.interactiveReply;
+  const text = reply?.title || message.body || message.text || message.templateName || '';
   const messageType = message.messageType || message.message_type;
   const interactiveType = message.interactiveType || message.interactive_type;
-  const payload = message.buttonPayload || message.button_payload;
   const isInteractiveReply = messageType === 'button_reply'
     || messageType === 'flow_reply'
     || interactiveType === 'button'
     || interactiveType === 'button_reply'
     || interactiveType === 'list_reply'
     || interactiveType === 'nfm_reply';
-  if (!isInteractiveReply || !payload || String(text).includes('Payload:')) return text;
-  return [text || 'Customer selected an option', `Payload: ${payload}`].join('\n');
+  if (!isInteractiveReply) return text;
+  if (reply?.title) return reply.title;
+  const legacy = String(text).match(/Customer selected:\s*([^\n]+)/i)?.[1];
+  return legacy || text || message.buttonPayload || message.button_payload || 'Customer selected an option';
+}
+
+function InteractiveContent({ message }) {
+  const interactive = message.interactive || message.rawPayload?.interactive;
+  if (!interactive) return null;
+  const header = interactive.header;
+  const buttons = interactive.buttons || [];
+  const sections = interactive.sections || [];
+  return <Stack spacing={0.65} sx={{ mt: 0.75 }}>
+    {header?.type === 'text' && header.text && <Typography fontWeight={800}>{header.text}</Typography>}
+    {interactive.footer && <Typography variant="caption" color="text.secondary">{interactive.footer}</Typography>}
+    {buttons.map((button, index) => <Box key={button.id || index} sx={{ px: 1.25, py: 0.7, textAlign: 'center', borderTop: '1px solid rgba(18,140,126,.22)', color: '#087b67', fontWeight: 800, fontSize: 13 }}>
+      {button.title || button.label || button.id}
+    </Box>)}
+    {sections.flatMap((section) => section.rows || []).map((row, index) => <Box key={row.id || index} sx={{ px: 1.25, py: 0.7, borderTop: '1px solid rgba(18,140,126,.22)' }}>
+      <Typography variant="body2" fontWeight={800} color="#087b67">{row.title || row.id}</Typography>
+      {row.description && <Typography variant="caption" color="text.secondary">{row.description}</Typography>}
+    </Box>)}
+  </Stack>;
 }
 
 function QuotedPreview({ preview, outbound, onClick }) {
@@ -222,6 +248,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
             {bodyText}
           </Typography>
         )}
+        <InteractiveContent message={message} />
         <Stack direction="row" spacing={0.6} alignItems="center" justifyContent="flex-end" sx={{ mt: 0.35 }}>
           <Typography variant="caption" sx={{ color: 'rgba(23,35,31,.58)', fontSize: 10 }}>
             {formatTime(message.createdAt)}

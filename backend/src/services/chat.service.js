@@ -6,6 +6,7 @@ const conversationAccessService = require('./conversationAccess.service');
 const { normalizePhone: normalizeWhatsAppNumber } = require('../utils/phone');
 const { Op } = require('sequelize');
 const interactiveMediaService = require('./interactiveMedia.service');
+const { normalizeMessagePresentation } = require('./messagePresentation.service');
 
 function previewText(message) {
   if (!message) return null;
@@ -32,7 +33,7 @@ function serializeSentBy(user) {
 }
 
 function serializeMessage(message) {
-  const json = message?.toJSON ? message.toJSON() : message;
+  const json = normalizeMessagePresentation(message);
   if (!json) return json;
   const reply = json.replyToMessage || null;
   const replyPreview = reply
@@ -217,6 +218,12 @@ class ChatService {
     }
     const resolved = await interactiveMediaService.resolveHeader(requestedHeader, { whatsappAccountId: conversation.whatsappAccountId, interactiveType: 'button' });
     const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
+    const canonicalInteractive = {
+      kind: 'button', body: messageBody, footer: footer || null,
+      header: resolved.header?.type === 'text' ? { type: 'text', text: resolved.header.text }
+        : resolved.header ? { type: resolved.header.type, mediaUrl: resolved.binding?.url || null, mimeType: resolved.binding?.mimeType || null, filename: resolved.header.type === 'document' ? resolved.binding?.fileName || null : null, whatsappMediaId: resolved.binding?.mediaId || null, localMediaRef: resolved.binding?.localMediaRef || null } : null,
+      buttons: normalizedButtons.map((button, index) => ({ ...button, order: index, actionType: 'reply' }))
+    };
     const values = {
       conversationId: conversation.id, contactId: conversation.contactId, sentByUserId: senderId,
       direction: 'outbound', type: 'text', messageType: 'interactive', interactiveType: 'button',
@@ -226,7 +233,8 @@ class ChatService {
       rawPayload: {
         clientRequestId: clientRequestId ? String(clientRequestId).slice(0, 100) : null,
         headerType: resolved.header?.type || 'none', mediaBinding: resolved.binding || null,
-        buttons: normalizedButtons
+        buttons: normalizedButtons,
+        interactive: canonicalInteractive
       }
     };
     const message = existing || await Message.create(values);
@@ -237,7 +245,7 @@ class ChatService {
         buttons: normalizedButtons, log: false, whatsappAccountId: conversation.whatsappAccountId
       });
       if (!response?.id) throw Object.assign(new Error('Meta did not return a WhatsApp message ID.'), { status: 502, code: 'WHATSAPP_MESSAGE_ID_MISSING' });
-      await message.update({ whatsappMessageId: response.id, status: 'sent', statusUpdatedAt: new Date(), rawPayload: { ...values.rawPayload, whatsappMessageId: response.id } });
+      await message.update({ whatsappMessageId: response.id, status: 'sent', statusUpdatedAt: new Date(), rawPayload: { ...(message.rawPayload || values.rawPayload), whatsappMessageId: response.id } });
       await conversation.update({ lastMessage: messageBody, lastMessageAt: new Date() });
       return this.getMessageWithReplyPreview(message.id);
     } catch (error) {

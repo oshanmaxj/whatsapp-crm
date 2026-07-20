@@ -437,6 +437,10 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
         nextConfig = {
           ...nextConfig,
           whatsappMediaId: response.data.data.whatsappMediaId,
+          mediaLocalRef: response.data.data.localMediaRef,
+          mimeType: response.data.data.mimeType || nextConfig.mimeType,
+          mediaSize: response.data.data.size,
+          fileName: response.data.data.fileName || nextConfig.fileName,
           fileDataBase64: ''
         };
       }

@@ -555,7 +555,7 @@ class InboxService {
       to: toNumber,
       mediaType: messageType,
       mediaId: metaMediaId,
-      caption: caption || fileName,
+      caption: caption || '',
       filename: fileName,
       mimeType,
       contextMessageId: replyContext.replyToWhatsappMessageId,
@@ -579,7 +579,7 @@ class InboxService {
         sentByUserId: userId,
         direction: 'outbound',
         type: messageType,
-        text: caption || fileName,
+        text: caption || null,
         mediaId: metaMediaId,
         mediaUrl: publicUrl,
         fromNumber: runtimeConfig.phoneNumberId || null,
@@ -590,6 +590,7 @@ class InboxService {
         replyToWhatsappMessageId: replyContext.replyToWhatsappMessageId,
         isRead: true,
         rawPayload: {
+          media: { type: messageType, url: publicUrl, mimeType, filename: messageType === 'document' ? fileName : null, originalFilename: fileName, whatsappMediaId: metaMediaId, caption: caption || null },
           file: { fileName, mimeType, mediaType, size: buffer.length },
           metaMediaUpload: uploadResponse,
           whatsappMediaSend: sendResult.responseData

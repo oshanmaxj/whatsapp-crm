@@ -41,11 +41,7 @@ function compactJson(value) {
 }
 
 function interactiveReplyText({ title, payload, fallback }) {
-  const lines = [];
-  if (title) lines.push(`Customer selected: ${title}`);
-  else if (fallback) lines.push(`Customer selected: ${fallback}`);
-  if (payload) lines.push(`Payload: ${payload}`);
-  return lines.join('\n') || fallback || 'Customer selected an option';
+  return title || fallback || payload || 'Customer selected an option';
 }
 
 function parseInboundContent(message = {}) {
@@ -62,7 +58,9 @@ function parseInboundContent(message = {}) {
       interactiveType: 'button',
       text: interactiveReplyText({ title, payload, fallback: title || payload }),
       buttonPayload: payload,
-      interactiveTitle: title
+      interactiveTitle: title,
+      interactiveDescription: null,
+      interactiveReplyType: 'button_reply'
     };
   }
 
@@ -93,7 +91,9 @@ function parseInboundContent(message = {}) {
         fallback: interactiveType === 'nfm_reply' ? 'WhatsApp Flow submitted' : title || payload
       }),
       buttonPayload: payload,
-      interactiveTitle: title
+      interactiveTitle: title,
+      interactiveDescription: reply.description || null,
+      interactiveReplyType: interactiveType
     };
   }
 
@@ -913,7 +913,14 @@ class WhatsappService {
             toNumber: to,
             status: 'delivered',
             statusUpdatedAt: receivedAt,
-            rawPayload: message,
+            rawPayload: parsed.interactiveType ? {
+              ...message,
+              interactiveReply: {
+                id: parsed.buttonPayload || null, title: parsed.interactiveTitle || null,
+                description: parsed.interactiveDescription || null,
+                replyType: parsed.interactiveReplyType || parsed.interactiveType
+              }
+            } : message,
             createdAt: receivedAt,
             updatedAt: receivedAt
           }
@@ -1442,3 +1449,4 @@ module.exports.buildInteractivePayload = buildInteractivePayload;
 module.exports.validateOutbound = validateOutbound;
 module.exports.normalizeConfig = normalizeConfig;
 module.exports.safeApiError = safeApiError;
+module.exports.parseInboundContent = parseInboundContent;

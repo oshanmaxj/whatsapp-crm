@@ -69,6 +69,13 @@ class LeadController {
     }
   }
 
+  async setLabels(req, res, next) {
+    try {
+      const lead = await leadService.setLabels(req.params.id, req.body.labels || [], req.user);
+      return res.status(200).json({ success: true, data: lead });
+    } catch (err) { next(err); }
+  }
+
   async autoAssign(req, res, next) {
     try {
       const result = await leadService.autoAssign({

@@ -363,6 +363,7 @@ function Editor() {
       departments={departments}
       users={users}
       actionOptions={actionOptions}
+      onLabelOptionsChange={(labels) => setActionOptions((current) => ({ ...current, labels }))}
       onDelete={() => selected && deleteNode(selected.id)}
       onClose={() => setEditorOpen(false)}
       onSave={({ label, config }) => {

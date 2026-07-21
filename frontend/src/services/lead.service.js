@@ -10,3 +10,4 @@ export const updateLeadStatus = (id, payload) => api.patch(`${BASE_ROUTE}/${id}/
 export const deleteLead = (id) => api.delete(`${BASE_ROUTE}/${id}`);
 export const assignLead = (id, payload) => api.post(`${BASE_ROUTE}/${id}/assign`, payload);
 export const autoAssignLeads = (payload = {}) => api.post(`${BASE_ROUTE}/auto-assign`, payload);
+export const setLeadLabels = (id, labels) => api.put(`${BASE_ROUTE}/${id}/labels`, { labels });

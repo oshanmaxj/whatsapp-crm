@@ -17,6 +17,7 @@ export const sendConversationMessage = (conversationId, payload) => api.post(
   typeof payload === 'string' ? { text: payload } : payload
 );
 export const sendConversationTemplate = (conversationId, payload) => api.post(`${PREFIX}/conversations/${conversationId}/template`, payload);
+export const getTemplateDiagnostics = (conversationId, params) => api.get(`${PREFIX}/conversations/${conversationId}/template-diagnostics`, { params });
 export const sendConversationInteractive = (conversationId, payload, onUploadProgress) => api.post(
   `${PREFIX}/conversations/${conversationId}/interactive`,
   payload,
@@ -26,10 +27,10 @@ export const getUnreadCount = () => api.get(`${PREFIX}/unread`);
 export const getNotes = (conversationId) => api.get('/notes', { params: { conversationId } });
 export const createNote = (payload) => api.post('/notes', payload);
 export const getMedia = (conversationId) => api.get('/media', { params: { conversationId } });
-export const uploadMedia = (payload) => {
+export const uploadMedia = (payload, onUploadProgress) => {
   // The shared API interceptor supplies Authorization. Do not set Content-Type
   // for FormData here; Axios/browser must add the multipart boundary.
-  return api.post('/media/upload', payload);
+  return api.post('/media/upload', payload, { onUploadProgress });
 };
 export const downloadMedia = (id) => api.get(`/media/${id}/download`, { responseType: 'blob' });
 export const getTemplates = (params = {}) => api.get('/templates', { params });

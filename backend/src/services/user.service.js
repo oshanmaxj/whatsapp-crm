@@ -50,6 +50,7 @@ const LMS_PERMISSIONS = [
 const PAYMENT_SLIP_PERMISSIONS = ['payment-slips.view', 'payment-slips.review', 'payment-slips.approve', 'payment-slips.mark'];
 const RECEIPT_PERMISSIONS = ['receipts.view', 'receipts.generate', 'receipts.download', 'receipts.send_whatsapp', 'receipts.regenerate', 'receipts.void', 'receipts.export', 'receipts.manage_settings'];
 const FLOW_ACTION_PERMISSIONS = ['flows.view', 'flows.create', 'flows.edit', 'flows.publish', 'flows.manage_triggers', 'flows.manage_actions', 'flows.start_other_flows', 'flows.manage_assignments', 'flows.manage_sequences', 'flows.manage_integrations', 'flows.test', 'flows.view_execution_logs'];
+const CRM_PERMISSION_CODES = ['dashboard.view_own','dashboard.view_team','dashboard.view_all','dashboard.view_financial','dashboard.view_agent_ranking','dashboard.configure_widgets','labels.create','labels.assign','labels.remove','voice.send','templates.send'];
 
 function permissionCode(group, action) {
   return `${group.toLowerCase().replace(/\s+/g, '-')}.${action.toLowerCase().replace(/\s+/g, '_')}`;
@@ -205,7 +206,7 @@ class UserService {
         permissions.push(permission);
       }
     }
-    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...PAYMENT_SLIP_PERMISSIONS, ...RECEIPT_PERMISSIONS, ...FLOW_ACTION_PERMISSIONS]) {
+    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...PAYMENT_SLIP_PERMISSIONS, ...RECEIPT_PERMISSIONS, ...FLOW_ACTION_PERMISSIONS, ...CRM_PERMISSION_CODES]) {
       let permission = await Permission.findOne({ where: { code }, paranoid: false });
       if (permission?.deletedAt) await permission.restore();
       if (!permission) [permission] = await Permission.findOrCreate({ where: { code }, defaults: { name: code, description: `Secure ownership permission: ${code}` } });
@@ -257,6 +258,9 @@ class UserService {
     for (const permission of permissions.filter((item) => item.code === 'commission.view_own')) await RolePermission.findOrCreate({ where: { roleId: roles.Agent.id, permissionId: permission.id }, defaults: { roleId: roles.Agent.id, permissionId: permission.id } });
     for (const permission of permissions.filter((item) => COMMISSION_PERMISSIONS.includes(item.code))) await RolePermission.findOrCreate({ where: { roleId: roles.Manager.id, permissionId: permission.id }, defaults: { roleId: roles.Manager.id, permissionId: permission.id } });
     for(const permission of permissions.filter(item=>['lead.view_own','lead.update_own','lead.update_status_own','followup.create','followup.complete','followup.view_own'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Agent.id,permissionId:permission.id},defaults:{roleId:roles.Agent.id,permissionId:permission.id}});
+    for(const permission of permissions.filter(item=>['dashboard.view_own','dashboard.view_agent_ranking','labels.assign','labels.remove','voice.send','templates.send'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Agent.id,permissionId:permission.id},defaults:{roleId:roles.Agent.id,permissionId:permission.id}});
+    for(const permission of permissions.filter(item=>['dashboard.view_team','dashboard.view_agent_ranking','labels.assign','labels.remove','voice.send','templates.send'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Manager.id,permissionId:permission.id},defaults:{roleId:roles.Manager.id,permissionId:permission.id}});
+    for(const permission of permissions.filter(item=>['dashboard.view_own','dashboard.view_financial'].includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Accountant.id,permissionId:permission.id},defaults:{roleId:roles.Accountant.id,permissionId:permission.id}});
     for(const permission of permissions.filter(item=>PIPELINE_PERMISSIONS.includes(item.code)))await RolePermission.findOrCreate({where:{roleId:roles.Manager.id,permissionId:permission.id},defaults:{roleId:roles.Manager.id,permissionId:permission.id}});
     for (const permission of permissions.filter((item) => LMS_PERMISSIONS.includes(item.code))) {
       await RolePermission.findOrCreate({ where: { roleId: roles.Manager.id, permissionId: permission.id }, defaults: { roleId: roles.Manager.id, permissionId: permission.id } });

@@ -1,10 +1,10 @@
 const { Op, fn, col } = require('sequelize');
-const { sequelize, Contact, Conversation, Lead, LeadAssignment, LeadStatus, LeadSource, User, LeadActivity } = require('../models');
+const { sequelize, Contact, Conversation, Lead, LeadAssignment, LeadStatus, LeadSource, User, LeadActivity, Label } = require('../models');
 const assignmentService = require('./assignment.service');
 const leadAssignmentService = require('./leadAssignment.service');
 const leadStatusService = require('./leadStatus.service');
 const { LEAD_STATUSES, normalizeLeadStatusCode } = require('../constants/leadStatuses');
-const { normalizeSriLankanPhone, requireNormalizedPhone } = require('../utils/phone');
+const { requireNormalizedPhone } = require('../utils/phone');
 
 const DEFAULT_SOURCES = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 
@@ -63,6 +63,14 @@ function normalizeLeadStatusPayload(payload = {}) {
   return { statusCode, statusId, expectedCurrentStatusCode: payload.expectedCurrentStatusCode };
 }
 
+function buildLabelPredicate({ ids = [], labelMode = 'any', hasNoLabels = false } = {}) {
+  const canonical = `(SELECT c.id FROM conversations c WHERE c.deleted_at IS NULL AND (c.lead_id = "Lead".id OR c.contact_id = "Lead".contact_id) ORDER BY CASE WHEN c.status IN ('open','pending') THEN 0 ELSE 1 END, CASE WHEN c.lead_id = "Lead".id THEN 0 ELSE 1 END, c.updated_at DESC LIMIT 1)`;
+  const links = `SELECT cl.label_id FROM conversation_labels cl WHERE cl.conversation_id = ${canonical}`;
+  if (hasNoLabels || labelMode === 'none') return `NOT EXISTS (${links})`;
+  if (labelMode === 'all') return `(SELECT COUNT(DISTINCT cl.label_id) FROM conversation_labels cl WHERE cl.conversation_id = ${canonical} AND cl.label_id IN (${ids.join(',')})) = ${ids.length}`;
+  return `EXISTS (${links} AND cl.label_id IN (${ids.join(',')}))`;
+}
+
 function serializeAgent(agent) {
   if (!agent) return null;
   return {
@@ -107,6 +115,7 @@ function serializeLead(lead) {
     convertedAt: lead.convertedAt || null,
     conversationId: lead.getDataValue ? (lead.getDataValue('resolvedConversationId') || null) : (lead.resolvedConversationId || null),
     whatsappAccountId: lead.whatsappAccountId || null,
+    labels: lead.getDataValue ? (lead.getDataValue('resolvedLabels') || []) : (lead.resolvedLabels || []),
     assignmentHistory: lead.assignments
       ? lead.assignments.map((assignment) => ({
           id: assignment.id,
@@ -215,13 +224,18 @@ class LeadService {
     return where;
   }
 
-  async listLeads({ page = 1, limit = 20, search, status, source, assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo } = {}, actor = null) {
+  async listLeads({ page = 1, limit = 20, search, phone, email, status, source, assignedAgentId, courseInterested, whatsappAccountId, labelIds, labelMode = 'any', hasNoLabels, dateType, dateFrom, dateTo } = {}, actor = null) {
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo });
+    const ids = String(labelIds || '').split(',').filter((id) => /^\d+$/.test(id)).map(Number);
+    if (ids.length || hasNoLabels === 'true') {
+      const predicate = buildLabelPredicate({ ids, labelMode, hasNoLabels: hasNoLabels === 'true' });
+      where[Op.and] = [...(where[Op.and] || []), sequelize.literal(predicate)];
+    }
     if(actor&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))where[Op.or]=[{ownerId:actor.id},{ownerId:null}];
     const registeredDateFilter = (dateFrom || dateTo) && dateType === 'convertedAt';
-    const include = this.buildLeadIncludes({ search, status: status || (registeredDateFilter ? 'registered' : status), source });
+    const include = this.buildLeadIncludes({ search, phone, email, status: status || (registeredDateFilter ? 'registered' : status), source });
 
     const { count, rows } = await Lead.findAndCountAll({
       where,
@@ -244,7 +258,7 @@ class LeadService {
     };
   }
 
-  buildLeadIncludes({ search, status, source, includeHistory = false } = {}) {
+  buildLeadIncludes({ search, phone, email, status, source, includeHistory = false } = {}) {
     const contactWhere = {};
     const statusWhere = {};
     const sourceWhere = {};
@@ -259,11 +273,13 @@ class LeadService {
         sequelize.where(fn('concat', col('contact.first_name'), ' ', col('contact.last_name')), { [Op.iLike]: term })
       ];
     }
+    if (phone) contactWhere.phone = { [Op.iLike]: `%${String(phone).trim()}%` };
+    if (email) contactWhere.email = { [Op.iLike]: `%${String(email).trim()}%` };
     if (status) statusWhere.code = normalizeLeadStatusCode(status);
     if (source) sourceWhere.name = normalizeSource(source);
 
     const includes = [
-      { model: Contact, as: 'contact', where: contactWhere, required: !!search },
+      { model: Contact, as: 'contact', where: contactWhere, required: Boolean(search || phone || email) },
       { model: LeadStatus, as: 'status', where: statusWhere, required: !!status },
       { model: LeadSource, as: 'source', where: sourceWhere, required: !!source },
       { model: User, as: 'owner', attributes: ['id', 'firstName', 'lastName', 'email'] }
@@ -305,24 +321,17 @@ class LeadService {
     const contactIds = leads.map((lead) => lead.contactId).filter(Boolean);
     const direct = await Conversation.findAll({
       where: { [Op.or]: [{ leadId: { [Op.in]: leadIds } }, { contactId: { [Op.in]: contactIds } }] },
-      attributes: ['id', 'leadId', 'contactId', 'updatedAt'], order: [['updated_at', 'DESC']]
+      attributes: ['id', 'leadId', 'contactId', 'status', 'updatedAt'],
+      include: [{ model: Label, as: 'labels', through: { attributes: [] }, required: false }],
+      order: [[sequelize.literal("CASE WHEN \"Conversation\".\"status\" IN ('open','pending') THEN 0 ELSE 1 END"), 'ASC'], ['updated_at', 'DESC']]
     });
     for (const lead of leads) {
       const exact = direct.find((row) => String(row.leadId || '') === String(lead.id));
       const contactMatch = direct.find((row) => String(row.contactId || '') === String(lead.contactId));
-      if (exact || contactMatch) lead.setDataValue('resolvedConversationId', (exact || contactMatch).id);
-    }
-    const unresolved = leads.filter((lead) => !lead.getDataValue('resolvedConversationId'));
-    if (unresolved.length) {
-      const wanted = new Map(unresolved.map((lead) => [normalizeSriLankanPhone(lead.contact?.phone), lead]).filter(([phone]) => phone));
-      const [candidates, contacts] = await Promise.all([
-        Conversation.findAll({ include: [{ model: Contact, as: 'contact', required: true }], order: [['updated_at', 'DESC']] }),
-        Contact.findAll({ attributes: ['id', 'phone'] })
-      ]);
-      for (const [phone, lead] of wanted) {
-        const matches = candidates.filter((row) => normalizeSriLankanPhone(row.contact?.phone) === phone);
-        const matchingContacts = contacts.filter((contact) => normalizeSriLankanPhone(contact.phone) === phone);
-        if (matches.length === 1 && matchingContacts.length === 1) lead.setDataValue('resolvedConversationId', matches[0].id);
+      if (exact || contactMatch) {
+        const canonical = exact || contactMatch;
+        lead.setDataValue('resolvedConversationId', canonical.id);
+        lead.setDataValue('resolvedLabels', (canonical.labels || []).map((label) => ({ id: label.id, name: label.name, color: label.color })));
       }
     }
     return leads;
@@ -477,6 +486,13 @@ class LeadService {
     return lead.update(payload);
   }
 
+  async setLabels(id, labels, actor) {
+    const lead = await this.getLeadById(id, actor);
+    if (!lead.conversationId) throw Object.assign(new Error('This lead does not have a canonical conversation yet.'), { status: 409, code: 'LEAD_CONVERSATION_REQUIRED' });
+    await require('./inbox.service').setLabels(lead.conversationId, labels, actor);
+    return this.getLeadById(id, actor);
+  }
+
   async assignOwner(leadId, ownerId) {
     await leadAssignmentService.assignAgent({ leadId, ownerId, source: 'workflow' });
     return Lead.findByPk(leadId);
@@ -485,3 +501,4 @@ class LeadService {
 
 module.exports = new LeadService();
 module.exports.normalizeLeadStatusPayload = normalizeLeadStatusPayload;
+module.exports.buildLabelPredicate = buildLabelPredicate;

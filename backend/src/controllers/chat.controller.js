@@ -3,6 +3,10 @@ const socketService = require('../services/socket.service');
 const logger = require('../config/logger');
 
 class ChatController {
+  async templateDiagnostics(req, res, next) {
+    try { return res.json({ success: true, data: await chatService.getTemplateDiagnostics(req.params.conversationId, req.user.id, req.query.templateName, req.query.languageCode) }); }
+    catch (err) { next(err); }
+  }
   async getConversations(req, res, next) {
     try {
       const userId = req.user.id;

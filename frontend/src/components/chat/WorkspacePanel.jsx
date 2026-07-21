@@ -17,6 +17,7 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { agentName, contactName, formatDateTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
 import { getAccessPayload } from '../../utils/access';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
+import LabelMultiSelect from '../LabelMultiSelect';
 
 function DetailRow({ label, value }) {
   return (
@@ -36,7 +37,7 @@ function Section({ title, children }) {
   );
 }
 
-export function ProfileTab({ conversation, agents, roles, onAssign, onUpdateContact, onLeadStatusChange, leadStatusSaving, engagement }) {
+export function ProfileTab({ conversation, agents, roles, labels, onLabelsChange, onLabelOptionsChange, onAssign, onUpdateContact, onLeadStatusChange, leadStatusSaving, engagement }) {
   const contact = conversation?.contact || {};
   const lead = conversation?.lead || {};
   const assignableUsers = safeArray(agents);
@@ -92,6 +93,9 @@ export function ProfileTab({ conversation, agents, roles, onAssign, onUpdateCont
         <Stack direction="row" gap={0.5} flexWrap="wrap" justifyContent="center">{safeArray(contact.tags).map((tag) => <Chip key={tag} size="small" variant="outlined" label={tag} />)}</Stack>
       </Stack>
       <Divider />
+      <Section title="Conversation labels">
+        <LabelMultiSelect options={labels} value={safeArray(conversation.labels).map((item) => item.id)} onChange={onLabelsChange} onOptionsChange={onLabelOptionsChange} />
+      </Section>
       <Section title="Contact profile">
         {editing ? (
           <Stack spacing={1}>
@@ -296,12 +300,12 @@ export function WorkspacePanel({
   roles,
   notes,
   media,
+  labels,
+  onLabelsChange,
+  onLabelOptionsChange,
   noteText,
   onNoteTextChange,
-  labelText,
-  onLabelTextChange,
   onAddNote,
-  onAddLabel,
   onAssign,
   onUpdateContact,
   onDownload,
@@ -342,7 +346,7 @@ export function WorkspacePanel({
       </Tabs>
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 2 }}>
         {!conversation && <Typography variant="body2" color="text.secondary">Select a conversation to open its workspace.</Typography>}
-        {conversation && tab === 'profile' && <ProfileTab conversation={conversation} agents={agents} roles={roles} onAssign={onAssign} onUpdateContact={onUpdateContact} onLeadStatusChange={onLeadStatusChange} leadStatusSaving={leadStatusSaving} engagement={engagement} />}
+        {conversation && tab === 'profile' && <ProfileTab conversation={conversation} agents={agents} roles={roles} labels={labels} onLabelsChange={onLabelsChange} onLabelOptionsChange={onLabelOptionsChange} onAssign={onAssign} onUpdateContact={onUpdateContact} onLeadStatusChange={onLeadStatusChange} leadStatusSaving={leadStatusSaving} engagement={engagement} />}
         {conversation && tab === 'notes' && <NotesTab notes={notes} noteText={noteText} onNoteTextChange={onNoteTextChange} onAddNote={onAddNote} />}
         {conversation && tab === 'media' && <MediaTab media={media} onDownload={onDownload} />}
         {conversation && tab === 'actions' && <ActionsTab onAction={handleAction} />}

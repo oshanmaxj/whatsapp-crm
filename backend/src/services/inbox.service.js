@@ -430,7 +430,8 @@ class InboxService {
     return result;
   }
 
-  async setLabels(conversationId, labels = [], userId) {
+  async setLabels(conversationId, labels = [], actor) {
+    const userId = actor?.id || actor;
     await conversationAccessService.assertConversationAccess(conversationId, userId);
     const conversation = await Conversation.findByPk(conversationId);
     if (!conversation) {
@@ -438,14 +439,18 @@ class InboxService {
       error.status = 404;
       throw error;
     }
+    const { assertPermission } = require('./label.service');
+    const currentLinks = await ConversationLabel.findAll({ where: { conversationId }, attributes: ['labelId'], raw: true });
+    const currentIds = new Set(currentLinks.map((item) => String(item.labelId)));
     const labelRows = [];
     for (const item of labels) {
-      const [label] = await Label.findOrCreate({
-        where: { name: item.name || item },
-        defaults: { color: item.color || '#25d366' }
-      });
+      let label = item?.id ? await Label.findByPk(item.id) : (/^\d+$/.test(String(item)) ? await Label.findByPk(item) : null);
+      if (!label) label = await require('./label.service').create({ name: item?.name || item, color: item?.color }, actor);
       labelRows.push(label);
     }
+    const nextIds = new Set(labelRows.map((item) => String(item.id)));
+    if ([...nextIds].some((id) => !currentIds.has(id))) assertPermission(actor, 'labels.assign');
+    if ([...currentIds].some((id) => !nextIds.has(id))) assertPermission(actor, 'labels.remove');
     await ConversationLabel.destroy({ where: { conversationId } });
     for (const label of labelRows) {
       await ConversationLabel.findOrCreate({
@@ -515,11 +520,9 @@ class InboxService {
       error.status = 400;
       throw error;
     }
-    const safeName = `${Date.now()}-${String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const storagePath = path.join(uploadDir, safeName);
+    let safeName = `${Date.now()}-${String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    let storagePath = path.join(uploadDir, safeName);
     fs.writeFileSync(storagePath, buffer);
-
-    const publicUrl = `/uploads/media/${safeName}`;
     logger.info('media_file_stored_locally', {
       conversationId,
       fileName,
@@ -538,6 +541,13 @@ class InboxService {
       error.status = 400;
       throw error;
     }
+    if (messageType === 'audio') {
+      const prepared = await require('./audioProcessing.service').prepare({ filePath: storagePath, mimeType });
+      storagePath = prepared.filePath;
+      mimeType = prepared.mimeType;
+      safeName = path.basename(storagePath);
+    }
+    const publicUrl = `/uploads/media/${safeName}`;
     const replyContext = await resolveReplyContext(conversationId, replyToMessageId);
     const uploadResponse = await whatsappService.uploadMedia({
       filePath: storagePath,

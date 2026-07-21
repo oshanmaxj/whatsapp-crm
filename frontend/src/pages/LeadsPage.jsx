@@ -13,7 +13,9 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { getAgents } from '../services/agent.service';
-import { assignLead, autoAssignLeads, createLead, deleteLead, getLeads, updateLead, updateLeadStatus } from '../services/lead.service';
+import { assignLead, autoAssignLeads, createLead, deleteLead, getLeads, setLeadLabels, updateLead, updateLeadStatus } from '../services/lead.service';
+import { getLabels } from '../services/chat.service';
+import LabelMultiSelect from '../components/LabelMultiSelect';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 import { LEAD_STATUSES } from '../constants/leadStatuses';
 
@@ -26,7 +28,7 @@ const studentTypes = ['New Student', 'Existing Student', 'Returning Student'];
 const initialForm = {
   name: '', phone: '', email: '', source: 'Manual Entry', status: 'New', priority: 'medium',
   assignedAgentId: '', courseInterested: 'Forex', batchInterested: '', budget: '',
-  studentType: 'New Student', notes: '', followUpDate: ''
+  studentType: 'New Student', notes: '', followUpDate: '', labelIds: []
 };
 
 function agentName(agent) {
@@ -55,13 +57,15 @@ function toForm(lead) {
     budget: lead?.budget || '',
     studentType: lead?.studentType || 'New Student',
     notes: lead?.notes || '',
-    followUpDate: toInputDate(lead?.followUpDate)
+    followUpDate: toInputDate(lead?.followUpDate),
+    labelIds: (lead?.labels || []).map((item) => item.id)
   };
 }
 
 function toPayload(form) {
+  const { labelIds, ...fields } = form;
   return {
-    ...form,
+    ...fields,
     assignedAgentId: form.assignedAgentId || null,
     budget: form.budget === '' ? null : Number(form.budget),
     followUpDate: form.followUpDate ? new Date(form.followUpDate).toISOString() : null
@@ -73,8 +77,9 @@ function LeadsPage() {
   const { socket } = useOutletContext() || {};
   const [leads, setLeads] = useState([]);
   const [agents, setAgents] = useState([]);
+  const [labels, setLabels] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, pages: 0 });
-  const emptyFilters = { search: '', status: '', source: '', assignedAgentId: '', courseInterested: '', whatsappAccountId: '', dateType: 'createdAt', dateFrom: '', dateTo: '' };
+  const emptyFilters = { search: '', phone: '', email: '', status: '', source: '', assignedAgentId: '', courseInterested: '', whatsappAccountId: '', labelIds: [], labelMode: 'any', hasNoLabels: false, dateType: 'createdAt', dateFrom: '', dateTo: '' };
   const [filters, setFilters] = useState(emptyFilters);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -89,11 +94,16 @@ function LeadsPage() {
     page: pagination.page,
     limit: pagination.limit,
     search: filters.search || undefined,
+    phone: filters.phone || undefined,
+    email: filters.email || undefined,
     status: filters.status || undefined,
     source: filters.source || undefined,
     assignedAgentId: filters.assignedAgentId || undefined,
     courseInterested: filters.courseInterested || undefined,
     whatsappAccountId: filters.whatsappAccountId || undefined,
+    labelIds: filters.labelIds.length ? filters.labelIds.join(',') : undefined,
+    labelMode: filters.labelMode,
+    hasNoLabels: filters.hasNoLabels || undefined,
     dateType: filters.dateType || undefined,
     dateFrom: filters.dateFrom || undefined,
     dateTo: filters.dateTo || undefined
@@ -118,6 +128,7 @@ function LeadsPage() {
   };
 
   useEffect(() => { loadAgents(); }, []);
+  useEffect(() => { getLabels().then((response) => setLabels(response.data.data || [])).catch(() => {}); }, []);
   useEffect(() => { loadLeads(); }, [query]);
   useEffect(() => {
     if (!socket) return undefined;
@@ -174,6 +185,7 @@ function LeadsPage() {
       setError('');
       if (editing) {
         await updateLead(editing.id, toPayload(form));
+        if (editing.conversationId) await setLeadLabels(editing.id, form.labelIds.map((id) => ({ id })));
         setSuccess('Lead updated.');
       } else {
         await createLead(toPayload(form));
@@ -243,11 +255,15 @@ function LeadsPage() {
       <Paper sx={{ p: 2.5, border: '1px solid #e8edf2' }} elevation={0}>
         <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap" alignItems="center">
           <TextField label="Search name, phone, email" value={filters.search} onChange={setFilter('search')} fullWidth />
+          <TextField label="Phone" value={filters.phone} onChange={setFilter('phone')} sx={{ minWidth: 150 }} />
+          <TextField label="Email" value={filters.email} onChange={setFilter('email')} sx={{ minWidth: 190 }} />
           <FormControl sx={{ minWidth: 150 }}><InputLabel>Status</InputLabel><Select label="Status" value={filters.status} onChange={setFilter('status')}><MenuItem value="">All</MenuItem>{statuses.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 160 }}><InputLabel>Source</InputLabel><Select label="Source" value={filters.source} onChange={setFilter('source')}><MenuItem value="">All</MenuItem>{sources.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Agent</InputLabel><Select label="Agent" value={filters.assignedAgentId} onChange={setFilter('assignedAgentId')}><MenuItem value="">All</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}</Select></FormControl>
           <FormControl sx={{ minWidth: 170 }}><InputLabel>Course</InputLabel><Select label="Course" value={filters.courseInterested} onChange={setFilter('courseInterested')}><MenuItem value="">All</MenuItem>{courses.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}</Select></FormControl>
           <WhatsAppAccountSelect value={filters.whatsappAccountId} onChange={(value) => { setFilters((current) => ({ ...current, whatsappAccountId: value })); setPagination((current) => ({ ...current, page: 1 })); }} allowAll sx={{ minWidth: 230 }} />
+          <Box sx={{ minWidth: 280, flex: 1 }}><LabelMultiSelect options={labels} value={filters.labelIds} onChange={(labelIds) => { setFilters((current) => ({ ...current, labelIds, hasNoLabels: false })); setPagination((current) => ({ ...current, page: 1 })); }} onOptionsChange={setLabels} /></Box>
+          <FormControl sx={{ minWidth: 180 }}><InputLabel>Label match</InputLabel><Select label="Label match" value={filters.hasNoLabels ? 'no_labels' : filters.labelMode} onChange={(event) => { const value = event.target.value; setFilters((current) => ({ ...current, hasNoLabels: value === 'no_labels', labelMode: value === 'no_labels' ? 'any' : value, labelIds: value === 'no_labels' ? [] : current.labelIds })); }}><MenuItem value="any">Has any selected</MenuItem><MenuItem value="all">Has all selected</MenuItem><MenuItem value="no_labels">Has no labels</MenuItem></Select></FormControl>
           <FormControl sx={{ minWidth: 190 }}><InputLabel>Date Type</InputLabel><Select label="Date Type" value={filters.dateType} onChange={setFilter('dateType')}><MenuItem value="createdAt">Lead Created Date</MenuItem><MenuItem value="updatedAt">Last Updated Date</MenuItem><MenuItem value="convertedAt">Registration Date</MenuItem></Select></FormControl>
           <TextField label="From" type="date" value={filters.dateFrom} onChange={setFilter('dateFrom')} InputLabelProps={{ shrink: true }} sx={{ minWidth: 160 }} />
           <TextField label="To" type="date" value={filters.dateTo} onChange={setFilter('dateTo')} InputLabelProps={{ shrink: true }} sx={{ minWidth: 160 }} />
@@ -268,11 +284,12 @@ function LeadsPage() {
         {loading && <LinearProgress />}
         <TableContainer>
           <Table>
-            <TableHead><TableRow><TableCell>Lead</TableCell><TableCell>Status</TableCell><TableCell>Source</TableCell><TableCell>Course</TableCell><TableCell>Agent</TableCell><TableCell>Created</TableCell><TableCell>Chat</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Lead</TableCell><TableCell>Labels</TableCell><TableCell>Status</TableCell><TableCell>Source</TableCell><TableCell>Course</TableCell><TableCell>Agent</TableCell><TableCell>Created</TableCell><TableCell>Chat</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {leads.map((lead) => (
                 <TableRow key={lead.id} hover>
                   <TableCell><Typography fontWeight={800}>{lead.name || 'Unnamed lead'}</Typography><Typography variant="body2" color="text.secondary">{lead.phone} {lead.email ? `• ${lead.email}` : ''}</Typography></TableCell>
+                  <TableCell><Stack direction="row" gap={.5} flexWrap="wrap" sx={{ minWidth: 130 }}>{(lead.labels || []).map((item) => <Chip key={item.id} size="small" label={item.name} sx={{ height: 22, bgcolor: `${item.color || '#25d366'}22`, border: '1px solid', borderColor: item.color || '#25d366' }} />)}{!(lead.labels || []).length && <Typography variant="caption" color="text.secondary">None</Typography>}</Stack></TableCell>
                   <TableCell><Stack direction="row" alignItems="center" gap={1}><FormControl size="small" sx={{ minWidth: 145 }} disabled={savingStatus[lead.id]}><Select value={lead.statusCode || 'new'} onChange={(event) => changeStatus(lead, event.target.value)}>{LEAD_STATUSES.map((status) => <MenuItem key={status.code} value={status.code}>{status.name}</MenuItem>)}</Select></FormControl>{savingStatus[lead.id] && <CircularProgress size={18} />}</Stack></TableCell>
                   <TableCell>{lead.source || '-'}</TableCell>
                   <TableCell>{lead.courseInterested || '-'}</TableCell>
@@ -293,7 +310,7 @@ function LeadsPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {!loading && leads.length === 0 && <TableRow><TableCell colSpan={7}><Box sx={{ py: 5, textAlign: 'center' }}><Typography fontWeight={800}>No leads found</Typography><Typography color="text.secondary">Add a lead or adjust filters.</Typography></Box></TableCell></TableRow>}
+              {!loading && leads.length === 0 && <TableRow><TableCell colSpan={9}><Box sx={{ py: 5, textAlign: 'center' }}><Typography fontWeight={800}>No leads found</Typography><Typography color="text.secondary">Add a lead or adjust filters.</Typography></Box></TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>
@@ -317,6 +334,7 @@ function LeadsPage() {
             <Grid item xs={12} sm={6}><FormControl fullWidth><InputLabel>Assigned Agent</InputLabel><Select label="Assigned Agent" value={form.assignedAgentId} onChange={(e) => setForm({ ...form, assignedAgentId: e.target.value })}><MenuItem value="">Unassigned</MenuItem>{agents.map((agent) => <MenuItem key={agent.id} value={agent.id}>{agentName(agent)}</MenuItem>)}</Select></FormControl></Grid>
             <Grid item xs={12} sm={6}><TextField label="Follow-up Date" type="datetime-local" value={form.followUpDate} onChange={(e) => setForm({ ...form, followUpDate: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
             <Grid item xs={12}><TextField label="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} multiline minRows={4} fullWidth /></Grid>
+            {editing?.conversationId && <Grid item xs={12}><LabelMultiSelect options={labels} value={form.labelIds} onChange={(labelIds) => setForm({ ...form, labelIds })} onOptionsChange={setLabels} /></Grid>}
           </Grid>
         </DialogContent>
         <DialogActions><Button onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" disabled={!form.phone.trim()} onClick={saveLead}>Save</Button></DialogActions>
@@ -327,6 +345,7 @@ function LeadsPage() {
           <Box><Typography variant="h5" fontWeight={850}>{profile.name || 'Unnamed lead'}</Typography><Typography color="text.secondary">{profile.phone} {profile.email ? `• ${profile.email}` : ''}</Typography></Box>
           <Divider />
           <Stack direction="row" gap={1} flexWrap="wrap"><Chip label={profile.status || '-'} /><Chip label={profile.priority || '-'} /><Chip label={profile.source || '-'} /></Stack>
+          <Box><Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Labels</Typography><LabelMultiSelect options={labels} value={(profile.labels || []).map((item) => item.id)} onOptionsChange={setLabels} onChange={async (labelIds) => { try { const response = await setLeadLabels(profile.id, labelIds.map((id) => ({ id }))); const updated = response.data.data; setProfile(updated); setLeads((rows) => rows.map((row) => String(row.id) === String(updated.id) ? updated : row)); } catch (err) { setError(err.response?.data?.message || 'Unable to update labels.'); } }} disabled={!profile.conversationId} helperText={!profile.conversationId ? 'Labels become available after a canonical conversation exists.' : ''} /></Box>
           <Box><Typography variant="subtitle2" color="text.secondary">Assigned Agent</Typography><Typography>{agentName(profile.assignedAgent)}</Typography></Box>
           <Box><Typography variant="subtitle2" color="text.secondary">Course and Batch</Typography><Typography>{profile.courseInterested || '-'} / {profile.batchInterested || '-'}</Typography></Box>
           <Box><Typography variant="subtitle2" color="text.secondary">Budget and Student Type</Typography><Typography>{profile.budget || '-'} / {profile.studentType || '-'}</Typography></Box>

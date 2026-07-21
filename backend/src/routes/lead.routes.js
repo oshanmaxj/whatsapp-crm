@@ -16,6 +16,7 @@ router.get('/', leadController.list.bind(leadController));
 router.get('/:id', leadController.get.bind(leadController));
 router.post('/', validateBody(createLeadSchema), leadController.create.bind(leadController));
 router.patch('/:id', validateBody(updateLeadSchema), leadController.update.bind(leadController));
+router.put('/:id/labels', leadController.setLabels.bind(leadController));
 router.delete('/:id', leadController.remove.bind(leadController));
 router.post('/:id/assign', validateBody(assignLeadSchema), leadController.assign.bind(leadController));
 router.post('/auto-assign', validateBody(autoAssignSchema), leadController.autoAssign.bind(leadController));

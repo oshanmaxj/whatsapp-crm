@@ -14,6 +14,8 @@ import {
   getMedia,
   getNotes,
   getTemplates,
+  getLabels,
+  getTemplateDiagnostics,
   getUnreadCount,
   sendConversationMessage,
   sendConversationInteractive,
@@ -65,7 +67,7 @@ function inferMediaType(file) {
   const extension = `.${String(file.name || '').split('.').pop().toLowerCase()}`;
   if (['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || ['.jpg', '.jpeg', '.png', '.webp'].includes(extension)) return 'image';
   if (['video/mp4', 'video/3gpp'].includes(file.type) || ['.mp4', '.3gp'].includes(extension)) return 'video';
-  if (['audio/mpeg', 'audio/ogg', 'audio/amr', 'audio/mp4'].includes(file.type) || ['.mp3', '.ogg', '.amr', '.m4a'].includes(extension)) return 'audio';
+  if (['audio/mpeg', 'audio/ogg', 'audio/amr', 'audio/mp4', 'audio/m4a', 'audio/webm'].includes(file.type) || ['.mp3', '.ogg', '.amr', '.m4a', '.webm'].includes(extension)) return 'audio';
   if (['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'].includes(extension)) return 'document';
   return null;
 }
@@ -97,13 +99,14 @@ function ChatPage() {
   const [media, setMedia] = useState([]);
   const [notes, setNotes] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [labels, setLabels] = useState([]);
   const [whatsappTemplates, setWhatsAppTemplates] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [templateDiagnostics, setTemplateDiagnostics] = useState(null);
   const [replyToMessage, setReplyToMessage] = useState(null);
   const [windowNow, setWindowNow] = useState(() => Date.now());
   const [newMessage, setNewMessage] = useState('');
   const [noteText, setNoteText] = useState('');
-  const [labelText, setLabelText] = useState('');
   const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', leadStatus: '', unread: '', whatsappAccountId: '' });
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
@@ -157,6 +160,11 @@ function ChatPage() {
       .then((response) => setWhatsAppTemplates(safeArray(response.data?.data)))
       .catch(() => {});
   }, [conversation?.whatsappAccountId]);
+  useEffect(() => {
+    if (!selected || !selectedTemplate) { setTemplateDiagnostics(null); return; }
+    getTemplateDiagnostics(selected, { templateName: selectedTemplate.name, languageCode: selectedTemplate.language || 'en_US' })
+      .then((response) => setTemplateDiagnostics(response.data.data || null)).catch(() => setTemplateDiagnostics(null));
+  }, [selected, selectedTemplate]);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -238,6 +246,7 @@ function ChatPage() {
       getAssignableUsers({ includeAll: true }).then((response) => setAgents(safeArray(response.data?.data))),
       getRoles().then((response) => setRoles(safeArray(response.data?.data))),
       getTemplates().then((response) => setTemplates(safeArray(response.data?.data))),
+      getLabels().then((response) => setLabels(safeArray(response.data?.data))),
       listWhatsAppTemplates({ status: 'APPROVED' }).then((response) => setWhatsAppTemplates(safeArray(response.data?.data))),
       getUnreadCount().then((response) => setUnread(response.data?.data?.unread || 0))
     ]);
@@ -587,19 +596,17 @@ function ChatPage() {
     }
   }, [selected, noteText]);
 
-  const handleAddLabel = useCallback(async () => {
-    if (!selected || !labelText.trim()) return;
+  const handleSetLabels = useCallback(async (labelIds) => {
+    if (!selected) return;
     try {
-      const current = safeArray(conversation?.labels).map((label) => ({ name: label.name, color: label.color }));
-      await setConversationLabels(selected, [...current, { name: labelText.trim(), color: '#25d366' }]);
-      setLabelText('');
-      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
-    } catch (requestError) {
-      setError(requestError.response?.data?.message || 'Unable to add label.');
-    }
-  }, [selected, labelText, conversation, loadDetails, loadConversations]);
+      const response = await setConversationLabels(selected, labelIds.map((id) => ({ id })));
+      const updated = response.data.data;
+      setConversation(updated);
+      setConversations((rows) => safeArray(rows).map((row) => String(row.id) === String(updated.id) ? updated : row));
+    } catch (requestError) { setError(requestError.response?.data?.message || 'Unable to update labels.'); }
+  }, [selected]);
 
-  const sendAttachment = useCallback(async (file) => {
+  const sendAttachment = useCallback(async (file, onProgress = () => {}) => {
     if (!file || !selected) return;
     const mediaType = inferMediaType(file);
     if (!mediaType) {
@@ -641,7 +648,8 @@ function ChatPage() {
         dataBase64,
         caption: newMessage || file.name,
         replyToMessageId: replyToMessage?.id || null
-      });
+      }, (event) => onProgress(event.total ? Math.min(95, Math.round((event.loaded * 95) / event.total)) : 50));
+      onProgress(100);
       const sentMessage = response.data?.data?.message;
       if (sentMessage?.id != null) {
         seenSocketMessageIdsRef.current.add(String(sentMessage.id));
@@ -777,12 +785,12 @@ function ChatPage() {
       roles={roles}
       notes={notes}
       media={media}
+      labels={labels}
+      onLabelsChange={handleSetLabels}
+      onLabelOptionsChange={setLabels}
       noteText={noteText}
       onNoteTextChange={setNoteText}
-      labelText={labelText}
-      onLabelTextChange={setLabelText}
       onAddNote={handleAddNote}
-      onAddLabel={handleAddLabel}
       onAssign={handleAssign}
       onUpdateContact={handleUpdateContact}
       onDownload={handleDownload}
@@ -827,6 +835,7 @@ function ChatPage() {
             quickReplies={templates}
             whatsappTemplates={whatsappTemplates}
             selectedTemplate={selectedTemplate}
+            templateDiagnostics={templateDiagnostics}
             onSelectTemplate={(template) => {
               setSelectedTemplate(template);
               setNewMessage(template?.body || '');
@@ -840,6 +849,7 @@ function ChatPage() {
             onSend={handleSendMessage}
             onSendInteractive={handleSendInteractive}
             onAttach={() => fileInputRef.current?.click()}
+            onSendVoice={sendAttachment}
             onDropFile={sendAttachment}
             onSaveTemplate={handleSaveTemplate}
             onBack={handleBack}

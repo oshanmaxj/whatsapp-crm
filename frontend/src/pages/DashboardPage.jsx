@@ -28,7 +28,8 @@ import LeaderboardIcon from '@mui/icons-material/Leaderboard';
 import PaymentsIcon from '@mui/icons-material/Payments';
 import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined';
 import CakeOutlinedIcon from '@mui/icons-material/CakeOutlined';
-import { getDashboardSummary } from '../services/dashboard.service';
+import { getAgentLeaderboard, getDashboardSummary } from '../services/dashboard.service';
+import { hasPermission } from '../utils/access';
 
 const defaultSummary = {
   totals: {
@@ -119,6 +120,7 @@ function DashboardPage() {
   const [summary, setSummary] = useState(defaultSummary);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [leaderboard, setLeaderboard] = useState([]);
 
   const loadSummary = async () => {
     try {
@@ -126,6 +128,10 @@ function DashboardPage() {
       setLoading(true);
       const response = await getDashboardSummary();
       setSummary(response.data.data || defaultSummary);
+      if (hasPermission('dashboard.view_agent_ranking')) {
+        const ranking = await getAgentLeaderboard({ range: 'month', limit: 20 });
+        setLeaderboard(ranking.data.data?.rows || []);
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to load dashboard summary.');
     } finally {
@@ -173,6 +179,23 @@ function DashboardPage() {
     { label: 'Rejected Templates', value: summary.totals.rejectedTemplates || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
     { label: 'Quality Issues', value: summary.totals.qualityIssues || 0, icon: <ChatBubbleOutlineIcon sx={{ color: '#6d5b00' }} />, tone: '#fff8cc' }
   ];
+  const roleMetrics = summary.scope === 'accounting' ? [
+    ['Income Today', `Rs.${summary.totals.incomeToday || 0}`], ['Income This Month', `Rs.${summary.totals.incomeMonth || 0}`], ['Expenses This Month', `Rs.${summary.totals.expensesMonth || 0}`], ['Pending Fees', `Rs.${summary.totals.pendingFees || 0}`], ['Payment Verifications', summary.totals.paymentVerifications], ['Receipts Generated', summary.totals.receiptsGenerated], ['Reversals', summary.totals.reversals], ['Commissions Pending', `Rs.${summary.totals.commissionsPending || 0}`]
+  ].map(([label, value]) => ({ label, value, icon: <PaymentsIcon />, tone: '#e7f7ee' })) : summary.scope === 'education' ? [
+    ['Active Students', summary.totals.activeStudents], ['Active Batches', summary.totals.activeBatches], ['Active Courses', summary.totals.activeCourses], ['Upcoming Classes', summary.totals.upcomingClasses], ['Attendance Today', summary.totals.attendanceToday], ['Fees Due', summary.totals.feesDue == null ? null : `Rs.${summary.totals.feesDue}`], ['Certificates Pending', summary.totals.certificatesPending]
+  ].filter(([, value]) => value !== undefined && value !== null).map(([label, value]) => ({ label, value, icon: <EventAvailableIcon />, tone: '#eaf1ff' })) : null;
+  const visibleMetrics = roleMetrics || (summary.scope ? [
+    { label: summary.scope === 'own' ? 'Leads Assigned to Me' : 'Team Leads', value: summary.totals.leads, icon: <TrendingUpIcon sx={{ color: '#1769aa' }} />, tone: '#e8f2fb' },
+    { label: 'New Leads Today', value: summary.totals.newLeadsToday, icon: <PersonAddAltIcon sx={{ color: '#b25a00' }} />, tone: '#fff3e2' },
+    { label: 'Open Chats', value: summary.totals.activeChats, icon: <ForumIcon sx={{ color: '#7a4bd8' }} />, tone: '#f1ecff' },
+    { label: 'Replies Today', value: summary.totals.messagesToday, icon: <ChatBubbleOutlineIcon sx={{ color: '#0f8b8d' }} />, tone: '#e7f8f8' },
+    { label: 'Unique Conversations Today', value: summary.totals.uniqueConversationsRepliedToday, icon: <ChatBubbleOutlineIcon sx={{ color: '#0f8b8d' }} />, tone: '#e7f8f8' },
+    { label: 'Converted Leads', value: summary.totals.convertedLeads, icon: <CheckCircleOutlineIcon sx={{ color: '#0f8a4b' }} />, tone: '#e7f7ee' },
+    { label: 'Conversion Rate', value: `${summary.totals.conversionRate || 0}%`, icon: <LeaderboardIcon sx={{ color: '#175cd3' }} />, tone: '#eaf1ff' },
+    { label: 'Follow-ups Due Today', value: summary.totals.followupsDueToday, icon: <EventAvailableIcon sx={{ color: '#a15c00' }} />, tone: '#fff4df' },
+    { label: 'Missed Follow-ups', value: summary.totals.missedFollowups, icon: <EventAvailableIcon sx={{ color: '#ba1a1a' }} />, tone: '#feecec' },
+    ...(summary.availability?.financial ? [{ label: 'Revenue Attributed', value: `Rs.${summary.totals.revenueAttributed || 0}`, icon: <PaymentsIcon />, tone: '#e7f7ee' }, { label: 'Commission', value: `Rs.${summary.totals.commission || 0}`, icon: <PaymentsIcon />, tone: '#e7f7ee' }] : [])
+  ] : metrics);
 
   return (
     <Stack spacing={3}>
@@ -180,12 +203,14 @@ function DashboardPage() {
       {loading && <LinearProgress />}
 
       <Grid container spacing={2}>
-        {metrics.map((metric) => (
+        {visibleMetrics.map((metric) => (
           <Grid item xs={12} sm={6} lg={4} key={metric.label}>
             <MetricCard {...metric} />
           </Grid>
         ))}
       </Grid>
+
+      {leaderboard.length > 0 && <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }} elevation={0}><Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>Top Agents — This Month</Typography><TableContainer><Table size="small"><TableHead><TableRow><TableCell>Rank</TableCell><TableCell>Agent</TableCell><TableCell>Assigned</TableCell><TableCell>Converted</TableCell><TableCell>Conversion</TableCell><TableCell>Unique chats</TableCell><TableCell>Open chats</TableCell><TableCell>Revenue</TableCell><TableCell>Score</TableCell></TableRow></TableHead><TableBody>{leaderboard.map((row) => <TableRow key={row.agent.id}><TableCell>{row.rank}</TableCell><TableCell>{row.agent.name}</TableCell><TableCell>{row.assignedLeads}</TableCell><TableCell>{row.convertedLeads}</TableCell><TableCell>{row.conversionRate.toFixed(1)}%</TableCell><TableCell>{row.uniqueConversations}</TableCell><TableCell>{row.openChats}</TableCell><TableCell>Rs.{row.revenueAttributed.toFixed(2)}</TableCell><TableCell>{row.score.toFixed(2)}</TableCell></TableRow>)}</TableBody></Table></TableContainer></Paper>}
 
       <Grid container spacing={3}>
         <Grid item xs={12} lg={7}>

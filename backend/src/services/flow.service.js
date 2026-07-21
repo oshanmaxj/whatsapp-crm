@@ -862,6 +862,9 @@ class FlowService {
       }
       if (node.nodeType === 'add_label') {
         const contactId = context.contactId || context.contact?.id;
+        const conversationId = context.conversationId || context.conversation?.id;
+        const labelIds = (Array.isArray(config.labelIds) ? config.labelIds : []).filter((id) => /^\d+$/.test(String(id)));
+        if (conversationId && labelIds.length) for (const labelId of labelIds) await require('../models').ConversationLabel.findOrCreate({ where: { conversationId, labelId }, defaults: { conversationId, labelId } });
         if (contactId) {
           const contact = await Contact.findByPk(contactId);
           const tags = [...new Set([...(contact.tags || []), config.label || config.labelName].filter(Boolean))];
@@ -872,6 +875,9 @@ class FlowService {
       }
       if (node.nodeType === 'remove_label') {
         const contactId = context.contactId || context.contact?.id;
+        const conversationId = context.conversationId || context.conversation?.id;
+        const labelIds = (Array.isArray(config.labelIds) ? config.labelIds : []).filter((id) => /^\d+$/.test(String(id)));
+        if (conversationId && labelIds.length) await require('../models').ConversationLabel.destroy({ where: { conversationId, labelId: { [require('sequelize').Op.in]: labelIds } } });
         const contact = contactId ? await Contact.findByPk(contactId) : null;
         if (contact) {
           const target = config.label || config.labelName;

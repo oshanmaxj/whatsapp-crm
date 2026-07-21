@@ -42,6 +42,7 @@ const paymentReceiptsMigration = require('../../migrations/038_payment_receipts'
 const canonicalPaymentConversationMigration = require('../../migrations/039_canonical_payment_whatsapp_conversation');
 const advancedFlowActionsMigration = require('../../migrations/040_advanced_flow_actions');
 const educationSearchIndexesMigration = require('../../migrations/041_education_search_indexes');
+const crmLabelsVoiceDashboardMigration = require('../../migrations/042_crm_labels_voice_dashboard');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -197,6 +198,8 @@ async function run() {
     console.log('Applied: advanced flow triggers and actions');
     await educationSearchIndexesMigration.up(queryInterface, Sequelize);
     console.log('Applied: Education search and LMS ordering indexes');
+    await crmLabelsVoiceDashboardMigration.up(queryInterface, Sequelize);
+    console.log('Applied: CRM labels, voice, and role dashboard permissions/indexes');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

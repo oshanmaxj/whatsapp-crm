@@ -26,6 +26,25 @@ function senderLabel(message) {
   return message.direction === 'outbound' ? 'You' : 'Customer';
 }
 
+function templateSendError(meta = {}, fallback = 'Template delivery failed.') {
+  const code = String(meta?.code || '');
+  if (code === '131048') return 'Meta temporarily blocked this marketing template delivery because of recipient engagement or messaging quality limits. Try another approved template, wait before retrying, or contact the customer only after they message again.';
+  return String(meta?.error_user_msg || meta?.message || fallback).slice(0, 500);
+}
+
+function validateTemplateComponents(template, components) {
+  const rows = Array.isArray(components) ? components : [];
+  const bodyCount = Math.max(0, ...Array.from(String(template.body || '').matchAll(/{{\s*(\d+)\s*}}/g), (match) => Number(match[1])));
+  const body = rows.find((item) => String(item.type || '').toLowerCase() === 'body');
+  const supplied = Array.isArray(body?.parameters) ? body.parameters.length : 0;
+  if (supplied !== bodyCount) throw Object.assign(new Error(`Template requires ${bodyCount} body parameter(s); ${supplied} supplied.`), { status: 422, code: 'TEMPLATE_PARAMETER_COUNT_INVALID' });
+  if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(template.headerType).toUpperCase())) {
+    const header = rows.find((item) => String(item.type || '').toLowerCase() === 'header');
+    if (!header?.parameters?.[0]) throw Object.assign(new Error(`${template.headerType} template header media is required.`), { status: 422, code: 'TEMPLATE_HEADER_MEDIA_REQUIRED' });
+  }
+  return rows;
+}
+
 function serializeSentBy(user) {
   if (!user) return null;
   const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || 'Agent';
@@ -294,6 +313,7 @@ class ChatService {
       error.code = 'TEMPLATE_NOT_APPROVED';
       throw error;
     }
+    components = validateTemplateComponents(template, components);
 
     conversationId = conversation.id;
     const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
@@ -339,19 +359,34 @@ class ChatService {
       await conversation.update({ lastMessageAt: new Date() });
       return this.getMessageWithReplyPreview(message.id);
     } catch (error) {
-      const metaError = error.metaError || error.response?.data || {};
+      const metaError = error.metaError || error.response?.data || error.whatsappApiResponse || {};
       const whatsappError = metaError.error || metaError;
+      const safeMessage = templateSendError(whatsappError, error.message);
       await message.update({
         status: 'failed',
         statusUpdatedAt: new Date(),
         errorCode: whatsappError?.code == null ? null : String(whatsappError.code),
         errorSubcode: whatsappError?.error_subcode == null ? null : String(whatsappError.error_subcode),
-        errorMessage: whatsappError?.error_user_msg || whatsappError?.message || error.message,
-        rawPayload: { whatsappError: metaError }
+        errorMessage: safeMessage,
+        rawPayload: { template: { name: template.name, language: template.language, category: template.category, components }, selectedWhatsappAccountId: conversation.whatsappAccountId, failedAt: new Date().toISOString(), nonRetryable: String(whatsappError?.code || '') === '131048', whatsappError: { code: whatsappError?.code || null, error_subcode: whatsappError?.error_subcode || null, message: safeMessage } }
       }).catch(() => {});
+      error.message = safeMessage;
+      error.code = String(whatsappError?.code || error.code || 'TEMPLATE_SEND_FAILED');
+      error.status = error.status || 422;
       error.messageRecord = await this.getMessageWithReplyPreview(message.id);
       throw error;
     }
+  }
+
+  async getTemplateDiagnostics(conversationId, userId, templateName, languageCode) {
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
+    const conversation = await this.canonicalConversation(conversationId, []);
+    if (!conversation?.whatsappAccountId) throw Object.assign(new Error('Canonical conversation does not have a WhatsApp account.'), { status: 422, code: 'WHATSAPP_ACCOUNT_REQUIRED' });
+    const template = await whatsappTemplateService.approvedTemplateByName(templateName, languageCode, conversation.whatsappAccountId);
+    const account = await require('../models').WhatsAppAccount.findByPk(conversation.whatsappAccountId, { attributes: ['id', 'name', 'phoneNumberId', 'wabaId'] });
+    const compliance = await require('./whatsappCompliance.service').canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId);
+    const lastFailure = await Message.findOne({ where: { conversationId: conversation.id, type: 'template', status: 'failed', ...(templateName ? { templateName } : {}) }, order: [['status_updated_at', 'DESC']], attributes: ['errorCode', 'errorSubcode', 'errorMessage', 'statusUpdatedAt'] });
+    return { account, template: template ? { id: template.id, name: template.name, category: template.category, language: template.language, status: template.status, lastSync: template.lastSyncedAt } : null, lastSendError: lastFailure, windowOpen: compliance.canSend, messageRequirement: compliance.canSend ? 'normal_text_or_template' : 'template_required' };
   }
 
   async getMessageStatus(id, userId) {
@@ -488,3 +523,5 @@ class ChatService {
 }
 
 module.exports = new ChatService();
+module.exports.templateSendError = templateSendError;
+module.exports.validateTemplateComponents = validateTemplateComponents;

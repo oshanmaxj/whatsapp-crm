@@ -1,9 +1,9 @@
-const inboxService = require('../services/inbox.service');
+const labelService = require('../services/label.service');
 
 class LabelController {
   async list(req, res, next) {
     try {
-      const data = await inboxService.listLabels();
+      const data = await labelService.list(req.query);
       return res.status(200).json({ success: true, data });
     } catch (err) {
       next(err);
@@ -12,7 +12,7 @@ class LabelController {
 
   async create(req, res, next) {
     try {
-      const data = await inboxService.createLabel(req.body);
+      const data = await labelService.create(req.body, req.user);
       return res.status(201).json({ success: true, data });
     } catch (err) {
       next(err);

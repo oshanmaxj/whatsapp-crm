@@ -52,7 +52,7 @@ class ConversationController {
 
   async setLabels(req, res, next) {
     try {
-      const data = await inboxService.setLabels(req.params.id, req.body.labels || [], req.user.id);
+      const data = await inboxService.setLabels(req.params.id, req.body.labels || [], req.user);
       return res.status(200).json({ success: true, data });
     } catch (err) {
       next(err);

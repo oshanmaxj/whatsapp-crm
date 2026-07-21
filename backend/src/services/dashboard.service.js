@@ -54,7 +54,8 @@ function toNumber(value) {
 }
 
 class DashboardService {
-  async getSummary() {
+  async getSummary(actor) {
+    if (!actor?.isSystemAdmin && !(actor?.permissions?.includes('dashboard.view_all') && actor?.permissions?.includes('dashboard.view_financial'))) return require('./dashboardAnalytics.service').scopedSummary(actor);
     const todayStart = startOfDay();
     const activityStart = startOfDay(addDays(todayStart, -(ACTIVITY_DAYS - 1)));
 

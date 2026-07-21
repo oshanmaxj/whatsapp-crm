@@ -17,8 +17,11 @@ import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
 import { agentName, contactName, formatDateTime, formatTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
 import InteractiveMessageDialog from './InteractiveMessageDialog';
+import { hasPermission } from '../../utils/access';
 
 function StatusTicks({ message }) {
   if (message.direction !== 'outbound') return null;
@@ -553,10 +556,12 @@ export function MessageComposer({
   onSend,
   onSendInteractive,
   onAttach,
+  onSendVoice,
   onSaveTemplate,
   quickReplies,
   whatsappTemplates,
   selectedTemplate,
+  templateDiagnostics,
   onSelectTemplate,
   windowOpen,
   selected,
@@ -567,6 +572,49 @@ export function MessageComposer({
   const [emojiAnchor, setEmojiAnchor] = useState(null);
   const [templateAnchor, setTemplateAnchor] = useState(null);
   const [interactiveOpen, setInteractiveOpen] = useState(false);
+  const [recorder, setRecorder] = useState(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceFile, setVoiceFile] = useState(null);
+  const [voiceUrl, setVoiceUrl] = useState('');
+  const [voiceError, setVoiceError] = useState('');
+  const [voiceProgress, setVoiceProgress] = useState(0);
+  const chunksRef = useRef([]);
+  const streamRef = useRef(null);
+  const cancelRecordingRef = useRef(false);
+  const canSendVoice = hasPermission('voice.send');
+  useEffect(() => {
+    if (!recorder || recorder.state !== 'recording') return undefined;
+    const timer = window.setInterval(() => setRecordingSeconds((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [recorder]);
+  useEffect(() => () => { if (voiceUrl) URL.revokeObjectURL(voiceUrl); }, [voiceUrl]);
+  const startRecording = async () => {
+    setVoiceError(''); setVoiceFile(null); setRecordingSeconds(0); setVoiceProgress(0);
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { setVoiceError('Voice recording is not supported by this browser.'); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream; cancelRecordingRef.current = false;
+      const candidates = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm;codecs=opus'];
+      const mimeType = candidates.find((type) => window.MediaRecorder.isTypeSupported?.(type));
+      const instance = new window.MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      chunksRef.current = [];
+      instance.ondataavailable = (event) => { if (event.data?.size) chunksRef.current.push(event.data); };
+      instance.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        if (cancelRecordingRef.current) { chunksRef.current = []; setRecorder(null); return; }
+        const type = instance.mimeType || chunksRef.current[0]?.type || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type });
+        const extension = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+        const file = new File([blob], `voice-${Date.now()}.${extension}`, { type });
+        if (voiceUrl) URL.revokeObjectURL(voiceUrl);
+        setVoiceFile(file); setVoiceUrl(URL.createObjectURL(blob)); setRecorder(null);
+      };
+      instance.start(250); setRecorder(instance);
+    } catch (error) { setVoiceError(error.name === 'NotAllowedError' ? 'Microphone permission was denied.' : 'Unable to start voice recording.'); }
+  };
+  const cancelVoice = () => { cancelRecordingRef.current = true; if (recorder?.state === 'recording') recorder.stop(); streamRef.current?.getTracks?.().forEach((track) => track.stop()); if (voiceUrl) URL.revokeObjectURL(voiceUrl); setRecorder(null); setVoiceFile(null); setVoiceUrl(''); setRecordingSeconds(0); setVoiceProgress(0); };
+  const sendVoice = async () => { if (!voiceFile) return; setVoiceError(''); try { await onSendVoice(voiceFile, setVoiceProgress); cancelVoice(); } catch (error) { setVoiceError(error.response?.data?.message || 'Unable to send voice message.'); } };
   const slashQuery = value.startsWith('/') ? value.slice(1).trim().toLowerCase() : null;
   const matchingQuickReplies = slashQuery === null
     ? []
@@ -607,7 +655,7 @@ export function MessageComposer({
         {safeArray(quickReplies).slice(0, 7).map((template) => (
           <Chip key={template.id} size="small" label={template.name} onClick={() => onChange(template.body)} sx={{ flexShrink: 0 }} />
         ))}
-        {selectedTemplate && (
+      {selectedTemplate && (
           <Chip
             size="small"
             color="success"
@@ -622,6 +670,7 @@ export function MessageComposer({
           Template required to message this customer.
         </Typography>
       )}
+      {selectedTemplate && templateDiagnostics && <Paper variant="outlined" sx={{ p: 1, mb: .75, bgcolor: 'background.default' }}><Typography variant="caption" component="div"><strong>Template diagnostics:</strong> Account {templateDiagnostics.account?.name || templateDiagnostics.account?.id || 'Unavailable'} · {templateDiagnostics.template?.category || '-'} · {templateDiagnostics.template?.language || '-'} · {templateDiagnostics.template?.status || 'Unavailable'} · Last sync {templateDiagnostics.template?.lastSync ? new Date(templateDiagnostics.template.lastSync).toLocaleString() : 'Never'} · 24-hour window {templateDiagnostics.windowOpen ? 'open' : 'closed'} · {templateDiagnostics.messageRequirement?.replaceAll('_', ' ')}</Typography>{templateDiagnostics.lastSendError && <Typography variant="caption" color="error" component="div">Last error: {templateDiagnostics.lastSendError.errorCode || ''} {templateDiagnostics.lastSendError.errorMessage}</Typography>}</Paper>}
       {slashQuery !== null && selected && (
         <Paper variant="outlined" sx={{ mb: 0.75, maxHeight: 230, overflowY: 'auto', borderRadius: 2 }}>
           {matchingQuickReplies.map((reply) => (
@@ -640,8 +689,9 @@ export function MessageComposer({
           )}
         </Paper>
       )}
-      <Stack direction="row" alignItems="flex-end" gap={0.4}>
-        <Tooltip title="Attach media"><span><IconButton disabled={!selected} onClick={onAttach}><AttachFileIcon /></IconButton></span></Tooltip>
+      {(recorder || voiceFile || voiceError) && <Paper variant="outlined" sx={{ p: 1, mb: .75 }}><Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">{recorder && <><Typography fontWeight={800}>Recording {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}</Typography><IconButton aria-label="Stop recording" color="error" onClick={() => recorder.stop()}><StopCircleOutlinedIcon /></IconButton></>}{voiceUrl && <Box component="audio" src={voiceUrl} controls sx={{ maxWidth: 280 }} />}{voiceFile && <><IconButton aria-label="Delete recording" onClick={cancelVoice}><DeleteOutlineIcon /></IconButton><Button variant="contained" onClick={sendVoice} disabled={voiceProgress > 0 && voiceProgress < 100}>Send voice</Button></>}{voiceProgress > 0 && <Typography variant="caption">Upload {voiceProgress}%</Typography>}{voiceError && <Typography color="error" variant="caption">{voiceError}</Typography>}<Button size="small" onClick={cancelVoice}>Cancel</Button></Stack></Paper>}
+      <Stack direction="row" alignItems="flex-end" gap={0.4} sx={{ minWidth: 0, flexWrap: { xs: 'wrap', sm: 'nowrap' }, '& .composer-control': { width: 44, height: 44, flex: '0 0 44px' } }}>
+        <Tooltip title="Attach media"><span><IconButton className="composer-control" aria-label="Attach media" disabled={!selected} onClick={onAttach}><AttachFileIcon /></IconButton></span></Tooltip>
         <Button size="small" variant="outlined" disabled={!selected || !windowOpen || sending} onClick={() => setInteractiveOpen(true)} sx={{ mb: 0.35, minWidth: 86, borderRadius: 2.5, textTransform: 'none' }}>Interactive</Button>
         <Button
           size="small"
@@ -670,7 +720,7 @@ export function MessageComposer({
             </MenuItem>
           ))}
         </Menu>
-        <Tooltip title="Emoji"><IconButton onClick={(event) => setEmojiAnchor(event.currentTarget)}><EmojiEmotionsOutlinedIcon /></IconButton></Tooltip>
+        <Tooltip title="Emoji"><IconButton className="composer-control" onClick={(event) => setEmojiAnchor(event.currentTarget)}><EmojiEmotionsOutlinedIcon /></IconButton></Tooltip>
         <Menu anchorEl={emojiAnchor} open={Boolean(emojiAnchor)} onClose={() => setEmojiAnchor(null)}>
           <Stack direction="row" sx={{ px: 1 }}>
             {emojis.map((emoji) => <MenuItem key={emoji} onClick={() => { onChange(`${value}${emoji}`); setEmojiAnchor(null); }} sx={{ minWidth: 38, px: 0.75 }}>{emoji}</MenuItem>)}
@@ -685,10 +735,10 @@ export function MessageComposer({
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={!selected ? 'Select a conversation first' : (!windowOpen && !selectedTemplate ? 'Select an approved template' : 'Type a message')}
-          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3, py: 0.5, bgcolor: 'action.hover' } }}
+          sx={{ minWidth: { xs: 'calc(100% - 8px)', sm: 120 }, flex: '1 1 180px', order: { xs: 10, sm: 'initial' }, '& .MuiOutlinedInput-root': { borderRadius: 3, py: 0.5, bgcolor: 'action.hover' } }}
         />
         <Tooltip title="Save as quick reply"><span><IconButton disabled={!value.trim()} onClick={onSaveTemplate}><StarBorderRoundedIcon /></IconButton></span></Tooltip>
-        <Tooltip title="Voice messages coming soon"><span><IconButton disabled><MicNoneOutlinedIcon /></IconButton></span></Tooltip>
+        <Tooltip title={canSendVoice ? 'Record voice message' : 'Voice permission required'}><span><IconButton className="composer-control" aria-label="Record voice message" disabled={!selected || !canSendVoice || Boolean(recorder)} onClick={startRecording}><MicNoneOutlinedIcon /></IconButton></span></Tooltip>
         <Tooltip title="Send">
           <span>
             <IconButton
@@ -714,6 +764,7 @@ export function ChatArea({
   quickReplies,
   whatsappTemplates,
   selectedTemplate,
+  templateDiagnostics,
   onSelectTemplate,
   windowOpen,
   composerValue,
@@ -721,6 +772,7 @@ export function ChatArea({
   onSend,
   onSendInteractive,
   onAttach,
+  onSendVoice,
   onDropFile,
   onSaveTemplate,
   onBack,
@@ -778,10 +830,12 @@ export function ChatArea({
         onSend={onSend}
         onSendInteractive={onSendInteractive}
         onAttach={onAttach}
+        onSendVoice={onSendVoice}
         onSaveTemplate={onSaveTemplate}
         quickReplies={quickReplies}
         whatsappTemplates={whatsappTemplates}
         selectedTemplate={selectedTemplate}
+        templateDiagnostics={templateDiagnostics}
         onSelectTemplate={onSelectTemplate}
         windowOpen={windowOpen}
         selected={Boolean(conversation)}

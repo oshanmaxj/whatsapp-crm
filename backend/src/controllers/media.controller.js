@@ -7,6 +7,9 @@ const logger = require('../config/logger');
 class MediaController {
   async upload(req, res, next) {
     try {
+      if (['audio', 'voice'].includes(String(req.body?.mediaType || '').toLowerCase()) && !req.user?.isSystemAdmin && !req.user?.permissions?.includes('voice.send')) {
+        throw Object.assign(new Error('Voice message permission is required.'), { status: 403, code: 'VOICE_SEND_FORBIDDEN' });
+      }
       logger.info('media_file_upload_received', {
         conversationId: req.body?.conversationId || null,
         uploadedBy: req.user?.id || null,
@@ -23,7 +26,7 @@ class MediaController {
       return res.status(201).json({
         success: true,
         data: {
-          ...(media.toJSON ? media.toJSON() : media),
+          ...(() => { const value = media.toJSON ? media.toJSON() : { ...media }; delete value.storagePath; return value; })(),
           message
         }
       });
@@ -49,7 +52,7 @@ class MediaController {
   async list(req, res, next) {
     try {
       const data = await inboxService.listMedia(req.query.conversationId, req.user.id);
-      return res.status(200).json({ success: true, data });
+      return res.status(200).json({ success: true, data: data.map((row) => { const value = row.toJSON ? row.toJSON() : { ...row }; delete value.storagePath; return value; }) });
     } catch (err) {
       next(err);
     }

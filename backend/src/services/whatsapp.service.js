@@ -889,6 +889,7 @@ class WhatsappService {
       threadId,
       payload: value,
       whatsappAccountId,
+      sourceMessageId: message.id || null,
       persistInbound: async ({ contact, conversation, transaction }) => {
         return inboundWhatsappMessageService.persist({
           contact,

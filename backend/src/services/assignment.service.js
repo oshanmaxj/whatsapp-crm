@@ -59,7 +59,8 @@ class AssignmentService {
       actor: options.actor || null,
       actorUserId: assignedById,
       source: options.source || (options.actor ? 'leads_page' : 'automation'),
-      reason: options.note || (options.assignedTo ? 'Manual lead assignment' : 'Automated round-robin assignment')
+      reason: options.note || (options.assignedTo ? 'Manual lead assignment' : 'Automated round-robin assignment'),
+      transaction: options.transaction || null
     });
 
     await assignee.reload();

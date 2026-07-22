@@ -13,6 +13,7 @@ import {
   setDefaultWhatsAppAccount, testWhatsAppAccount, updateWhatsAppAccount,
   checkWhatsAppWebhook, subscribeWhatsAppWebhook, overrideWhatsAppWebhook
 } from '../services/whatsappAccount.service';
+import WhatsAppLeadRoutingPanel from '../components/WhatsAppLeadRoutingPanel';
 
 const emptyForm = {
   name: '', phoneNumber: '', phoneNumberId: '', businessAccountId: '', accessToken: '',
@@ -102,7 +103,7 @@ export default function WhatsAppAccountsPage() {
           </TableBody>
         </Table>
       </TableContainer>
-      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth={editing ? 'md' : 'sm'}>
         <DialogTitle>{editing ? 'Edit WhatsApp number' : 'Add WhatsApp number'}</DialogTitle>
         <DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
           <TextField label="Display name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
@@ -113,6 +114,7 @@ export default function WhatsAppAccountsPage() {
           <TextField label="Webhook verify token" value={form.webhookVerifyToken || ''} onChange={(event) => setForm({ ...form, webhookVerifyToken: event.target.value })} />
           <TextField label="App ID (optional)" value={form.appId || ''} onChange={(event) => setForm({ ...form, appId: event.target.value })} />
           <TextField label="App secret (optional)" type="password" value={form.appSecret} onChange={(event) => setForm({ ...form, appSecret: event.target.value })} />
+          {editing && <WhatsAppLeadRoutingPanel accountId={editing.id} />}
         </Stack></DialogContent>
         <DialogActions><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="contained" disabled={busy || !form.name || !form.phoneNumberId || (!editing && !form.accessToken)} onClick={save}>Save</Button></DialogActions>
       </Dialog>

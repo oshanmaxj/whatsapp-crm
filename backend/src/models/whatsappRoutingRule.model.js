@@ -1,0 +1,22 @@
+module.exports = (sequelize, DataTypes) => sequelize.define('WhatsAppRoutingRule', {
+  id: { type: DataTypes.BIGINT, autoIncrement: true, primaryKey: true },
+  whatsappAccountId: { type: DataTypes.BIGINT, allowNull: false },
+  name: { type: DataTypes.STRING(150), allowNull: false },
+  isEnabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+  priority: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  assignmentStrategy: { type: DataTypes.ENUM('round_robin', 'least_open_chats', 'least_assigned_leads', 'weighted', 'specific_agent', 'manual'), allowNull: false, defaultValue: 'least_open_chats' },
+  departmentId: { type: DataTypes.INTEGER, allowNull: true },
+  fallbackDepartmentId: { type: DataTypes.INTEGER, allowNull: true },
+  fallbackAgentId: { type: DataTypes.BIGINT, allowNull: true },
+  managerUserId: { type: DataTypes.BIGINT, allowNull: true },
+  respectWorkingHours: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  stickyAssignment: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+  reassignIfUnavailable: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  reassignAfterMinutes: { type: DataTypes.INTEGER, allowNull: true },
+  maxOpenChatsPerAgent: { type: DataTypes.INTEGER, allowNull: true },
+  allowGlobalFallback: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  notifyManagerWhenUnassigned: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+  lastAssignedAgentId: { type: DataTypes.BIGINT, allowNull: true },
+  createdBy: { type: DataTypes.BIGINT, allowNull: true },
+  deletedAt: { type: DataTypes.DATE, allowNull: true }
+}, { tableName: 'whatsapp_routing_rules', timestamps: true, paranoid: true, underscored: true });

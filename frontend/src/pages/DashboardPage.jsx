@@ -29,6 +29,7 @@ import PaymentsIcon from '@mui/icons-material/Payments';
 import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined';
 import CakeOutlinedIcon from '@mui/icons-material/CakeOutlined';
 import { getAgentLeaderboard, getDashboardSummary } from '../services/dashboard.service';
+import { getWhatsAppAccounts, getWhatsAppRoutingAnalytics } from '../services/whatsappAccount.service';
 import { hasPermission } from '../utils/access';
 
 const defaultSummary = {
@@ -121,6 +122,7 @@ function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [leaderboard, setLeaderboard] = useState([]);
+  const [routingAnalytics, setRoutingAnalytics] = useState([]);
 
   const loadSummary = async () => {
     try {
@@ -131,6 +133,12 @@ function DashboardPage() {
       if (hasPermission('dashboard.view_agent_ranking')) {
         const ranking = await getAgentLeaderboard({ range: 'month', limit: 20 });
         setLeaderboard(ranking.data.data?.rows || []);
+      }
+      if (hasPermission('whatsapp_routing.view')) {
+        const accountsResponse = await getWhatsAppAccounts();
+        const accounts = accountsResponse.data.data || [];
+        const analytics = await Promise.allSettled(accounts.map(async (account) => ({ account, data: (await getWhatsAppRoutingAnalytics(account.id)).data.data })));
+        setRoutingAnalytics(analytics.filter((result) => result.status === 'fulfilled').map((result) => result.value));
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to load dashboard summary.');
@@ -209,6 +217,11 @@ function DashboardPage() {
           </Grid>
         ))}
       </Grid>
+
+      {routingAnalytics.length > 0 && <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }} elevation={0}>
+        <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>WhatsApp Number Routing</Typography>
+        <TableContainer><Table size="small"><TableHead><TableRow><TableCell>Number</TableCell><TableCell>Leads</TableCell><TableCell>Assigned</TableCell><TableCell>Unassigned</TableCell><TableCell>Avg. first response</TableCell><TableCell>Converted</TableCell><TableCell>Conversion</TableCell><TableCell>Pool workload</TableCell></TableRow></TableHead><TableBody>{routingAnalytics.map(({ account, data }) => <TableRow key={account.id}><TableCell>{account.name}<Typography variant="caption" display="block" color="text.secondary">{account.phoneNumber || 'Configured number'}</Typography></TableCell><TableCell>{data.leadsReceived}</TableCell><TableCell>{data.assignedLeads}</TableCell><TableCell>{data.unassignedLeads}</TableCell><TableCell>{data.averageFirstResponseSeconds == null ? '—' : `${data.averageFirstResponseSeconds}s`}</TableCell><TableCell>{data.convertedLeads}</TableCell><TableCell>{data.conversionRate}%</TableCell><TableCell>{(data.poolWorkload || []).map((agent) => `${agent.name || agent.agentId}: ${agent.openChats} open`).join(', ') || 'No pool'}</TableCell></TableRow>)}</TableBody></Table></TableContainer>
+      </Paper>}
 
       {leaderboard.length > 0 && <Paper sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }} elevation={0}><Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>Top Agents — This Month</Typography><TableContainer><Table size="small"><TableHead><TableRow><TableCell>Rank</TableCell><TableCell>Agent</TableCell><TableCell>Assigned</TableCell><TableCell>Converted</TableCell><TableCell>Conversion</TableCell><TableCell>Unique chats</TableCell><TableCell>Open chats</TableCell><TableCell>Revenue</TableCell><TableCell>Score</TableCell></TableRow></TableHead><TableBody>{leaderboard.map((row) => <TableRow key={row.agent.id}><TableCell>{row.rank}</TableCell><TableCell>{row.agent.name}</TableCell><TableCell>{row.assignedLeads}</TableCell><TableCell>{row.convertedLeads}</TableCell><TableCell>{row.conversionRate.toFixed(1)}%</TableCell><TableCell>{row.uniqueConversations}</TableCell><TableCell>{row.openChats}</TableCell><TableCell>Rs.{row.revenueAttributed.toFixed(2)}</TableCell><TableCell>{row.score.toFixed(2)}</TableCell></TableRow>)}</TableBody></Table></TableContainer></Paper>}
 

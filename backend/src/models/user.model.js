@@ -46,6 +46,9 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: true
     },
+    isAvailable: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    leaveUntil: { type: DataTypes.DATE, allowNull: true },
+    workingHours: { type: DataTypes.JSON, allowNull: true },
     lastLogin: {
       type: DataTypes.DATE,
       allowNull: true

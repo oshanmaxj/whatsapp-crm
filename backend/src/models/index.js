@@ -75,6 +75,9 @@ const PaymentSlip = require('./paymentSlip.model');
 const PaymentSlipDetectionJob = require('./paymentSlipDetectionJob.model');
 const WhatsAppAccount = require('./whatsappAccount.model');
 const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
+const WhatsAppRoutingRule = require('./whatsappRoutingRule.model');
+const WhatsAppRoutingRuleAgent = require('./whatsappRoutingRuleAgent.model');
+const WhatsAppRoutingUnassigned = require('./whatsappRoutingUnassigned.model');
 const AccountingCategory = require('./accountingCategory.model');
 const AccountingTransaction = require('./accountingTransaction.model');
 const NotificationMessageTemplate = require('./notificationMessageTemplate.model');
@@ -171,6 +174,9 @@ const models = {
   PaymentSlipDetectionJob: PaymentSlipDetectionJob(sequelize, Sequelize.DataTypes),
   WhatsAppAccount: WhatsAppAccount(sequelize, Sequelize.DataTypes),
   RoleWhatsAppAccount: RoleWhatsAppAccount(sequelize, Sequelize.DataTypes),
+  WhatsAppRoutingRule: WhatsAppRoutingRule(sequelize, Sequelize.DataTypes),
+  WhatsAppRoutingRuleAgent: WhatsAppRoutingRuleAgent(sequelize, Sequelize.DataTypes),
+  WhatsAppRoutingUnassigned: WhatsAppRoutingUnassigned(sequelize, Sequelize.DataTypes),
   AccountingCategory: AccountingCategory(sequelize, Sequelize.DataTypes),
   AccountingTransaction: AccountingTransaction(sequelize, Sequelize.DataTypes),
   NotificationMessageTemplate: NotificationMessageTemplate(sequelize, Sequelize.DataTypes),
@@ -217,6 +223,17 @@ models.WhatsAppAccount.belongsToMany(models.Role, {
   foreignKey: 'whatsappAccountId',
   otherKey: 'roleId'
 });
+models.WhatsAppAccount.hasMany(models.WhatsAppRoutingRule, { foreignKey: 'whatsappAccountId', as: 'routingRules' });
+models.WhatsAppRoutingRule.belongsTo(models.WhatsAppAccount, { foreignKey: 'whatsappAccountId', as: 'whatsappAccount' });
+models.WhatsAppRoutingRule.hasMany(models.WhatsAppRoutingRuleAgent, { foreignKey: 'routingRuleId', as: 'agents' });
+models.WhatsAppRoutingRuleAgent.belongsTo(models.WhatsAppRoutingRule, { foreignKey: 'routingRuleId', as: 'routingRule' });
+models.WhatsAppRoutingRuleAgent.belongsTo(models.User, { foreignKey: 'agentId', as: 'agent' });
+models.User.hasMany(models.WhatsAppRoutingRuleAgent, { foreignKey: 'agentId', as: 'whatsappRoutingMemberships' });
+models.WhatsAppRoutingRule.belongsTo(models.Role, { foreignKey: 'departmentId', as: 'department' });
+models.WhatsAppRoutingRule.belongsTo(models.Role, { foreignKey: 'fallbackDepartmentId', as: 'fallbackDepartment' });
+models.WhatsAppRoutingRule.belongsTo(models.User, { foreignKey: 'fallbackAgentId', as: 'fallbackAgent' });
+models.WhatsAppRoutingRule.belongsTo(models.User, { foreignKey: 'managerUserId', as: 'manager' });
+models.WhatsAppRoutingUnassigned.belongsTo(models.WhatsAppRoutingRule, { foreignKey: 'routingRuleId', as: 'routingRule' });
 
 models.Role.belongsToMany(models.Permission, {
   through: models.RolePermission,

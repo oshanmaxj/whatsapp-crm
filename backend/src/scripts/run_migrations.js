@@ -43,6 +43,7 @@ const canonicalPaymentConversationMigration = require('../../migrations/039_cano
 const advancedFlowActionsMigration = require('../../migrations/040_advanced_flow_actions');
 const educationSearchIndexesMigration = require('../../migrations/041_education_search_indexes');
 const crmLabelsVoiceDashboardMigration = require('../../migrations/042_crm_labels_voice_dashboard');
+const whatsappNumberRoutingMigration = require('../../migrations/043_whatsapp_number_routing');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -200,6 +201,8 @@ async function run() {
     console.log('Applied: Education search and LMS ordering indexes');
     await crmLabelsVoiceDashboardMigration.up(queryInterface, Sequelize);
     console.log('Applied: CRM labels, voice, and role dashboard permissions/indexes');
+    await whatsappNumberRoutingMigration.up(queryInterface, Sequelize);
+    console.log('Applied: WhatsApp number routing and agent pools');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

@@ -19,6 +19,7 @@
     "backfill:inbound-whatsapp-conversations": "node src/scripts/backfill_inbound_whatsapp_conversations.js",
     "backfill:payment-receipts": "node src/scripts/backfill_payment_receipts.js",
     "audit:flow-actions": "node src/scripts/audit_flow_actions.js",
+    "audit:whatsapp-routing": "node src/scripts/audit_whatsapp_routing.js",
     "migrate:lms-curriculum": "node src/scripts/migrate_lms_curriculum.js",
     "backfill:lms-scheduled-lessons": "node src/scripts/backfill_scheduled_lessons_to_lms.js",
     "test:lead-status": "node --test"

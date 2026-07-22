@@ -10,3 +10,13 @@ export const testWhatsAppAccount = (id) => api.post(`/whatsapp-accounts/${id}/te
 export const checkWhatsAppWebhook = (id) => api.get(`/whatsapp-accounts/${id}/webhook-subscription`);
 export const subscribeWhatsAppWebhook = (id) => api.post(`/whatsapp-accounts/${id}/webhook-subscription`);
 export const overrideWhatsAppWebhook = (id) => api.post(`/whatsapp-accounts/${id}/webhook-callback-override`);
+export const getWhatsAppRouting = (id) => api.get(`/whatsapp-accounts/${id}/routing`);
+export const createWhatsAppRouting = (id, payload) => api.post(`/whatsapp-accounts/${id}/routing`, payload);
+export const updateWhatsAppRouting = (id, ruleId, payload) => api.patch(`/whatsapp-accounts/${id}/routing/${ruleId}`, payload);
+export const deleteWhatsAppRouting = (id, ruleId) => api.delete(`/whatsapp-accounts/${id}/routing/${ruleId}`);
+export const getRoutingEligibleAgents = (id, search = '') => api.get(`/whatsapp-accounts/${id}/routing/eligible-agents`, { params: { search, limit: 100 } });
+export const addRoutingAgent = (id, ruleId, payload) => api.post(`/whatsapp-accounts/${id}/routing/${ruleId}/agents`, payload);
+export const updateRoutingAgent = (id, ruleId, agentId, payload) => api.patch(`/whatsapp-accounts/${id}/routing/${ruleId}/agents/${agentId}`, payload);
+export const deleteRoutingAgent = (id, ruleId, agentId) => api.delete(`/whatsapp-accounts/${id}/routing/${ruleId}/agents/${agentId}`);
+export const testWhatsAppRouting = (id, payload = {}) => api.post(`/whatsapp-accounts/${id}/routing/test`, { simulate: true, ...payload });
+export const getWhatsAppRoutingAnalytics = (id) => api.get(`/whatsapp-accounts/${id}/routing/analytics`);

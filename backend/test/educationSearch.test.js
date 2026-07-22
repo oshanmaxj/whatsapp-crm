@@ -64,6 +64,25 @@ test('student curriculum returns every sorted topic, zero-lesson topics, and no 
   } finally { models.Course.findByPk = originals.course; models.LmsTopic.findAll = originals.topics; portal.activeEnrollments = originals.enrollments; }
 });
 
+test('course access returns more than three topics and all eligible lessons in stable order', async () => {
+  const originals = { course: models.Course.findByPk, topics: models.LmsTopic.findAll, enrollments: portal.activeEnrollments };
+  try {
+    portal.activeEnrollments = async () => [{ id: 7, courseId: 16, batchId: null, enrolledAt: new Date('2026-01-01') }];
+    models.Course.findByPk = async () => ({ lmsStatus: 'published', dripEnabled: true, toJSON: () => ({ id: 16, name: 'Course' }) });
+    const row=(id,sortOrder,lessons)=>({toJSON:()=>({id,title:`Topic ${id}`,sortOrder,lessons})});
+    const lesson=(id,sortOrder,extra={})=>({id,topicId:1,title:`Lesson ${id}`,status:'published',isPublished:true,sortOrder,progress:[],batchOverrides:[],...extra});
+    models.LmsTopic.findAll=async()=>[
+      row(4,4,[lesson(42,2),lesson(41,1)]),row(2,2,[lesson(20,0)]),row(1,1,[lesson(10,0)]),
+      row(3,3,[lesson(30,0),lesson(31,1)]),row(5,5,[lesson(50,0,{dripType:'specific_date',dripReleaseAt:new Date(Date.now()+86400000)})])
+    ];
+    const result=await portal.courseCurriculum({id:9},16,{enrollments:[{enrollmentId:7,allowed:true}]});
+    assert.deepEqual(result.topics.map(topic=>topic.id),[1,2,3,4,5]);
+    assert.deepEqual(result.topics[3].lessons.map(item=>item.id),[41,42]);
+    assert.equal(result.topics[4].lessons.length,0,'future scheduled lesson stays hidden');
+    assert.equal(result.topics.flatMap(topic=>topic.lessons).length,6);
+  } finally { models.Course.findByPk=originals.course; models.LmsTopic.findAll=originals.topics; portal.activeEnrollments=originals.enrollments; }
+});
+
 test('Education search index migration is additive and idempotent', async () => {
   const indexes = new Map();
   const queryInterface = {

@@ -44,6 +44,7 @@ import { ModuleLandingPage } from './components/ModuleNavigationView';
 import LmsCourseBuilderPage, { LmsCoursesPage } from './pages/LmsCourseBuilderPage';
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
 import CommissionPage from './pages/CommissionPage';
+import AiAgentsPage from './pages/AiAgentsPage';
 import PaymentVerificationPage from './pages/PaymentVerificationPage';
 import PaymentReceiptsPage from './pages/PaymentReceiptsPage';
 import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
@@ -152,6 +153,7 @@ function App() {
             <Route path="/chat" element={permit('inbox.view', <ChatPage />)} />
             <Route path="/inbox" element={<Navigate to="/chat" replace />} />
             <Route path="/auto-replies" element={permit('settings.view', <AutoReplyManagement />)} />
+            <Route path="/ai-agents" element={permit('settings.view', <AiAgentsPage />)} />
             <Route path="/settings" element={permit('settings.view', <ProductionSettingsPage />)} />
             <Route path="/settings/integrations/zoom" element={permit('settings.view', <CourseSchedulerPage settingsOnly />)} />
             <Route path="/settings/message-templates" element={permit('settings.view', <StudentMessageTemplatesPage />)} />

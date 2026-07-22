@@ -1059,9 +1059,12 @@ class WhatsappService {
           })
         : assignmentResult;
 
+      const aiAgentService = require('./aiAgent.service');
+      const assignedAiAgent = await aiAgentService.resolve(whatsappAccountId).catch(() => null);
+      const priority = assignedAiAgent?.automationPriority || null;
       const isTextMessage = messageType === 'text' && !!text;
       const activeReply = isTextMessage
-        ? await autoReplyService.findReplyForText(text, whatsappAccountId).catch((error) => {
+        && !assignedAiAgent ? await autoReplyService.findReplyForText(text, whatsappAccountId).catch((error) => {
             logger.warn('whatsapp_auto_reply_lookup_failed', error);
             return null;
           })
@@ -1074,12 +1077,12 @@ class WhatsappService {
         });
       }
 
-      const flowService = require('./flow.service');
-      await flowService.handleInboundMessage({
+      const input = {
         text,
         contact: enriched.contact || null,
         lead: enriched.lead || null,
         conversation: enriched.conversation || null,
+        messageRecord,
         messageType: parsed.messageType,
         interactiveType: parsed.interactiveType,
         buttonPayload: parsed.buttonPayload,
@@ -1087,10 +1090,19 @@ class WhatsappService {
         replyToWhatsappMessageId,
         rawPayload: message,
         whatsappAccountId
-      }).catch((error) => {
-        logger.warn('flow_builder_execution_failed', error);
-        return null;
-      });
+      };
+      const runAi=()=>aiAgentService.handleInbound(input).catch(async(error)=>{logger.warn('ai_agent_execution_failed',{conversationId,messageId:messageRecord.id,message:error.message});await aiAgentService.audit({agentId:assignedAiAgent?.id,conversationId,inboundMessageId:messageRecord.id,action:'failed_reply',stateBefore:null,stateAfter:null,reason:error.message,status:'failed'}).catch(()=>null);return null;});
+      const runFlow=()=>require('./flow.service').handleInboundMessage(input).catch((error)=>{logger.warn('flow_builder_execution_failed',error);return null;});
+      if(priority==='human_only')return;
+      if(priority==='ai_only')await runAi();
+      else if(priority==='flow_only')await runFlow();
+      else if(priority==='ai_first_then_flow'){
+        const aiResult=await runAi();
+        if(!aiResult||!['send_text','payment_review_acknowledgement','human_handover'].includes(aiResult.action))await runFlow();
+      }else{
+        const flowResult=await runFlow();
+        await aiAgentService.handleInbound({...input,flowHandled:Boolean(Array.isArray(flowResult)?flowResult.length:flowResult)}).catch(async(error)=>{logger.warn('ai_agent_execution_failed',{conversationId,messageId:messageRecord.id,message:error.message});await aiAgentService.audit({agentId:assignedAiAgent?.id,conversationId,inboundMessageId:messageRecord.id,action:'failed_reply',stateBefore:null,stateAfter:null,reason:error.message,status:'failed'}).catch(()=>null);return null;});
+      }
     })().catch((error) => {
       logger.error('whatsapp_inbound_post_commit_failed', { contactId: assignmentResult.contact.id, conversationId, messageId: messageRecord.id, message: error.message });
     }));

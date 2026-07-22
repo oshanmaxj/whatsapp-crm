@@ -6,6 +6,7 @@ router.get('/dashboard',controller.dashboard);
 router.get('/transactions',controller.list);
 router.get('/ledger',controller.list);
 router.get('/rules',controller.rules);
+router.get('/options/:type',controller.options);
 router.post('/rules/test',controller.preview);
 router.post('/preview',controller.preview);
 router.post('/rules',controller.createRule);

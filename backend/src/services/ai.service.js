@@ -23,7 +23,7 @@ class AIService {
   async createResponse(prompt, options = {}) {
     const input = Array.isArray(prompt) ? prompt : [prompt];
     const response = await this.getClient().responses.create({
-      model: openaiConfig.model,
+      model: options.model || openaiConfig.model,
       input,
       temperature: options.temperature ?? openaiConfig.temperature,
       max_output_tokens: options.maxTokens ?? openaiConfig.maxTokens,

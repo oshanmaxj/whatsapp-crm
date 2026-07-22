@@ -105,6 +105,10 @@ const CommissionApproval = require('./commissionApproval.model');
 const CommissionPayout = require('./commissionPayout.model');
 const CommissionPayoutLedgerItem = require('./commissionPayoutLedgerItem.model');
 const CommissionAccountingLink = require('./commissionAccountingLink.model');
+const AiAgent = require('./aiAgent.model');
+const AiConversationState = require('./aiConversationState.model');
+const AiKnowledgeSource = require('./aiKnowledgeSource.model');
+const AiDecisionLog = require('./aiDecisionLog.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -207,7 +211,9 @@ const models = {
   LecturerAgreement: LecturerAgreement(sequelize, Sequelize.DataTypes), CommissionLedger: CommissionLedger(sequelize, Sequelize.DataTypes),
   CommissionCalculationSnapshot: CommissionCalculationSnapshot(sequelize, Sequelize.DataTypes), CommissionApproval: CommissionApproval(sequelize, Sequelize.DataTypes),
   CommissionPayout: CommissionPayout(sequelize, Sequelize.DataTypes), CommissionPayoutLedgerItem: CommissionPayoutLedgerItem(sequelize, Sequelize.DataTypes),
-  CommissionAccountingLink: CommissionAccountingLink(sequelize, Sequelize.DataTypes)
+  CommissionAccountingLink: CommissionAccountingLink(sequelize, Sequelize.DataTypes),
+  AiAgent: AiAgent(sequelize, Sequelize.DataTypes), AiConversationState: AiConversationState(sequelize, Sequelize.DataTypes),
+  AiKnowledgeSource: AiKnowledgeSource(sequelize, Sequelize.DataTypes), AiDecisionLog: AiDecisionLog(sequelize, Sequelize.DataTypes)
 };
 
 models.User.belongsToMany(models.Role, {
@@ -429,6 +435,14 @@ models.WhatsAppAccount.hasMany(models.Message, { foreignKey: messageWhatsappAcco
 });
 models.Conversation.belongsTo(models.WhatsAppAccount, { foreignKey: conversationWhatsappAccountForeignKey, as: 'whatsappAccount' });
 models.Message.belongsTo(models.WhatsAppAccount, { foreignKey: messageWhatsappAccountForeignKey, as: 'whatsappAccount' });
+const aiAgentForeignKey={name:'aiAgentId',field:'ai_agent_id'},aiConversationForeignKey={name:'conversationId',field:'conversation_id'};
+models.AiAgent.hasMany(models.AiConversationState,{foreignKey:aiAgentForeignKey,as:'conversationStates'});
+models.AiConversationState.belongsTo(models.AiAgent,{foreignKey:aiAgentForeignKey,as:'agent'});
+models.Conversation.hasOne(models.AiConversationState,{foreignKey:aiConversationForeignKey,as:'aiState'});
+models.AiConversationState.belongsTo(models.Conversation,{foreignKey:aiConversationForeignKey,as:'conversation'});
+models.AiAgent.hasMany(models.AiKnowledgeSource,{foreignKey:aiAgentForeignKey,as:'knowledgeSources'});
+models.AiKnowledgeSource.belongsTo(models.AiAgent,{foreignKey:aiAgentForeignKey,as:'agent'});
+models.AiAgent.hasMany(models.AiDecisionLog,{foreignKey:aiAgentForeignKey,as:'decisions'});
 
 models.Lead.hasMany(models.Followup, { foreignKey: 'lead_id', as: 'followups' });
 models.Contact.hasMany(models.Followup, { foreignKey: 'contact_id', as: 'followups' });

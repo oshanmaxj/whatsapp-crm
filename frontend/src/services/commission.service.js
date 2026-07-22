@@ -3,6 +3,7 @@ export const commissionDashboard=(params={})=>api.get('/commissions/dashboard',{
 export const listCommissions=(params={})=>api.get('/commissions/ledger',{params});
 export const listCommissionRules=(params={})=>api.get('/commissions/rules',{params});
 export const saveCommissionRule=(id,payload)=>id?api.patch(`/commissions/rules/${id}`,payload):api.post('/commissions/rules',payload);
+export const searchCommissionOptions=(type,params={})=>api.get(`/commissions/options/${type}`,{params});
 export const previewCommissionRule=payload=>api.post('/commissions/rules/test',payload);
 export const listLecturerAgreements=(params={})=>api.get('/commissions/lecturer-agreements',{params});
 export const saveLecturerAgreement=(id,payload)=>id?api.patch(`/commissions/lecturer-agreements/${id}`,payload):api.post('/commissions/lecturer-agreements',payload);

@@ -178,6 +178,7 @@ class ChatService {
         rawPayload: { whatsapp: whatsappResponse }
       });
       await conversation.update({ lastMessageAt: new Date() });
+      await require('./aiAgent.service').pauseForHumanReply(conversation.id,senderId).catch(()=>null);
       return this.getMessageWithReplyPreview(message.id);
     } catch (error) {
       const metaError = error.metaError || error.response?.data || {};
@@ -266,6 +267,7 @@ class ChatService {
       if (!response?.id) throw Object.assign(new Error('Meta did not return a WhatsApp message ID.'), { status: 502, code: 'WHATSAPP_MESSAGE_ID_MISSING' });
       await message.update({ whatsappMessageId: response.id, status: 'sent', statusUpdatedAt: new Date(), rawPayload: { ...(message.rawPayload || values.rawPayload), whatsappMessageId: response.id } });
       await conversation.update({ lastMessage: messageBody, lastMessageAt: new Date() });
+      await require('./aiAgent.service').pauseForHumanReply(conversation.id,senderId).catch(()=>null);
       return this.getMessageWithReplyPreview(message.id);
     } catch (error) {
       const meta = error.whatsappApiResponse?.error || error.response?.data?.error || error.metaError?.error || {};
@@ -357,6 +359,7 @@ class ChatService {
         }
       });
       await conversation.update({ lastMessageAt: new Date() });
+      await require('./aiAgent.service').pauseForHumanReply(conversation.id,senderId).catch(()=>null);
       return this.getMessageWithReplyPreview(message.id);
     } catch (error) {
       const metaError = error.metaError || error.response?.data || error.whatsappApiResponse || {};

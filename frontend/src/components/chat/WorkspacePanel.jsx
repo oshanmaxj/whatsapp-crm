@@ -18,6 +18,7 @@ import { agentName, contactName, formatDateTime, initials, resolveMediaUrl, safe
 import { getAccessPayload } from '../../utils/access';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import LabelMultiSelect from '../LabelMultiSelect';
+import{controlConversationAi,getConversationAiDecisions,getConversationAiState,listAiAgents}from'../../services/aiAgent.service';
 
 function DetailRow({ label, value }) {
   return (
@@ -294,6 +295,8 @@ export function ActionsTab({ onAction }) {
   );
 }
 
+function AiTab({conversation}){const[state,setState]=useState(null),[decisions,setDecisions]=useState([]),[agents,setAgents]=useState([]),[error,setError]=useState('');const load=async()=>{try{const[s,d,a]=await Promise.all([getConversationAiState(conversation.id),getConversationAiDecisions(conversation.id),listAiAgents()]);setState(s.data.data);setDecisions(d.data.data||[]);setAgents(a.data.data||[]);}catch(e){setError(e.response?.data?.message||'Unable to load AI state.');}};useEffect(()=>{load();},[conversation.id]);const act=async(action,payload={})=>{try{setError('');await controlConversationAi(conversation.id,action,payload);await load();}catch(e){setError(e.response?.data?.message||'Unable to update AI.');}};return <Stack spacing={2}>{error&&<Typography color="error" variant="body2">{error}</Typography>}<Stack direction="row" alignItems="center" spacing={1}><Chip color={state?.status==='active'?'success':'default'} label={state?.status==='active'?'AI Active':`AI ${state?.status||'Not assigned'}`}/><Typography variant="caption">State: {state?.state||'none'}</Typography></Stack><Stack direction="row" flexWrap="wrap" gap={1}><Button size="small" variant="outlined" onClick={()=>act('pause',{reason:'Paused from Inbox'})}>Pause AI</Button><Button size="small" variant="outlined" onClick={()=>act('resume')}>Resume AI</Button><Button size="small" color="warning" variant="outlined" onClick={()=>act('handover',{reason:'Inbox handover'})}>Hand over to Human</Button><Button size="small" color="error" variant="outlined" onClick={()=>act('restart')}>Restart Script</Button></Stack><TextField select size="small" label="Change AI Agent" value={state?.aiAgentId||''} onChange={e=>act('change_agent',{aiAgentId:e.target.value})}>{agents.map(agent=><MenuItem key={agent.id} value={agent.id}>{agent.name}</MenuItem>)}</TextField><Section title="Extracted Lead Data"><Typography component="pre" variant="caption" sx={{whiteSpace:'pre-wrap'}}>{JSON.stringify(state?.extractedData||{},null,2)}</Typography></Section><Section title="AI Summary"><Typography variant="body2">{state?.summary||'No summary yet.'}</Typography></Section><Section title="AI Decision History"><Stack spacing={1}>{decisions.map(row=><Paper variant="outlined" sx={{p:1}} key={row.id}><Typography variant="caption" fontWeight={900}>{row.action.replaceAll('_',' ')}</Typography><Typography variant="caption" display="block" color="text.secondary">{row.reason||`${row.stateBefore||''} → ${row.stateAfter||''}`}</Typography></Paper>)}{!decisions.length&&<Typography variant="caption">No AI decisions yet.</Typography>}</Stack></Section></Stack>}
+
 export function WorkspacePanel({
   conversation,
   agents,
@@ -343,6 +346,7 @@ export function WorkspacePanel({
         <Tab value="notes" label="Notes" />
         <Tab value="media" label="Media" />
         <Tab value="actions" label="Actions" />
+        <Tab value="ai" label="AI" />
       </Tabs>
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 2 }}>
         {!conversation && <Typography variant="body2" color="text.secondary">Select a conversation to open its workspace.</Typography>}
@@ -350,6 +354,7 @@ export function WorkspacePanel({
         {conversation && tab === 'notes' && <NotesTab notes={notes} noteText={noteText} onNoteTextChange={onNoteTextChange} onAddNote={onAddNote} />}
         {conversation && tab === 'media' && <MediaTab media={media} onDownload={onDownload} />}
         {conversation && tab === 'actions' && <ActionsTab onAction={handleAction} />}
+        {conversation && tab === 'ai' && <AiTab conversation={conversation} />}
       </Box>
     </Box>
   );

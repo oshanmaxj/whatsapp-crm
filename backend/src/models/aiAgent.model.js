@@ -1,0 +1,10 @@
+module.exports=(sequelize,D)=>sequelize.define('AiAgent',{
+  id:{type:D.BIGINT,autoIncrement:true,primaryKey:true},name:{type:D.STRING(180),allowNull:false},description:D.TEXT,
+  whatsappAccountIds:{type:D.JSONB,allowNull:false,defaultValue:[]},courseIds:{type:D.JSONB,allowNull:false,defaultValue:[]},departmentId:D.INTEGER,
+  primaryLanguage:{type:D.STRING(30),allowNull:false,defaultValue:'en'},supportedLanguages:{type:D.JSONB,allowNull:false,defaultValue:['en']},
+  systemInstructions:D.TEXT,salesScript:D.TEXT,supportScript:D.TEXT,qualificationQuestions:{type:D.JSONB,allowNull:false,defaultValue:[]},
+  prohibitedStatements:{type:D.JSONB,allowNull:false,defaultValue:[]},handoverRules:{type:D.JSONB,allowNull:false,defaultValue:{}},workingHours:{type:D.JSONB,allowNull:false,defaultValue:{}},
+  responseDelaySeconds:{type:D.INTEGER,allowNull:false,defaultValue:0},maxAiReplies:{type:D.INTEGER,allowNull:false,defaultValue:10},status:{type:D.STRING(20),allowNull:false,defaultValue:'paused'},
+  model:{type:D.STRING(80),allowNull:false,defaultValue:'gpt-4.1-mini'},temperature:{type:D.DECIMAL(3,2),allowNull:false,defaultValue:.3},allowedActions:{type:D.JSONB,allowNull:false,defaultValue:['send_text','request_human']},
+  automationPriority:{type:D.STRING(30),allowNull:false,defaultValue:'flow_first_then_ai'},humanPauseMinutes:{type:D.INTEGER,allowNull:false,defaultValue:60},createdBy:D.BIGINT,updatedBy:D.BIGINT
+},{tableName:'ai_agents',timestamps:true,underscored:true});

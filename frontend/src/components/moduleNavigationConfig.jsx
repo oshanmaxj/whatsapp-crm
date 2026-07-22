@@ -45,7 +45,7 @@ export const modules = [
   { id: 'commissions', label: 'Commissions', path: '/commissions', icon: <PaymentsIcon />, permission: 'commission.view_own', routes: ['/commissions'] },
   {
     id: 'whatsapp', label: 'WhatsApp', path: '/whatsapp', icon: <WhatsAppIcon />,
-    routes: ['/whatsapp', '/whatsapp-dashboard', '/connect-whatsapp', '/whatsapp-accounts', '/whatsapp-templates', '/campaigns', '/compliance', '/auto-replies', '/flow-builder'],
+    routes: ['/whatsapp', '/whatsapp-dashboard', '/connect-whatsapp', '/whatsapp-accounts', '/whatsapp-templates', '/campaigns', '/compliance', '/auto-replies', '/ai-agents', '/flow-builder'],
     items: [
       { label: 'Connect WhatsApp', path: '/connect-whatsapp', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
       { label: 'WhatsApp Numbers', path: '/whatsapp-accounts', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
@@ -53,6 +53,7 @@ export const modules = [
       { label: 'Broadcasting / Campaigns', path: '/campaigns', icon: <CampaignIcon />, permission: 'campaigns.view' },
       { label: 'Compliance', path: '/compliance', icon: <FactCheckIcon />, permission: 'connect-whatsapp.view' },
       { label: 'Auto Replies', path: '/auto-replies', icon: <SmartToyIcon />, permission: 'settings.view' },
+      { label: 'AI Agents', path: '/ai-agents', icon: <SmartToyIcon />, permission: 'settings.view' },
       { label: 'Flow Builder', path: '/flow-builder', icon: <AccountTreeOutlinedIcon />, permission: 'flow-builder.view' }
     ]
   },

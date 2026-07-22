@@ -13,6 +13,7 @@ module.exports={
  dashboard:wrap(async(req,res)=>ok(res,await reporting.dashboard(req.user,req.query))),
  list:wrap(async(req,res)=>ok(res,await ledger.list(req.user,req.query))),
  rules:wrap(async(req,res)=>ok(res,await rules.list(req.query))),
+ options:wrap(async(req,res)=>ok(res,await rules.options(req.params.type,req.query))),
  createRule:wrap(async(req,res)=>ok(res,await rules.save(null,req.body,req.user),201)),
  updateRule:wrap(async(req,res)=>ok(res,await rules.save(req.params.id,req.body,req.user))),
  preview:wrap(async(req,res)=>ok(res,await calculation.preview(req.body))),

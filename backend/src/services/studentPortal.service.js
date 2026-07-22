@@ -148,6 +148,8 @@ function applyBatchOverride(lesson, override) {
 }
 
 function lessonReleaseState(lesson, enrollment, previousCompleted, courseDripEnabled = true, now = new Date()) {
+  const scheduledAt = lesson.dripReleaseAt || lesson.releaseAt || null;
+  if (scheduledAt && new Date(scheduledAt) > now) return { locked: true, reason: 'scheduled_release', releaseAt: scheduledAt };
   if (!courseDripEnabled || lesson.dripType === 'immediate' || !lesson.dripType) return { locked: false, reason: null, releaseAt: null };
   if (lesson.dripType === 'manual') return { locked: true, reason: 'manual_release', releaseAt: null };
   if (lesson.dripType === 'days_after_previous_completion') {
@@ -466,12 +468,14 @@ class StudentPortalService {
     let completedCount = 0;
     const safeTopics = topics.map((topicRow) => {
       const topic = topicRow.toJSON();
-      const uniqueLessons = [...new Map((topic.lessons || []).map((lesson) => [String(lesson.id), lesson])).values()];
+      const uniqueLessons = [...new Map((topic.lessons || []).map((lesson) => [String(lesson.id), lesson])).values()]
+        .sort((a,b)=>Number(a.sortOrder||a.lessonOrder||0)-Number(b.sortOrder||b.lessonOrder||0)||Number(a.id)-Number(b.id));
       const lessons = uniqueLessons.map((raw) => {
         const lesson = applyBatchOverride(raw, raw.batchOverrides?.[0]);
         if (lesson.status === 'hidden' || lesson.status === 'archived') return null;
         const progress = lesson.progress?.[0] || null;
         const release = lessonReleaseState(lesson, enrollment, previousCompleted, course.dripEnabled);
+        if (release.reason === 'scheduled_release') return null;
         previousCompleted = Boolean(progress?.isCompleted);
         if (progress?.isCompleted && !release.locked) completedCount += 1;
         return {
@@ -484,7 +488,7 @@ class StudentPortalService {
         };
       }).filter(Boolean);
       return { id: topic.id, title: topic.title, summary: topic.summary, sortOrder: topic.sortOrder, lessons };
-    });
+    }).sort((a,b)=>Number(a.sortOrder||0)-Number(b.sortOrder||0)||Number(a.id)-Number(b.id));
     const totalLessons = safeTopics.reduce((sum, topic) => sum + topic.lessons.filter((lesson) => !lesson.locked).length, 0);
     const courseData = { ...course.toJSON(), access: true, topics: safeTopics };
     return {

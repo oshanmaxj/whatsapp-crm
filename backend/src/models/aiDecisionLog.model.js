@@ -1,0 +1,3 @@
+module.exports=(sequelize,D)=>sequelize.define('AiDecisionLog',{
+  id:{type:D.BIGINT,autoIncrement:true,primaryKey:true},aiAgentId:D.BIGINT,conversationId:{type:D.BIGINT,allowNull:false},inboundMessageId:{type:D.BIGINT,allowNull:true,unique:true},action:{type:D.STRING(50),allowNull:false},stateBefore:D.STRING(60),stateAfter:D.STRING(60),reason:D.TEXT,confidence:D.DECIMAL(5,4),details:{type:D.JSONB,allowNull:false,defaultValue:{}},durationMs:D.INTEGER,status:{type:D.STRING(20),allowNull:false,defaultValue:'completed'}
+},{tableName:'ai_decision_logs',timestamps:true,updatedAt:false,underscored:true});

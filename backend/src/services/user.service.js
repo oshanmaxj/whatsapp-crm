@@ -40,6 +40,7 @@ const OWNERSHIP_PERMISSIONS = [
   'payment.override_credit_owner', 'student.convert', 'student.override_conversion_owner'
 ];
 const COMMISSION_PERMISSIONS = ['commission.view_own','commission.view_team','commission.view_all','commission.manage_rules','commission.approve','commission.create_payout','commission.approve_payout','commission.mark_paid','commission.override','commission.export','commission.reverse'];
+const COMMISSION_FINANCE_PERMISSIONS = ['commission.view','commission.rule_manage','commission.lecturer_agreement_manage','commission.payout_create','commission.payout_approve','commission.payout_mark_paid','commission.adjust','commission.profitability_view','commission.accounting_reconcile'];
 const PIPELINE_PERMISSIONS=['lead.view_own','lead.view_team','lead.view_all','lead.update_own','lead.update_all','lead.update_status_own','lead.update_status_all','lead.assign','lead.reassign','followup.create','followup.complete','followup.view_own','followup.view_team','followup.view_all','pipeline.manage','lost_reason.manage'];
 const LMS_PERMISSIONS = [
   'lms.course.view', 'lms.course.create', 'lms.course.update', 'lms.course.archive',
@@ -206,7 +207,7 @@ class UserService {
         permissions.push(permission);
       }
     }
-    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...PAYMENT_SLIP_PERMISSIONS, ...RECEIPT_PERMISSIONS, ...FLOW_ACTION_PERMISSIONS, ...CRM_PERMISSION_CODES]) {
+    for (const code of [...OWNERSHIP_PERMISSIONS, ...COMMISSION_PERMISSIONS, ...COMMISSION_FINANCE_PERMISSIONS, ...PIPELINE_PERMISSIONS, ...LMS_PERMISSIONS, ...PAYMENT_SLIP_PERMISSIONS, ...RECEIPT_PERMISSIONS, ...FLOW_ACTION_PERMISSIONS, ...CRM_PERMISSION_CODES]) {
       let permission = await Permission.findOne({ where: { code }, paranoid: false });
       if (permission?.deletedAt) await permission.restore();
       if (!permission) [permission] = await Permission.findOrCreate({ where: { code }, defaults: { name: code, description: `Secure ownership permission: ${code}` } });

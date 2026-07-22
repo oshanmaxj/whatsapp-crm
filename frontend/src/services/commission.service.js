@@ -1,1 +1,17 @@
-import api from './api';export const commissionDashboard=(p={})=>api.get('/commissions/dashboard',{params:p});export const listCommissions=(p={})=>api.get('/commissions/transactions',{params:p});export const listCommissionRules=()=>api.get('/commissions/rules');export const saveCommissionRule=(id,p)=>id?api.patch(`/commissions/rules/${id}`,p):api.post('/commissions/rules',p);export const commissionAction=(id,a,p={})=>api.post(`/commissions/transactions/${id}/${a}`,p);export const listPayouts=()=>api.get('/commissions/payouts');export const createPayout=p=>api.post('/commissions/payouts',p);export const payoutAction=(id,a,p={})=>api.post(`/commissions/payouts/${id}/${a}`,p);
+import api from './api';
+export const commissionDashboard=(params={})=>api.get('/commissions/dashboard',{params});
+export const listCommissions=(params={})=>api.get('/commissions/ledger',{params});
+export const listCommissionRules=(params={})=>api.get('/commissions/rules',{params});
+export const saveCommissionRule=(id,payload)=>id?api.patch(`/commissions/rules/${id}`,payload):api.post('/commissions/rules',payload);
+export const previewCommissionRule=payload=>api.post('/commissions/rules/test',payload);
+export const listLecturerAgreements=(params={})=>api.get('/commissions/lecturer-agreements',{params});
+export const saveLecturerAgreement=(id,payload)=>id?api.patch(`/commissions/lecturer-agreements/${id}`,payload):api.post('/commissions/lecturer-agreements',payload);
+export const commissionAction=(id,action,payload={})=>api.post(`/commissions/transactions/${id}/${action}`,payload);
+export const bulkCommissionApproval=payload=>api.post('/commissions/transactions/bulk-approval',payload);
+export const listPayouts=(params={})=>api.get('/commissions/payouts',{params});
+export const createPayout=payload=>api.post('/commissions/payouts',payload);
+export const payoutAction=(id,action,payload={})=>api.post(`/commissions/payouts/${id}/${action}`,payload);
+export const commissionProfitability=(params={})=>api.get('/commissions/profitability',{params});
+export const commissionReport=(name,params={})=>api.get(`/commissions/reports/${name}`,{params});
+export const exportCommissionReport=(name,params={})=>api.get(`/commissions/reports/${name}/export`,{params,responseType:'blob'});
+export const commissionReconciliation=()=>api.get('/commissions/reconciliation');

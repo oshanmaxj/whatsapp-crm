@@ -98,6 +98,13 @@ const ScheduledLesson = require('./scheduledLesson.model');
 const ZoomRecordingImport = require('./zoomRecordingImport.model');
 const LessonAutoPublishLog = require('./lessonAutoPublishLog.model');
 const CommissionRule = require('./commissionRule.model'); const CommissionTier = require('./commissionTier.model'); const AgentCommission = require('./agentCommission.model'); const CommissionAdjustment = require('./commissionAdjustment.model'); const CommissionPayoutBatch = require('./commissionPayoutBatch.model'); const CommissionPayoutItem = require('./commissionPayoutItem.model');
+const LecturerAgreement = require('./lecturerAgreement.model');
+const CommissionLedger = require('./commissionLedger.model');
+const CommissionCalculationSnapshot = require('./commissionCalculationSnapshot.model');
+const CommissionApproval = require('./commissionApproval.model');
+const CommissionPayout = require('./commissionPayout.model');
+const CommissionPayoutLedgerItem = require('./commissionPayoutLedgerItem.model');
+const CommissionAccountingLink = require('./commissionAccountingLink.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -196,7 +203,11 @@ const models = {
   ScheduledLesson: ScheduledLesson(sequelize, Sequelize.DataTypes),
   ZoomRecordingImport: ZoomRecordingImport(sequelize, Sequelize.DataTypes),
   LessonAutoPublishLog: LessonAutoPublishLog(sequelize, Sequelize.DataTypes),
-  CommissionRule: CommissionRule(sequelize, Sequelize.DataTypes), CommissionTier: CommissionTier(sequelize, Sequelize.DataTypes), AgentCommission: AgentCommission(sequelize, Sequelize.DataTypes), CommissionAdjustment: CommissionAdjustment(sequelize, Sequelize.DataTypes), CommissionPayoutBatch: CommissionPayoutBatch(sequelize, Sequelize.DataTypes), CommissionPayoutItem: CommissionPayoutItem(sequelize, Sequelize.DataTypes)
+  CommissionRule: CommissionRule(sequelize, Sequelize.DataTypes), CommissionTier: CommissionTier(sequelize, Sequelize.DataTypes), AgentCommission: AgentCommission(sequelize, Sequelize.DataTypes), CommissionAdjustment: CommissionAdjustment(sequelize, Sequelize.DataTypes), CommissionPayoutBatch: CommissionPayoutBatch(sequelize, Sequelize.DataTypes), CommissionPayoutItem: CommissionPayoutItem(sequelize, Sequelize.DataTypes),
+  LecturerAgreement: LecturerAgreement(sequelize, Sequelize.DataTypes), CommissionLedger: CommissionLedger(sequelize, Sequelize.DataTypes),
+  CommissionCalculationSnapshot: CommissionCalculationSnapshot(sequelize, Sequelize.DataTypes), CommissionApproval: CommissionApproval(sequelize, Sequelize.DataTypes),
+  CommissionPayout: CommissionPayout(sequelize, Sequelize.DataTypes), CommissionPayoutLedgerItem: CommissionPayoutLedgerItem(sequelize, Sequelize.DataTypes),
+  CommissionAccountingLink: CommissionAccountingLink(sequelize, Sequelize.DataTypes)
 };
 
 models.User.belongsToMany(models.Role, {
@@ -272,6 +283,17 @@ models.User.hasMany(models.Conversation, { foreignKey: 'assigned_user_id', as: '
 models.CommissionRule.hasMany(models.CommissionTier,{foreignKey:'commission_rule_id',as:'tiers'}); models.CommissionTier.belongsTo(models.CommissionRule,{foreignKey:'commission_rule_id',as:'rule'});
 models.AgentCommission.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'}); models.AgentCommission.belongsTo(models.Student,{foreignKey:'student_id',as:'student'}); models.AgentCommission.belongsTo(models.Course,{foreignKey:'course_id',as:'course'}); models.AgentCommission.belongsTo(models.CommissionRule,{foreignKey:'commission_rule_id',as:'rule'});
 models.CommissionPayoutBatch.hasMany(models.CommissionPayoutItem,{foreignKey:'payout_batch_id',as:'items'}); models.CommissionPayoutItem.belongsTo(models.CommissionPayoutBatch,{foreignKey:'payout_batch_id',as:'batch'});
+models.LecturerAgreement.belongsTo(models.User,{foreignKey:'lecturer_user_id',as:'lecturer'});
+models.LecturerAgreement.belongsTo(models.Course,{foreignKey:'course_id',as:'course'});
+models.LecturerAgreement.belongsTo(models.Batch,{foreignKey:'batch_id',as:'batch'});
+models.CommissionLedger.belongsTo(models.User,{foreignKey:'beneficiary_id',as:'beneficiary',constraints:false});
+models.CommissionLedger.belongsTo(models.Student,{foreignKey:'student_id',as:'student'});
+models.CommissionLedger.belongsTo(models.Course,{foreignKey:'course_id',as:'course'});
+models.CommissionLedger.belongsTo(models.Batch,{foreignKey:'batch_id',as:'batch'});
+models.CommissionLedger.belongsTo(models.CommissionRule,{foreignKey:'rule_id',as:'rule'});
+models.CommissionLedger.belongsTo(models.CommissionCalculationSnapshot,{foreignKey:'id',targetKey:'ledgerId',as:'snapshot'});
+models.CommissionPayout.hasMany(models.CommissionPayoutLedgerItem,{foreignKey:'payout_id',as:'items'});
+models.CommissionPayoutLedgerItem.belongsTo(models.CommissionLedger,{foreignKey:'ledger_id',as:'ledger'});
 models.Conversation.hasMany(models.ConversationAssignmentHistory, { foreignKey: 'conversation_id', as: 'assignmentHistory' });
 models.FlowRun.hasMany(models.FlowActionExecution, { foreignKey: 'flow_run_id', as: 'actionExecutions' });
 models.FlowActionExecution.belongsTo(models.FlowRun, { foreignKey: 'flow_run_id', as: 'run' });

@@ -23,6 +23,7 @@ const {
   StudentGuardian,
   StudentNote,
   User,
+  Role,
   sequelize
 } = require('../models');
 const whatsappService = require('./whatsapp.service');
@@ -1235,6 +1236,8 @@ class EducationService {
     const requestedCredit = payload.creditedToUserId ?? payload.credited_to_user_id ?? ownerUserId;
     const overriding = String(requestedCredit ?? '') !== String(ownerUserId ?? '');
     if (overriding && (!can('payment.override_credit_owner') || !String(payload.overrideReason || '').trim())) throw Object.assign(new Error('Payment credit override permission and reason are required.'), { status: 403, code: 'PAYMENT_CREDIT_OVERRIDE_FORBIDDEN' });
+    const creditedUser= requestedCredit ? await User.findByPk(requestedCredit,{include:[{model:Role,as:'roles',attributes:['id']} ]}) : null;
+    const attributionDepartmentId=creditedUser?.roles?.[0]?.id||null;
     await row.update({
       pendingPaymentAmount: paying,
       status: 'pending_confirmation',
@@ -1253,6 +1256,7 @@ class EducationService {
       , recordedAt: new Date(), attributionSource: overriding ? 'manual_override' : ownerUserId ? 'conversation_owner' : 'system'
       , overrideReason: overriding ? String(payload.overrideReason).trim() : null, overriddenByUserId: overriding ? userId : null
       , sourceConversationId: conversation?.id || null, whatsappAccountId: conversation?.whatsappAccountId || null
+      , attributionDepartmentId
     });
     await auditService.record({ userId, action: overriding ? 'PAYMENT_CREDIT_OVERRIDDEN' : 'PAYMENT_RECORDED', entityType: 'fee_installment', entityId: row.id, method: 'POST', path: `/api/education/fees/installments/${row.id}/pay`, changes: { studentId: row.fee.studentId, conversationId: conversation?.id || null, recordedByUserId: userId, conversationOwnerUserId: ownerUserId, creditedToUserId: requestedCredit || null, reason: overriding ? payload.overrideReason : null } });
     const fee = await this.getFee(row.studentFeeId);

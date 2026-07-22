@@ -39,6 +39,7 @@ module.exports = (sequelize, DataTypes) => {
     , overriddenByUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
     , sourceConversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'source_conversation_id' }
     , whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'whatsapp_account_id' }
+    , attributionDepartmentId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'attribution_department_id' }
   }, {
     tableName: 'fee_installments',
     timestamps: true,

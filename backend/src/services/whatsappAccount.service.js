@@ -7,6 +7,7 @@ const {
 } = require('../models');
 const whatsappSettingsService = require('./whatsappSettings.service');
 const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
+const auditService = require('./audit.service');
 
 function encryptionKey() {
   const source = process.env.APP_SETTINGS_ENCRYPTION_KEY || process.env.JWT_REFRESH_SECRET || process.env.JWT_ACCESS_SECRET || '';
@@ -61,7 +62,7 @@ function serialize(row) {
   delete data.webhookVerifyToken;
   return {
     ...data,
-    connectionStatus: data.connectionStatus || data.status || 'connected',
+    connectionStatus: data.status === 'inactive' ? 'inactive' : (data.connectionStatus || 'disconnected'),
     accessTokenConfigured: Boolean(row.accessTokenEncrypted),
     appSecretConfigured: Boolean(row.appSecretEncrypted),
     webhookVerifyTokenConfigured: Boolean(row.webhookVerifyToken)
@@ -169,7 +170,14 @@ class WhatsAppAccountService {
     this.validateWebhookConfig(config);
     const subscriptions = await this.fetchSubscriptions(config);
     const phoneVerified = await this.verifySelectedPhone(config);
-    return this.diagnosticFrom(config, subscriptions, phoneVerified);
+    const diagnostic = this.diagnosticFrom(config, subscriptions, phoneVerified);
+    await WhatsAppAccount.update({
+      connectionStatus: !phoneVerified ? 'verification_failed' : (diagnostic.subscribed ? 'connected' : 'webhook_not_subscribed'),
+      connectionError: !phoneVerified
+        ? 'Connection verification failed. Verify the access token and Phone Number ID.'
+        : (diagnostic.subscribed ? null : 'Webhook is not subscribed. Subscribe the webhook to receive messages.')
+    }, { where: { id } }).catch(() => null);
+    return diagnostic;
   }
 
   async subscribeWebhook(id, userId = null) {
@@ -188,7 +196,9 @@ class WhatsAppAccountService {
         throw Object.assign(new Error('Meta did not confirm the CRM app in the WABA subscriptions.'), { status: 502, code: 'WHATSAPP_SUBSCRIPTION_NOT_CONFIRMED', exposeMessage: true });
       }
     }
-    return this.diagnosticFrom(config, subscriptions, await this.verifySelectedPhone(config));
+    const diagnostic = this.diagnosticFrom(config, subscriptions, await this.verifySelectedPhone(config));
+    await WhatsAppAccount.update({ connectionStatus: 'connected', connectionError: null }, { where: { id } }).catch(() => null);
+    return diagnostic;
   }
 
   async overrideWebhookCallback(id, userId = null) {
@@ -293,7 +303,13 @@ class WhatsAppAccountService {
     else row = await this.ensureDefault();
     if (!row && (id || phoneNumberId)) throw Object.assign(new Error('WhatsApp account not found'), { status: 404 });
     if (!row) return null;
-    if (row.status !== 'active') throw Object.assign(new Error('WhatsApp account is inactive'), { status: 409 });
+    if (row.status !== 'active') {
+      throw Object.assign(new Error(`${row.name} is inactive. Reactivate this account before verifying the connection or managing its webhook.`), {
+        status: 409,
+        code: 'WHATSAPP_ACCOUNT_INACTIVE',
+        details: { accountId: row.id, displayName: row.name, phoneNumber: row.phoneNumber, canReactivate: true }
+      });
+    }
     return {
       whatsappAccountId: row.id,
       name: row.name,
@@ -331,8 +347,21 @@ class WhatsAppAccountService {
 
   async create(payload, userId) {
     validateAccountFields(payload, { requireToken: true });
-    const duplicate = await WhatsAppAccount.findOne({ where: { phoneNumberId: String(payload.phoneNumberId || '').trim() } });
-    if (duplicate) throw Object.assign(new Error('Phone number ID is already connected'), { status: 409 });
+    const phoneNumberId = String(payload.phoneNumberId || '').trim();
+    const duplicate = await WhatsAppAccount.findOne({ where: { phoneNumberId } });
+    if (duplicate?.status === 'inactive') {
+      throw Object.assign(new Error('This WhatsApp number already exists as an inactive account.'), {
+        status: 409,
+        code: 'WHATSAPP_ACCOUNT_INACTIVE',
+        details: {
+          accountId: duplicate.id,
+          displayName: duplicate.name,
+          phoneNumber: duplicate.phoneNumber,
+          canReactivate: true
+        }
+      });
+    }
+    if (duplicate) throw Object.assign(new Error('Phone number ID is already connected'), { status: 409, code: 'WHATSAPP_ACCOUNT_EXISTS' });
     return sequelize.transaction(async (transaction) => {
       const existingCount = await WhatsAppAccount.count({ transaction });
       const isDefault = payload.isDefault === true || existingCount === 0;
@@ -340,7 +369,7 @@ class WhatsAppAccountService {
       const row = await WhatsAppAccount.create({
         name: String(payload.name || '').trim(),
         phoneNumber: payload.phoneNumber || null,
-        phoneNumberId: String(payload.phoneNumberId || '').trim(),
+        phoneNumberId,
         businessAccountId: payload.businessAccountId || null,
         accessTokenEncrypted: encrypt(payload.accessToken),
         webhookVerifyToken: payload.webhookVerifyToken || payload.verifyToken || null,
@@ -392,8 +421,97 @@ class WhatsAppAccountService {
     return serialize(row);
   }
 
-  async deactivate(id) {
-    return this.update(id, { status: 'inactive' });
+  async deactivate(id, userId = null) {
+    return sequelize.transaction(async (transaction) => {
+      const row = await WhatsAppAccount.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!row) throw Object.assign(new Error('WhatsApp account not found'), { status: 404 });
+      if (row.isDefault) {
+        throw Object.assign(new Error('Set another active account as default before deactivating this account'), { status: 409 });
+      }
+      await row.update({
+        status: 'inactive',
+        connectionStatus: 'inactive',
+        connectionError: `Messages are stopped for ${row.name}. Reactivate the account to resume service.`,
+        sendEnabled: false
+      }, { transaction });
+      await auditService.record({
+        userId,
+        action: 'WHATSAPP_ACCOUNT_DEACTIVATED',
+        entityType: 'whatsapp_account',
+        entityId: row.id,
+        changes: { status: { from: 'active', to: 'inactive' } },
+        transaction,
+        required: true
+      });
+      return serialize(row);
+    });
+  }
+
+  async reactivate(id, payload = {}, userId = null) {
+    validateAccountFields(payload);
+    const row = await sequelize.transaction(async (transaction) => {
+      const account = await WhatsAppAccount.findByPk(id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE
+      });
+      if (!account) throw Object.assign(new Error('WhatsApp account not found'), { status: 404 });
+
+      const conflicting = await WhatsAppAccount.findOne({
+        where: {
+          phoneNumberId: account.phoneNumberId,
+          status: 'active',
+          id: { [Op.ne]: account.id }
+        },
+        transaction,
+        lock: transaction.LOCK.UPDATE
+      });
+      if (conflicting) {
+        throw Object.assign(new Error('Another active account already owns this Phone Number ID.'), {
+          status: 409,
+          code: 'WHATSAPP_PHONE_NUMBER_ALREADY_ACTIVE'
+        });
+      }
+
+      if (!account.accessTokenEncrypted && !clean(payload.accessToken)) {
+        throw Object.assign(new Error('A new access token is required to reactivate this account.'), {
+          status: 422,
+          code: 'WHATSAPP_ACCESS_TOKEN_REQUIRED'
+        });
+      }
+
+      await account.update({
+        status: 'active',
+        sendEnabled: true,
+        connectionStatus: 'disconnected',
+        connectionError: `Reactivate ${account.name} by verifying its WhatsApp connection.`,
+        accessTokenEncrypted: clean(payload.accessToken) ? encrypt(payload.accessToken) : account.accessTokenEncrypted,
+        webhookVerifyToken: payload.verifyToken ?? payload.webhookVerifyToken ?? account.webhookVerifyToken,
+        appId: payload.appId ?? account.appId,
+        appSecretEncrypted: clean(payload.appSecret) ? encrypt(payload.appSecret) : account.appSecretEncrypted
+      }, { transaction });
+
+      await auditService.record({
+        userId,
+        action: 'WHATSAPP_ACCOUNT_REACTIVATED',
+        entityType: 'whatsapp_account',
+        entityId: account.id,
+        changes: {
+          status: { from: 'inactive', to: 'active' },
+          credentialsUpdated: {
+            accessToken: Boolean(clean(payload.accessToken)),
+            verifyToken: payload.verifyToken != null || payload.webhookVerifyToken != null,
+            appId: payload.appId != null,
+            appSecret: Boolean(clean(payload.appSecret))
+          }
+        },
+        transaction,
+        required: true
+      });
+      return account;
+    });
+
+    if (clean(payload.accessToken)) await this.testConnection(row.id);
+    return serialize(await row.reload());
   }
 
   async testConnection(id) {
@@ -419,12 +537,15 @@ class WhatsAppAccountService {
     } catch (error) {
       const meta = error.response?.data?.error || {};
       const inaccessible = Number(meta.code) === 100 && Number(meta.error_subcode) === 33;
+      const tokenExpired = error.response?.status === 401 || Number(meta.code) === 190;
       const message = inaccessible
         ? 'Configured phone number ID is not accessible with the configured token.'
-        : 'WhatsApp connection verification failed.';
+        : tokenExpired
+          ? 'The access token is invalid or expired. Provide a new access token and try again.'
+          : 'WhatsApp connection verification failed. Check the credentials and try again.';
       await row.update({
         lastTestedAt: new Date(),
-        connectionStatus: 'disconnected',
+        connectionStatus: tokenExpired ? 'token_expired' : (inaccessible ? 'disconnected' : 'verification_failed'),
         connectionError: message
       });
       throw Object.assign(new Error(message), {

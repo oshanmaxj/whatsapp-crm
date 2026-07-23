@@ -68,7 +68,7 @@ function MessageField({ label = 'Message', value = '', onChange, error, maxLengt
   );
 }
 
-function MediaPicker({ label, accept, value, onChange, error, fileNameField, onFileName }) {
+function MediaPicker({ label, accept, value, onChange, error, fileNameField, onFileName, onFileMeta }) {
   const selectFile = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -76,6 +76,7 @@ function MediaPicker({ label, accept, value, onChange, error, fileNameField, onF
     reader.onload = () => {
       onChange(String(reader.result || ''));
       if (onFileName) onFileName(file.name);
+      if (onFileMeta) onFileMeta({ fileName: file.name, mimeType: file.type, size: file.size });
     };
     reader.readAsDataURL(file);
   };
@@ -165,9 +166,9 @@ function ImageSourceEditor({ config, set, errors }) {
   const selectFile = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png'];
     if (!allowed.includes(file.type)) {
-      set('fileError', 'Use JPG, PNG, or WebP.');
+      set('fileError', 'Use JPG or PNG.');
       return;
     }
     const reader = new FileReader();
@@ -204,7 +205,7 @@ function ImageSourceEditor({ config, set, errors }) {
         <Stack spacing={1}>
           <Button component="label" variant="outlined" startIcon={<UploadFileIcon />} sx={{ alignSelf: 'flex-start' }}>
             Select image
-            <input hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={selectFile} />
+            <input hidden type="file" accept="image/jpeg,image/png" onChange={selectFile} />
           </Button>
           {config.fileName && <Chip size="small" label={config.whatsappMediaId ? `${config.fileName} uploaded` : config.fileName} sx={{ alignSelf: 'flex-start' }} />}
           {(errors.file || config.fileError) && <Alert severity="error">{errors.file || config.fileError}</Alert>}
@@ -431,6 +432,8 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
       }
       if (node.data.nodeType === 'image_message' && nextConfig.sourceType === 'upload' && nextConfig.fileDataBase64 && !nextConfig.whatsappMediaId) {
         const response = await uploadFlowMedia(flowId, {
+          whatsappAccountId,
+          mediaType: 'image',
           fileName: nextConfig.fileName,
           mimeType: nextConfig.mimeType,
           dataBase64: nextConfig.fileDataBase64
@@ -438,12 +441,43 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
         nextConfig = {
           ...nextConfig,
           whatsappMediaId: response.data.data.whatsappMediaId,
+          mediaAccountId: response.data.data.whatsappAccountId,
           mediaLocalRef: response.data.data.localMediaRef,
           mimeType: response.data.data.mimeType || nextConfig.mimeType,
           mediaSize: response.data.data.size,
           fileName: response.data.data.fileName || nextConfig.fileName,
           fileDataBase64: ''
         };
+      }
+      const flowMediaTypes = {
+        video_message: { type: 'video', field: 'mediaUrl' },
+        audio_message: { type: 'audio', field: 'mediaUrl' },
+        file_document: { type: 'document', field: 'fileUrl' }
+      };
+      const mediaDefinition = flowMediaTypes[node.data.nodeType];
+      const embedded = mediaDefinition && String(nextConfig[mediaDefinition.field] || '').match(/^data:([^;]+);base64,(.+)$/s);
+      if (embedded) {
+        setUploadProgress(1);
+        const response = await uploadFlowMedia(flowId, {
+          whatsappAccountId,
+          mediaType: mediaDefinition.type,
+          fileName: nextConfig.fileName || `${mediaDefinition.type}-attachment`,
+          mimeType: nextConfig.mimeType || embedded[1],
+          dataBase64: embedded[2]
+        }, { onUploadProgress: (event) => setUploadProgress(event.total ? Math.min(99, Math.round((event.loaded * 100) / event.total)) : 50) });
+        const media = response.data.data;
+        nextConfig = {
+          ...nextConfig,
+          [mediaDefinition.field]: '',
+          whatsappMediaId: media.whatsappMediaId,
+          mediaAccountId: media.whatsappAccountId,
+          mediaLocalRef: media.localMediaRef,
+          mimeType: media.mimeType,
+          mediaSize: media.size,
+          fileName: media.fileName || nextConfig.fileName,
+          duration: nextConfig.duration || null
+        };
+        setUploadProgress(100);
       }
       if (node.data.nodeType === 'interactive_message' && ['image', 'video', 'document', 'media'].includes(nextConfig.headerType) && nextConfig.headerMediaDataBase64) {
         const headerType = nextConfig.headerType === 'media' ? (nextConfig.headerMediaType || 'image') : nextConfig.headerType;
@@ -516,11 +550,11 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
   } else if (type === 'image_message') {
     form = <><Section title="Image"><ImageSourceEditor config={config} set={set} errors={errors} /></Section><Section title="Caption"><MessageField label="Caption" value={config.caption || ''} onChange={(value) => set('caption', value)} maxLength={1024} /></Section></>;
   } else if (type === 'video_message') {
-    form = <><Section title="Video"><MediaPicker label="Video" accept="video/*" value={config.mediaUrl} onChange={(value) => set('mediaUrl', value)} error={errors.mediaUrl} /></Section><Section title="Caption"><MessageField label="Caption" value={config.caption || ''} onChange={(value) => set('caption', value)} maxLength={1024} /></Section></>;
+    form = <><Section title="Video"><MediaPicker label="Video" accept="video/mp4,video/3gpp" value={config.mediaUrl} onChange={(value) => set('mediaUrl', value)} onFileMeta={(media) => { set('fileName', media.fileName); set('mimeType', media.mimeType); set('mediaSize', media.size); }} error={errors.mediaUrl} /></Section><Section title="Caption"><MessageField label="Caption" value={config.caption || ''} onChange={(value) => set('caption', value)} maxLength={1024} /></Section></>;
   } else if (type === 'file_document') {
-    form = <><Section title="Document"><MediaPicker label="File" accept="*/*" value={config.fileUrl} onChange={(value) => set('fileUrl', value)} error={errors.fileUrl} onFileName={(value) => set('fileName', value)} fileNameField={field('fileName', 'Filename')} /></Section><Section title="Caption"><MessageField label="Caption" value={config.caption || ''} onChange={(value) => set('caption', value)} maxLength={1024} /></Section></>;
+    form = <><Section title="Document"><MediaPicker label="File" accept=".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx" value={config.fileUrl} onChange={(value) => set('fileUrl', value)} error={errors.fileUrl} onFileName={(value) => set('fileName', value)} onFileMeta={(media) => { set('mimeType', media.mimeType); set('mediaSize', media.size); }} fileNameField={field('fileName', 'Filename (optional)')} /></Section><Section title="Caption"><MessageField label="Caption" value={config.caption || ''} onChange={(value) => set('caption', value)} maxLength={1024} /></Section></>;
   } else if (type === 'audio_message') {
-    form = <Section title="Audio"><MediaPicker label="Audio" accept="audio/*" value={config.mediaUrl} onChange={(value) => set('mediaUrl', value)} error={errors.mediaUrl} /></Section>;
+    form = <Section title="Audio"><MediaPicker label="Audio" accept="audio/aac,audio/mp4,audio/mpeg,audio/amr,audio/ogg" value={config.mediaUrl} onChange={(value) => set('mediaUrl', value)} onFileMeta={(media) => { set('fileName', media.fileName); set('mimeType', media.mimeType); set('mediaSize', media.size); }} error={errors.mediaUrl} /></Section>;
   } else if (type === 'ai_reply') {
     form = <><Section title="AI instructions"><MessageField label="Prompt" value={config.prompt || ''} onChange={(value) => set('prompt', value)} error={errors.prompt} maxLength={4000} /><Stack direction="row" flexWrap="wrap"><FormControlLabel control={<Checkbox checked={(config.contextSources || []).includes('conversation_history')} onChange={(event) => set('contextSources', event.target.checked ? [...new Set([...(config.contextSources || []), 'conversation_history'])] : (config.contextSources || []).filter((item) => item !== 'conversation_history'))} />} label="Conversation history" /><FormControlLabel control={<Checkbox checked={(config.contextSources || []).includes('lead_profile')} onChange={(event) => set('contextSources', event.target.checked ? [...new Set([...(config.contextSources || []), 'lead_profile'])] : (config.contextSources || []).filter((item) => item !== 'lead_profile'))} />} label="Lead profile" /></Stack></Section><Section title="Fallback"><MessageField label="Fallback response" value={config.fallbackMessage || ''} onChange={(value) => set('fallbackMessage', value)} error={errors.fallbackMessage} /></Section></>;
   } else if (type === 'assign') {

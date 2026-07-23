@@ -127,11 +127,10 @@ export function nodeConfigErrors(nodeType, config = {}) {
       else if (!isPublicHttpsUrl(imageUrl)) errors.imageUrl = 'Use a public HTTPS image URL. Localhost and HTTP URLs are not allowed.';
     }
   }
-  if (nodeType === 'video_message') require('mediaUrl', 'Select a video or enter its URL.');
-  if (nodeType === 'audio_message') require('mediaUrl', 'Select audio or enter its URL.');
+  if (nodeType === 'video_message' && blank(config.mediaUrl) && blank(config.whatsappMediaId)) errors.mediaUrl = 'Select a video or enter its URL.';
+  if (nodeType === 'audio_message' && blank(config.mediaUrl) && blank(config.whatsappMediaId)) errors.mediaUrl = 'Select audio or enter its URL.';
   if (nodeType === 'file_document') {
-    require('fileUrl', 'Select a file or enter its URL.');
-    require('fileName', 'Enter the filename shown to the recipient.');
+    if (blank(config.fileUrl) && blank(config.whatsappMediaId)) errors.fileUrl = 'Select a file or enter its URL.';
   }
   if (nodeType === 'ai_reply') {
     require('prompt', 'Tell AI how it should reply.');

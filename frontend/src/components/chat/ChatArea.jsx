@@ -22,6 +22,7 @@ import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
 import { agentName, contactName, formatDateTime, formatTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
 import InteractiveMessageDialog from './InteractiveMessageDialog';
 import { hasPermission } from '../../utils/access';
+import api from '../../services/api';
 
 function StatusTicks({ message }) {
   if (message.direction !== 'outbound') return null;
@@ -52,17 +53,48 @@ function StatusTicks({ message }) {
 function MessageMedia({ message, onMediaLoad }) {
   const media = message.media || message.rawPayload?.media || {};
   const mediaType = media.type || media.mediaType || message.type;
-  const src = resolveMediaUrl(media.url || message.mediaUrl);
-  if (!src) return null;
+  const source = media.url || message.mediaUrl || '';
+  const [mediaState, setMediaState] = useState({ src: resolveMediaUrl(source), loading: false, error: null, retry: 0 });
+  useEffect(() => {
+    let objectUrl;
+    let cancelled = false;
+    if (!source) {
+      setMediaState({ src: '', loading: false, error: null, retry: 0 });
+      return undefined;
+    }
+    if (!String(source).startsWith('/api/media/')) {
+      setMediaState((current) => ({ ...current, src: resolveMediaUrl(source), loading: false, error: null }));
+      return undefined;
+    }
+    setMediaState((current) => ({ ...current, loading: true, error: null }));
+    api.get(source.replace(/^\/api/, ''), { responseType: 'blob' })
+      .then((response) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(response.data);
+        setMediaState((current) => ({ ...current, src: objectUrl, loading: false, error: null }));
+      })
+      .catch(() => {
+        if (!cancelled) setMediaState((current) => ({ ...current, src: '', loading: false, error: 'Media is temporarily unavailable.' }));
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [source, mediaState.retry]);
+  const fail = () => setMediaState((current) => ({ ...current, src: '', error: 'Media could not be loaded.' }));
+  if (!source) return null;
+  if (mediaState.loading) return <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 1 }}><CircularProgress size={18} /><Typography variant="caption">Loading media…</Typography></Stack>;
+  if (mediaState.error) return <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 0.5 }}><Typography variant="caption" color="text.secondary">{mediaState.error}</Typography><Button size="small" onClick={() => setMediaState((current) => ({ ...current, retry: current.retry + 1 }))}>Retry</Button></Stack>;
+  const src = mediaState.src;
 
   if (mediaType === 'image' || mediaType === 'sticker') {
-    return <Box component="img" src={src} alt={message.caption || 'Message attachment'} loading="lazy" onLoad={onMediaLoad} sx={{ display: 'block', width: '100%', maxHeight: 340, objectFit: 'cover', borderRadius: 1.5, mb: 0.75 }} />;
+    return <Box component="img" src={src} alt={message.caption || 'Message attachment'} loading="lazy" onLoad={onMediaLoad} onError={fail} sx={{ display: 'block', width: '100%', maxHeight: 340, objectFit: 'cover', borderRadius: 1.5, mb: 0.75 }} />;
   }
   if (mediaType === 'video') {
-    return <Box component="video" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} sx={{ display: 'block', width: '100%', maxHeight: 340, borderRadius: 1.5, mb: 0.75 }} />;
+    return <Box component="video" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} onError={fail} sx={{ display: 'block', width: '100%', maxHeight: 340, borderRadius: 1.5, mb: 0.75 }} />;
   }
   if (mediaType === 'audio') {
-    return <Box component="audio" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} sx={{ display: 'block', width: '100%', minWidth: 250, my: 0.5 }} />;
+    return <Box component="audio" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} onError={fail} sx={{ display: 'block', width: '100%', minWidth: { xs: 180, sm: 250 }, maxWidth: '100%', my: 0.5 }} />;
   }
   const fileName = media.filename
     || message.rawPayload?.document?.filename

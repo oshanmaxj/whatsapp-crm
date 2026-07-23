@@ -622,7 +622,7 @@ function ChatPage() {
         conversationId: selected,
         direction: 'outbound',
         type: mediaType,
-        text: newMessage || file.name,
+        text: newMessage || null,
         mediaUrl: previewUrl,
         status: 'pending',
         createdAt: new Date().toISOString(),
@@ -646,7 +646,7 @@ function ChatPage() {
         mimeType: file.type || 'application/octet-stream',
         mediaType,
         dataBase64,
-        caption: newMessage || file.name,
+        caption: newMessage || '',
         replyToMessageId: replyToMessage?.id || null
       }, (event) => onProgress(event.total ? Math.min(95, Math.round((event.loaded * 95) / event.total)) : 50));
       onProgress(100);

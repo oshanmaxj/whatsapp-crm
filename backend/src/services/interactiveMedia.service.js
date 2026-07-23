@@ -11,6 +11,10 @@ const PRIVATE_ROOT = path.resolve(process.env.FLOW_MEDIA_PRIVATE_ROOT || path.jo
 const MEDIA_RULES = Object.freeze({
   image: { maxBytes: 5 * 1024 * 1024, mimeTypes: new Set(['image/jpeg', 'image/png']) },
   video: { maxBytes: 16 * 1024 * 1024, mimeTypes: new Set(['video/mp4', 'video/3gpp']) },
+  audio: {
+    maxBytes: 16 * 1024 * 1024,
+    mimeTypes: new Set(['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/amr', 'audio/ogg'])
+  },
   document: {
     maxBytes: 100 * 1024 * 1024,
     mimeTypes: new Set([
@@ -47,7 +51,7 @@ function validateMedia({ mediaType, mimeType, size, fileName }) {
   const mime = String(mimeType || '').toLowerCase().split(';')[0].trim();
   const bytes = Number(size || 0);
   const rule = MEDIA_RULES[type];
-  if (!rule) throw mediaError('Interactive headers support image, video, or document media.', 'INTERACTIVE_MEDIA_TYPE_UNSUPPORTED');
+  if (!rule) throw mediaError('WhatsApp media supports image, video, audio, or document files.', 'INTERACTIVE_MEDIA_TYPE_UNSUPPORTED');
   if (!rule.mimeTypes.has(mime)) throw mediaError(`Unsupported ${type} type: ${mime || 'unknown'}.`, 'INTERACTIVE_MEDIA_MIME_UNSUPPORTED');
   if (!Number.isSafeInteger(bytes) || bytes <= 0) throw mediaError('The selected media file is empty.', 'INTERACTIVE_MEDIA_EMPTY');
   if (bytes > rule.maxBytes) {
@@ -73,6 +77,9 @@ function validateFileContent(buffer, valid) {
   if (valid.mediaType === 'video') {
     if (!ascii.includes('ftyp') || !ascii.includes('avc1')) throw mediaError('WhatsApp video headers require an H.264 MP4/3GPP file.', 'INTERACTIVE_VIDEO_CODEC_UNSUPPORTED');
     if (!ascii.includes('mp4a')) throw mediaError('WhatsApp video headers require AAC audio.', 'INTERACTIVE_VIDEO_AUDIO_UNSUPPORTED');
+  }
+  if (valid.mimeType === 'audio/ogg' && !ascii.includes('OpusHead')) {
+    throw mediaError('WhatsApp OGG audio must use the Opus codec.', 'INTERACTIVE_MEDIA_CONTENT_INVALID');
   }
   if (valid.mimeType === 'application/pdf' && !buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw mediaError('Selected file is not a valid PDF document.', 'INTERACTIVE_MEDIA_CONTENT_INVALID');
   return valid;
@@ -171,6 +178,24 @@ class InteractiveMediaService {
     const uploaded = await this.whatsappService.uploadMedia({ filePath, mimeType: valid.mimeType, mediaType: valid.mediaType, fileSize: valid.size, whatsappAccountId });
     if (!uploaded?.id) throw mediaError('Media upload failed because Meta did not return a media ID.', 'META_MEDIA_ID_MISSING', 502);
     return { ...binding, mediaId: String(uploaded.id), whatsappAccountId: String(whatsappAccountId), ...valid };
+  }
+
+  async resolveStored(binding, whatsappAccountId) {
+    if (!whatsappAccountId) throw mediaError('A WhatsApp account is required for media.', 'WHATSAPP_ACCOUNT_REQUIRED');
+    const normalized = {
+      ...binding,
+      mediaId: binding.mediaId || binding.whatsappMediaId || null,
+      whatsappAccountId: binding.whatsappAccountId || binding.mediaAccountId || null,
+      fileName: safeFilename(binding.fileName || binding.filename, binding.mediaType || 'media')
+    };
+    if (normalized.mediaId && (!normalized.localMediaRef || !normalized.whatsappAccountId || String(normalized.whatsappAccountId) === String(whatsappAccountId))) {
+      return normalized;
+    }
+    if (normalized.localMediaRef) return this.uploadStored(normalized, whatsappAccountId);
+    if (normalized.mediaId) {
+      throw mediaError('Media belongs to another WhatsApp account. Re-upload it for the selected account.', 'INTERACTIVE_MEDIA_ACCOUNT_MISMATCH');
+    }
+    throw mediaError('Stored media is unavailable. Replace the file and try again.', 'INTERACTIVE_MEDIA_MISSING');
   }
 
   async resolveHeader(header = null, { whatsappAccountId, interactiveType = 'button' } = {}) {

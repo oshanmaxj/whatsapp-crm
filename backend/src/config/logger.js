@@ -4,10 +4,18 @@ const activeLevelIndex = LEVELS.includes(configuredLevel) ? LEVELS.indexOf(confi
 
 const SECRET_KEY = /authorization|access[_-]?token|bearer|app[_-]?secret|client[_-]?secret/i;
 const SECRET_VALUE = /\bBearer\s+[A-Za-z0-9._~+\/-]+=*|\bOAuth\s+[A-Za-z0-9._~+\/-]+=*/gi;
+const BINARY_KEY = /base64|binary|buffer|fileData|dataBase64/i;
+const DATA_URI = /^data:[^;,]+;base64,/i;
+const LONG_BASE64 = /^[A-Za-z0-9+/=\r\n]+$/;
 
 function redact(value, key = '') {
   if (SECRET_KEY.test(key)) return '[REDACTED]';
-  if (typeof value === 'string') return value.replace(SECRET_VALUE, '[REDACTED]');
+  if (BINARY_KEY.test(key)) return '[REDACTED_BINARY]';
+  if (Buffer.isBuffer(value)) return `[BUFFER ${value.length} bytes]`;
+  if (typeof value === 'string') {
+    if (DATA_URI.test(value) || (value.length > 256 && LONG_BASE64.test(value))) return `[BASE64 ${value.length} chars]`;
+    return value.replace(SECRET_VALUE, '[REDACTED]');
+  }
   if (Array.isArray(value)) return value.map((item) => redact(item));
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redact(childValue, childKey)]));

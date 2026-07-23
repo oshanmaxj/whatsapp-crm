@@ -23,6 +23,10 @@ function mediaFromMessage(json, raw) {
     url,
     mimeType: source?.mimeType || null,
     filename: (type === 'document' ? (source?.filename || source?.fileName || source?.originalFilename) : null) || null,
+    size: Number(source?.size || source?.fileSize || 0) || null,
+    duration: Number(source?.duration || 0) || null,
+    voiceNote: Boolean(source?.voiceNote || json.messageType === 'voice'),
+    caption: source?.caption ?? null,
     whatsappMediaId: json.mediaId || source?.whatsappMediaId || source?.mediaId || null
   };
 }
@@ -41,7 +45,15 @@ function normalizeMessagePresentation(message) {
   const media = mediaFromMessage(json, raw);
   const caption = media && ['image', 'video', 'document'].includes(media.type) ? (raw.media?.caption ?? json.text ?? null) : null;
   const type = json.direction === 'outbound' && json.messageType === 'interactive' ? 'interactive' : json.type;
-  return { ...json, type, text: body, body, caption, media, interactive, interactiveReply };
+  return {
+    ...json, type, text: body, body, caption, media,
+    mediaType: media?.type || null,
+    mimeType: media?.mimeType || null,
+    fileName: media?.filename || null,
+    fileSize: media?.size || null,
+    duration: media?.duration || null,
+    interactive, interactiveReply
+  };
 }
 
 module.exports = { normalizeMessagePresentation, replyFromRaw, mediaFromMessage };

@@ -137,6 +137,7 @@ function createOutboundHistoryService(dependencies = {}) {
     if (!prepared?.message) return;
     const meta = error?.whatsappApiResponse?.error || error?.response?.data?.error || error?.metaError?.error || {};
     const errorMessage = String(meta.error_user_msg || meta.message || error?.message || error).slice(0, 500);
+    const errorData = meta.error_data ? logger.redact(meta.error_data) : null;
     await prepared.message.update({
       status: 'failed', statusUpdatedAt: new Date(),
       errorCode: meta.code == null ? (error?.code || null) : String(meta.code),
@@ -148,7 +149,9 @@ function createOutboundHistoryService(dependencies = {}) {
           code: meta.code == null ? (error?.code || null) : String(meta.code),
           subcode: meta.error_subcode == null ? null : String(meta.error_subcode),
           type: meta.type || null,
-          message: errorMessage
+          message: errorMessage,
+          errorData,
+          fbtraceId: meta.fbtrace_id || null
         }
       }
     });

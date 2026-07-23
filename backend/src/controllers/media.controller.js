@@ -1,8 +1,10 @@
 const path = require('path');
+const fs = require('fs');
 const inboxService = require('../services/inbox.service');
 const chatService = require('../services/chat.service');
 const socketService = require('../services/socket.service');
 const logger = require('../config/logger');
+const { safeApiError } = require('../services/whatsapp.service');
 
 class MediaController {
   async upload(req, res, next) {
@@ -16,7 +18,7 @@ class MediaController {
         fileName: req.body?.fileName || null,
         mimeType: req.body?.mimeType || null,
         mediaType: req.body?.mediaType || null,
-        encodedBytes: typeof req.body?.dataBase64 === 'string' ? req.body.dataBase64.length : 0
+        byteLength: typeof req.body?.dataBase64 === 'string' ? Math.floor(req.body.dataBase64.length * 3 / 4) : 0
       });
       const media = await inboxService.createMedia({ ...req.body, uploadedBy: req.user?.id || null }, req.user.id);
       const message = await chatService.getMessageWithReplyPreview(media.messageId);
@@ -36,10 +38,10 @@ class MediaController {
         || err.response?.data?.message;
       logger.error('media_file_upload_failed', {
         conversationId: req.body?.conversationId || null,
-        fileName: req.body?.fileName || null,
-        message: err.message,
-        status: err.response?.status || err.status || null,
-        responseData: err.response?.data || null
+        mediaType: req.body?.mediaType || null,
+        mimeType: req.body?.mimeType || null,
+        byteLength: typeof req.body?.dataBase64 === 'string' ? Math.floor(req.body.dataBase64.length * 3 / 4) : 0,
+        ...safeApiError(err)
       });
       if (err.response) {
         err.status = err.response.status >= 400 && err.response.status < 500 ? 400 : 502;
@@ -61,7 +63,27 @@ class MediaController {
   async download(req, res, next) {
     try {
       const media = await inboxService.getMedia(req.params.id, req.user.id);
-      return res.download(media.storagePath, media.originalName || path.basename(media.storagePath));
+      const stat = await fs.promises.stat(media.storagePath);
+      const range = req.headers.range;
+      const fileName = media.originalName || path.basename(media.storagePath);
+      res.setHeader('Content-Type', media.mimeType || 'application/octet-stream');
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Disposition', `${media.mediaType === 'document' || media.mediaType === 'pdf' ? 'attachment' : 'inline'}; filename="${String(fileName).replace(/["\r\n]/g, '_')}"`);
+      if (!range) {
+        res.setHeader('Content-Length', stat.size);
+        return fs.createReadStream(media.storagePath).pipe(res);
+      }
+      const match = String(range).match(/^bytes=(\d*)-(\d*)$/);
+      if (!match) return res.status(416).set('Content-Range', `bytes */${stat.size}`).end();
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= stat.size) {
+        return res.status(416).set('Content-Range', `bytes */${stat.size}`).end();
+      }
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Content-Length', end - start + 1);
+      return fs.createReadStream(media.storagePath, { start, end }).pipe(res);
     } catch (err) {
       next(err);
     }

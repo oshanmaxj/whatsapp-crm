@@ -84,8 +84,8 @@ function outputs(data) {
 function preview(data) {
   const config = data.config || {};
   if (data.nodeType === 'image_message') return <Chip size="small" label={(config.whatsappMediaId || config.imageUrl || config.mediaUrl) ? 'Image attached' : 'Image not selected'} />;
-  if (data.nodeType === 'video_message') return <Chip size="small" label={config.mediaUrl ? 'Video attached' : 'Video not selected'} />;
-  if (data.nodeType === 'audio_message') return <Chip size="small" label={config.mediaUrl ? 'Audio attached' : 'Audio not selected'} />;
+  if (data.nodeType === 'video_message') return <Chip size="small" label={(config.whatsappMediaId || config.mediaUrl) ? 'Video attached' : 'Video not selected'} />;
+  if (data.nodeType === 'audio_message') return <Chip size="small" label={(config.whatsappMediaId || config.mediaUrl) ? 'Audio attached' : 'Audio not selected'} />;
   if (data.nodeType === 'file_document') return <Chip size="small" label={config.fileName || 'File not selected'} />;
   if (['interactive_message', 'button_message'].includes(data.nodeType)) {
     return <Typography sx={{ fontSize: 11, color: 'text.secondary' }}>{(config.message || 'No message').slice(0, 72)}{(config.message || '').length > 72 ? '…' : ''}<br />{(config.buttons || []).length} button(s)</Typography>;

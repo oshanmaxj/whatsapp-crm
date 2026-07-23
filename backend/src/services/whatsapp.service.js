@@ -213,6 +213,7 @@ function safeApiError(error) {
     metaType: metaError?.type || null,
     metaCode: metaError?.code || null,
     metaSubcode: metaError?.error_subcode || null,
+    errorData: metaError?.error_data || null,
     fbtraceId: metaError?.fbtrace_id || null
   };
 }
@@ -609,6 +610,7 @@ class WhatsappService {
       });
       return response.data;
     } catch (error) {
+      const safe = safeApiError(error);
       logger.error('meta_media_upload_failed', {
         whatsappAccountId: config.whatsappAccountId || null,
         phoneNumberIdLastFour: lastFour(config.phoneNumberId),
@@ -616,11 +618,22 @@ class WhatsappService {
         mimeType: mimeType || null,
         mediaSize: fileSize == null ? null : Number(fileSize),
         uploadSucceeded: false,
-        ...safeApiError(error)
+        ...safe
       });
-      if (error.response?.data) {
-        error.exposeResponseData = true;
-      }
+      error.status = error.response?.status >= 400 && error.response?.status < 500 ? 400 : 502;
+      error.code = 'WHATSAPP_MEDIA_UPLOAD_FAILED';
+      error.exposeMessage = true;
+      error.message = safe.metaMessage || 'WhatsApp media upload failed.';
+      error.whatsappApiResponse = {
+        error: {
+          code: safe.metaCode, error_subcode: safe.metaSubcode,
+          message: safe.metaMessage, error_data: safe.errorData,
+          fbtrace_id: safe.fbtraceId
+        }
+      };
+      delete error.payloadSent;
+      delete error.config;
+      delete error.request;
       throw error;
     }
   }
@@ -637,7 +650,10 @@ class WhatsappService {
     contextMessageId = null,
     log = true,
     returnMetaResponse = false,
-    whatsappAccountId = null
+    whatsappAccountId = null,
+    byteLength = null,
+    conversationId = null,
+    flowId = null
   }) {
     const config = await this.getWhatsAppConfig(whatsappAccountId);
     if (!mediaId && !url) {
@@ -664,12 +680,11 @@ class WhatsappService {
     }
 
     logger.info('whatsapp_media_send_attempt', {
-      to,
-      mediaType,
-      mediaId: mediaId || null,
-      url: url || null,
-      filename: filename || null,
-      mimeType: mimeType || null
+      mediaType, mimeType: mimeType || null,
+      byteLength: byteLength == null ? null : Number(byteLength),
+      accountId: config.whatsappAccountId || null,
+      conversationId, flowId,
+      source: mediaId ? 'meta_media_id' : 'public_https_url'
     });
 
     let response;
@@ -678,21 +693,19 @@ class WhatsappService {
       responseData = await this.sendRequest(payload, { fullResponseData: true, config });
       response = responseData?.messages?.[0] || responseData;
       logger.info('whatsapp_media_send_response', {
-        to,
-        mediaType,
-        mediaId: mediaId || null,
-        url: url || null,
-        responseData
+        mediaType, mimeType: mimeType || null,
+        byteLength: byteLength == null ? null : Number(byteLength),
+        accountId: config.whatsappAccountId || null,
+        conversationId, flowId,
+        whatsappMessageIdLastFour: lastFour(response?.id)
       });
     } catch (error) {
       logger.error('whatsapp_media_send_failed', {
-        to,
-        mediaType,
-        mediaId: mediaId || null,
-        url: url || null,
-        message: error.message,
-        status: error.response?.status || null,
-        responseData: error.response?.data || null
+        mediaType, mimeType: mimeType || null,
+        byteLength: byteLength == null ? null : Number(byteLength),
+        accountId: config.whatsappAccountId || null,
+        conversationId, flowId,
+        ...safeApiError(error)
       });
       throw error;
     }
@@ -738,7 +751,6 @@ class WhatsappService {
         error.status = 503;
         error.exposeMessage = true;
       }
-      error.payloadSent = payload;
       error.whatsappApiResponse = error.response?.data || null;
       throw error;
     }
@@ -1092,7 +1104,12 @@ class WhatsappService {
         whatsappAccountId
       };
       const runAi=()=>aiAgentService.handleInbound(input).catch(async(error)=>{logger.warn('ai_agent_execution_failed',{conversationId,messageId:messageRecord.id,message:error.message});await aiAgentService.audit({agentId:assignedAiAgent?.id,conversationId,inboundMessageId:messageRecord.id,action:'failed_reply',stateBefore:null,stateAfter:null,reason:error.message,status:'failed'}).catch(()=>null);return null;});
-      const runFlow=()=>require('./flow.service').handleInboundMessage(input).catch((error)=>{logger.warn('flow_builder_execution_failed',error);return null;});
+      const runFlow=()=>require('./flow.service').handleInboundMessage(input).catch((error)=>{
+        logger.warn('flow_builder_execution_failed',{
+          conversationId,accountId:whatsappAccountId,messageId:messageRecord.id,...safeApiError(error)
+        });
+        return null;
+      });
       if(priority==='human_only')return;
       if(priority==='ai_only')await runAi();
       else if(priority==='flow_only')await runFlow();
@@ -1305,9 +1322,7 @@ class WhatsappService {
         const shouldRetry = [429, 500, 502, 503, 504].includes(status) || !status;
         logger.warn('whatsapp_api_request_failed', {
           attempt,
-          status,
-          message: error.message,
-          responseData: error.response?.data || null
+          ...safeApiError(error)
         });
         if (!shouldRetry || attempt === attempts) {
           throw error;

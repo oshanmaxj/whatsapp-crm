@@ -19,7 +19,7 @@ import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
 import { agentName, contactName, formatDateTime, formatTime, initials, safeArray } from './chatUtils';
-import InteractiveMessageDialog from './InteractiveMessageDialog';
+import InboxFlowDialog from './InboxFlowDialog';
 import AuthenticatedMedia from './AuthenticatedMedia';
 import { hasPermission } from '../../utils/access';
 
@@ -553,11 +553,12 @@ export function MessageComposer({
   selected,
   sending,
   replyToMessage,
-  onCancelReply
+  onCancelReply,
+  conversation
 }) {
   const [emojiAnchor, setEmojiAnchor] = useState(null);
   const [templateAnchor, setTemplateAnchor] = useState(null);
-  const [interactiveOpen, setInteractiveOpen] = useState(false);
+  const [flowsOpen, setFlowsOpen] = useState(false);
   const [recorder, setRecorder] = useState(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceFile, setVoiceFile] = useState(null);
@@ -580,7 +581,7 @@ export function MessageComposer({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream; cancelRecordingRef.current = false;
-      const candidates = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm;codecs=opus'];
+      const candidates = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/mp4'];
       const mimeType = candidates.find((type) => window.MediaRecorder.isTypeSupported?.(type));
       const instance = new window.MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       chunksRef.current = [];
@@ -678,7 +679,7 @@ export function MessageComposer({
       {(recorder || voiceFile || voiceError) && <Paper variant="outlined" sx={{ p: 1, mb: .75 }}><Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">{recorder && <><Typography fontWeight={800}>Recording {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}</Typography><IconButton aria-label="Stop recording" color="error" onClick={() => recorder.stop()}><StopCircleOutlinedIcon /></IconButton></>}{voiceUrl && <Box component="audio" src={voiceUrl} controls sx={{ maxWidth: 280 }} />}{voiceFile && <><IconButton aria-label="Delete recording" onClick={cancelVoice}><DeleteOutlineIcon /></IconButton><Button variant="contained" onClick={sendVoice} disabled={voiceProgress > 0 && voiceProgress < 100}>Send voice</Button></>}{voiceProgress > 0 && <Typography variant="caption">Upload {voiceProgress}%</Typography>}{voiceError && <Typography color="error" variant="caption">{voiceError}</Typography>}<Button size="small" onClick={cancelVoice}>Cancel</Button></Stack></Paper>}
       <Stack direction="row" alignItems="flex-end" gap={0.4} sx={{ minWidth: 0, flexWrap: { xs: 'wrap', sm: 'nowrap' }, '& .composer-control': { width: 44, height: 44, flex: '0 0 44px' } }}>
         <Tooltip title="Attach media"><span><IconButton className="composer-control" aria-label="Attach media" disabled={!selected} onClick={onAttach}><AttachFileIcon /></IconButton></span></Tooltip>
-        <Button size="small" variant="outlined" disabled={!selected || !windowOpen || sending} onClick={() => setInteractiveOpen(true)} sx={{ mb: 0.35, minWidth: 86, borderRadius: 2.5, textTransform: 'none' }}>Interactive</Button>
+        <Button size="small" variant="outlined" disabled={!selected || sending || !conversation?.whatsappAccountId} onClick={() => setFlowsOpen(true)} sx={{ mb: 0.35, minWidth: 86, borderRadius: 2.5, textTransform: 'none' }}>Flows</Button>
         <Button
           size="small"
           variant="outlined"
@@ -738,7 +739,7 @@ export function MessageComposer({
           </span>
         </Tooltip>
       </Stack>
-      <InteractiveMessageDialog open={interactiveOpen} onClose={() => setInteractiveOpen(false)} onSend={onSendInteractive} sending={sending} />
+      <InboxFlowDialog open={flowsOpen} onClose={() => setFlowsOpen(false)} conversation={conversation} onStarted={() => setFlowsOpen(false)} />
     </Box>
   );
 }
@@ -811,6 +812,7 @@ export function ChatArea({
       )}
       <MessageList messages={messages} conversationId={conversation?.id} messagesReady={messagesReady} onReply={onReply} onMarkPaymentSlip={onMarkPaymentSlip} />
       <MessageComposer
+        conversation={conversation}
         value={composerValue}
         onChange={onComposerChange}
         onSend={onSend}

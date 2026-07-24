@@ -42,6 +42,12 @@ class FlowController {
   async list(req, res, next) {
     try { return res.json({ success: true, data: await flowService.list(req.user?.id) }); } catch (err) { next(err); }
   }
+  async inboxList(req, res, next) {
+    try { return res.json({ success: true, data: await flowService.listForInbox({ conversationId: req.query.conversationId, search: req.query.search, userId: req.user?.id }) }); } catch (err) { next(err); }
+  }
+  async inboxStart(req, res, next) {
+    try { return res.status(202).json({ success: true, data: await flowService.startFromInbox({ flowId: req.params.id, conversationId: req.body?.conversationId, variables: req.body?.variables || {}, userId: req.user?.id }) }); } catch (err) { next(err); }
+  }
 
   async get(req, res, next) {
     try { return res.json({ success: true, data: await flowService.get(req.params.id, req.user?.id) }); } catch (err) { next(err); }

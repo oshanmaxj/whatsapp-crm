@@ -70,10 +70,12 @@ class MediaController {
         throw error;
       });
       if (!stat.isFile()) throw Object.assign(new Error('Media file not found.'), { status: 404, code: 'MEDIA_FILE_NOT_FOUND' });
-      const range = req.headers.range;
+      const streamable = ['audio', 'voice', 'video'].includes(String(media.mediaType || '').toLowerCase())
+        || /^(audio|video)\//i.test(String(media.mimeType || ''));
+      const range = streamable ? req.headers.range : null;
       const fileName = media.originalName || path.basename(media.storagePath);
       res.setHeader('Content-Type', media.mimeType || 'application/octet-stream');
-      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Accept-Ranges', streamable ? 'bytes' : 'none');
       res.setHeader('Cache-Control', 'private, max-age=300, no-transform');
       res.setHeader('Content-Disposition', `${media.mediaType === 'document' || media.mediaType === 'pdf' ? 'attachment' : 'inline'}; filename="${String(fileName).replace(/["\r\n]/g, '_')}"`);
       if (!range) {

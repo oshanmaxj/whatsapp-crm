@@ -541,8 +541,15 @@ class InboxService {
       error.status = 400;
       throw error;
     }
+    let audioMetadata = null;
     if (messageType === 'audio') {
       const prepared = await require('./audioProcessing.service').prepare({ filePath: storagePath, mimeType });
+      audioMetadata = {
+        originalMimeType: prepared.originalMimeType,
+        detectedMimeType: prepared.detectedMimeType,
+        finalMimeType: prepared.mimeType,
+        transcoded: Boolean(prepared.converted)
+      };
       storagePath = prepared.filePath;
       mimeType = prepared.mimeType;
       safeName = path.basename(storagePath);
@@ -601,7 +608,7 @@ class InboxService {
         isRead: true,
         rawPayload: {
           media: { type: messageType, url: publicUrl, mimeType, filename: messageType === 'document' ? fileName : null, originalFilename: fileName, whatsappMediaId: metaMediaId, caption: caption || null },
-          file: { fileName, mimeType, mediaType, size: buffer.length },
+          file: { fileName, mimeType, mediaType, size: buffer.length, ...audioMetadata },
           metaMediaUpload: uploadResponse,
           whatsappMediaSend: sendResult.responseData
         }

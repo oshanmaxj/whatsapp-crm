@@ -9,6 +9,8 @@ const router = express.Router();
 router.use(authMiddleware.authenticate);
 
 router.get('/action-options', requirePermission('flow-builder.edit'), flowController.options.bind(flowController));
+router.get('/inbox/available', requirePermission('flow-builder.view'), flowController.inboxList.bind(flowController));
+router.post('/inbox/:id/start', requirePermission('flow-builder.test'), flowController.inboxStart.bind(flowController));
 router.get('/', requirePermission('flow-builder.view'), flowController.list.bind(flowController));
 router.get('/:id', requirePermission('flow-builder.view'), flowController.get.bind(flowController));
 router.post('/', requirePermission('flow-builder.create'), flowController.create.bind(flowController));

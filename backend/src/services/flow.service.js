@@ -28,6 +28,7 @@ const flowActionService = require('./flowAction.service');
 const triggerMatcher = require('./flowTriggerMatcher.service');
 const interactiveMediaService = require('./interactiveMedia.service');
 const logger = require('../config/logger');
+const conversationAccessService = require('./conversationAccess.service');
 
 const MAX_NESTED_FLOW_DEPTH = Number(process.env.MAX_NESTED_FLOW_DEPTH || 5);
 
@@ -169,6 +170,60 @@ class FlowService {
       order: [['updated_at', 'DESC']]
     });
     return flows.map(serializeFlow);
+  }
+
+  async listForInbox({ conversationId, search = '', userId }) {
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
+    const conversation = await Conversation.findByPk(conversationId);
+    if (!conversation?.whatsappAccountId) throw Object.assign(new Error('The conversation has no WhatsApp account.'), { status: 422, code: 'CONVERSATION_ACCOUNT_REQUIRED' });
+    await whatsappAccountAccessService.assertAccess(conversation.whatsappAccountId, userId);
+    const accessWhere = await whatsappAccountAccessService.whereForUser(userId);
+    const where = {
+      status: 'published',
+      whatsappAccountId: conversation.whatsappAccountId,
+      ...accessWhere
+    };
+    if (String(search).trim()) where.name = { [Op.iLike]: `%${String(search).trim()}%` };
+    return Flow.findAll({
+      where,
+      attributes: ['id', 'name', 'status', 'whatsappAccountId', 'whatsappPhoneNumberId', 'updatedAt', 'triggerConfig'],
+      order: [['updated_at', 'DESC']]
+    });
+  }
+
+  async startFromInbox({ flowId, conversationId, variables = {}, userId }) {
+    await conversationAccessService.assertConversationAccess(conversationId, userId);
+    const conversation = await Conversation.findByPk(conversationId, { include: [{ model: Contact, as: 'contact', required: false }] });
+    if (!conversation) throw Object.assign(new Error('Conversation not found.'), { status: 404 });
+    if (!conversation.contactId || !conversation.contact) throw Object.assign(new Error('The conversation has no valid contact.'), { status: 422 });
+    if (!conversation.whatsappAccountId) throw Object.assign(new Error('The conversation has no WhatsApp account.'), { status: 422 });
+    await whatsappAccountAccessService.assertAccess(conversation.whatsappAccountId, userId);
+    const flow = await Flow.findOne({
+      where: { id: flowId, status: 'published', whatsappAccountId: conversation.whatsappAccountId },
+      include: this.includeBuilder()
+    });
+    if (!flow) throw Object.assign(new Error('Published flow not found for this conversation account.'), { status: 404, code: 'INBOX_FLOW_NOT_FOUND' });
+    const duplicate = await FlowRun.findOne({
+      where: { flowId, conversationId, status: { [Op.in]: ['running', 'waiting'] } },
+      order: [['created_at', 'DESC']]
+    });
+    if (duplicate) throw Object.assign(new Error('This flow is already running for the current conversation.'), { status: 409, code: 'FLOW_ALREADY_RUNNING', flowRunId: duplicate.id });
+    logger.info('inbox_flow_started', { actorUserId: userId, flowId: flow.id, flowName: flow.name, conversationId, whatsappAccountId: conversation.whatsappAccountId });
+    try {
+      const run = await this.executeFlow(flow, {
+        contactId: conversation.contactId,
+        conversationId: conversation.id,
+        conversation,
+        whatsappAccountId: conversation.whatsappAccountId,
+        variables,
+        actor: { type: 'user', userId }
+      });
+      logger.info('inbox_flow_completed', { actorUserId: userId, flowId: flow.id, conversationId, whatsappAccountId: conversation.whatsappAccountId, flowRunId: run?.id, status: run?.status });
+      return run;
+    } catch (error) {
+      logger.warn('inbox_flow_failed', { actorUserId: userId, flowId: flow.id, conversationId, whatsappAccountId: conversation.whatsappAccountId, code: error.code || null, message: error.message });
+      throw error;
+    }
   }
 
   async actionOptions(userId = null, currentFlowId = null) {

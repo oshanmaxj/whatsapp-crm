@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { SOCKET_URL } from '../config/apiConfig';
 
+export const SOCKET_PATH = '/socket.io';
+export const SOCKET_TRANSPORTS = ['polling', 'websocket'];
+
 export function useSocket(token) {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
@@ -10,7 +13,11 @@ export function useSocket(token) {
     if (!token) return null;
     return io(SOCKET_URL, {
       auth: { token },
-      autoConnect: false
+      autoConnect: false,
+      path: SOCKET_PATH,
+      transports: SOCKET_TRANSPORTS,
+      upgrade: true,
+      withCredentials: true
     });
   }, [token]);
 

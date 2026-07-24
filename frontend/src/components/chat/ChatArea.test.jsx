@@ -17,8 +17,8 @@ test('manual and flow images use the shared media renderer without filename capt
     media: { type: 'image', url: '/api/media/50/download', filename: null },
     rawPayload: { media: { originalFilename: 'Blue Neon Payment.jpg' } }
   });
-  expect(html).toContain('<img');
-  expect(html).toContain('/api/media/50/download');
+  expect(html).toContain('Loading media');
+  expect(html).not.toContain('src="/api/media/50/download"');
   expect(html).not.toContain('Blue Neon Payment.jpg');
 });
 
@@ -32,7 +32,7 @@ test('outbound interactive bubbles show read-only titles and media headers', () 
   expect(html).toContain('Pay');
   expect(html).toContain('Contact Support');
   expect(html).not.toContain('flowbtn_pay_internal');
-  expect(html).toContain('/api/media/51/download');
+  expect(html).not.toContain('src="/api/media/51/download"');
 });
 
 test('inbound button replies display title and keep payload out of the main bubble', () => {

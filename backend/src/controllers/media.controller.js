@@ -63,27 +63,47 @@ class MediaController {
   async download(req, res, next) {
     try {
       const media = await inboxService.getMedia(req.params.id, req.user.id);
-      const stat = await fs.promises.stat(media.storagePath);
+      const stat = await fs.promises.stat(media.storagePath).catch((error) => {
+        if (error.code === 'ENOENT') {
+          throw Object.assign(new Error('Media file not found.'), { status: 404, code: 'MEDIA_FILE_NOT_FOUND' });
+        }
+        throw error;
+      });
+      if (!stat.isFile()) throw Object.assign(new Error('Media file not found.'), { status: 404, code: 'MEDIA_FILE_NOT_FOUND' });
       const range = req.headers.range;
       const fileName = media.originalName || path.basename(media.storagePath);
       res.setHeader('Content-Type', media.mimeType || 'application/octet-stream');
       res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'private, max-age=300, no-transform');
       res.setHeader('Content-Disposition', `${media.mediaType === 'document' || media.mediaType === 'pdf' ? 'attachment' : 'inline'}; filename="${String(fileName).replace(/["\r\n]/g, '_')}"`);
       if (!range) {
         res.setHeader('Content-Length', stat.size);
-        return fs.createReadStream(media.storagePath).pipe(res);
+        if (req.method === 'HEAD') return res.end();
+        const stream = fs.createReadStream(media.storagePath);
+        stream.on('error', (error) => {
+          if (res.headersSent) res.destroy(error);
+          else next(error);
+        });
+        return stream.pipe(res);
       }
       const match = String(range).match(/^bytes=(\d*)-(\d*)$/);
-      if (!match) return res.status(416).set('Content-Range', `bytes */${stat.size}`).end();
-      const start = match[1] ? Number(match[1]) : 0;
-      const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+      if (!match || (!match[1] && !match[2])) return res.status(416).set('Content-Range', `bytes */${stat.size}`).end();
+      const suffixLength = !match[1] ? Number(match[2]) : null;
+      const start = suffixLength == null ? Number(match[1]) : Math.max(0, stat.size - suffixLength);
+      const end = suffixLength == null && match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
       if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= stat.size) {
         return res.status(416).set('Content-Range', `bytes */${stat.size}`).end();
       }
       res.status(206);
       res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
       res.setHeader('Content-Length', end - start + 1);
-      return fs.createReadStream(media.storagePath, { start, end }).pipe(res);
+      if (req.method === 'HEAD') return res.end();
+      const stream = fs.createReadStream(media.storagePath, { start, end });
+      stream.on('error', (error) => {
+        if (res.headersSent) res.destroy(error);
+        else next(error);
+      });
+      return stream.pipe(res);
     } catch (err) {
       next(err);
     }

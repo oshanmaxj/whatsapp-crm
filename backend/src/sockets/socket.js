@@ -10,6 +10,8 @@ const activeSockets = new Map();
 
 function initSocket(server) {
   const io = new Server(server, {
+    path: '/socket.io',
+    transports: ['polling', 'websocket'],
     cors: {
       origin: corsOptions.origin,
       methods: ['GET', 'POST'],

@@ -8,7 +8,6 @@ import AttachFileIcon from '@mui/icons-material/AttachFile';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import EmojiEmotionsOutlinedIcon from '@mui/icons-material/EmojiEmotionsOutlined';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import MicNoneOutlinedIcon from '@mui/icons-material/MicNoneOutlined';
 import CloseIcon from '@mui/icons-material/Close';
@@ -19,35 +18,10 @@ import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
-import { agentName, contactName, formatDateTime, formatTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
+import { agentName, contactName, formatDateTime, formatTime, initials, safeArray } from './chatUtils';
 import InteractiveMessageDialog from './InteractiveMessageDialog';
+import AuthenticatedMedia from './AuthenticatedMedia';
 import { hasPermission } from '../../utils/access';
-import api from '../../services/api';
-
-const MEDIA_CACHE_LIMIT = 100;
-const mediaPromiseCache = new Map();
-const mediaObjectUrlCache = new Map();
-
-function loadAuthenticatedMedia(source) {
-  const cachedUrl = mediaObjectUrlCache.get(source);
-  if (cachedUrl) return Promise.resolve(cachedUrl);
-  const pending = mediaPromiseCache.get(source);
-  if (pending) return pending;
-  const request = api.get(source.replace(/^\/api/, ''), { responseType: 'blob' })
-    .then((response) => {
-      const objectUrl = URL.createObjectURL(response.data);
-      mediaObjectUrlCache.set(source, objectUrl);
-      if (mediaObjectUrlCache.size > MEDIA_CACHE_LIMIT) {
-        const [oldestSource, oldestUrl] = mediaObjectUrlCache.entries().next().value;
-        mediaObjectUrlCache.delete(oldestSource);
-        URL.revokeObjectURL(oldestUrl);
-      }
-      return objectUrl;
-    })
-    .finally(() => mediaPromiseCache.delete(source));
-  mediaPromiseCache.set(source, request);
-  return request;
-}
 
 function StatusTicks({ message }) {
   if (message.direction !== 'outbound') return null;
@@ -79,61 +53,14 @@ function MessageMedia({ message, onMediaLoad }) {
   const media = message.media || message.rawPayload?.media || {};
   const mediaType = media.type || media.mediaType || message.type;
   const source = media.url || message.mediaUrl || '';
-  const [mediaState, setMediaState] = useState({ src: resolveMediaUrl(source), loading: false, error: null, retry: 0 });
-  useEffect(() => {
-    let cancelled = false;
-    if (!source) {
-      setMediaState({ src: '', loading: false, error: null, retry: 0 });
-      return undefined;
-    }
-    if (!String(source).startsWith('/api/media/')) {
-      setMediaState((current) => ({ ...current, src: resolveMediaUrl(source), loading: false, error: null }));
-      return undefined;
-    }
-    setMediaState((current) => ({ ...current, loading: true, error: null }));
-    if (mediaState.retry > 0) {
-      const failedUrl = mediaObjectUrlCache.get(source);
-      mediaObjectUrlCache.delete(source);
-      if (failedUrl) URL.revokeObjectURL(failedUrl);
-    }
-    loadAuthenticatedMedia(source)
-      .then((objectUrl) => {
-        if (cancelled) return;
-        setMediaState((current) => ({ ...current, src: objectUrl, loading: false, error: null }));
-      })
-      .catch(() => {
-        if (!cancelled) setMediaState((current) => ({ ...current, src: '', loading: false, error: 'Media is temporarily unavailable.' }));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [source, mediaState.retry]);
-  const fail = () => setMediaState((current) => ({ ...current, src: '', error: 'Media could not be loaded.' }));
   if (!source) return null;
-  if (mediaState.loading) return <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 1 }}><CircularProgress size={18} /><Typography variant="caption">Loading media…</Typography></Stack>;
-  if (mediaState.error) return <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 0.5 }}><Typography variant="caption" color="text.secondary">{mediaState.error}</Typography><Button size="small" onClick={() => setMediaState((current) => ({ ...current, retry: current.retry + 1 }))}>Retry</Button></Stack>;
-  const src = mediaState.src;
-
-  if (mediaType === 'image' || mediaType === 'sticker') {
-    return <Box component="img" src={src} alt={message.caption || 'Message attachment'} loading="lazy" onLoad={onMediaLoad} onError={fail} sx={{ display: 'block', width: '100%', maxHeight: 340, objectFit: 'cover', borderRadius: 1.5, mb: 0.75 }} />;
-  }
-  if (mediaType === 'video') {
-    return <Box component="video" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} onError={fail} sx={{ display: 'block', width: '100%', maxHeight: 340, borderRadius: 1.5, mb: 0.75 }} />;
-  }
-  if (mediaType === 'audio') {
-    return <Box component="audio" src={src} controls preload="metadata" onLoadedMetadata={onMediaLoad} onError={fail} sx={{ display: 'block', width: '100%', minWidth: { xs: 180, sm: 250 }, maxWidth: '100%', my: 0.5 }} />;
-  }
   const fileName = media.filename
     || message.rawPayload?.document?.filename
     || message.rawPayload?.file?.fileName
     || message.rawPayload?.fileName
     || message.rawPayload?.filename
     || 'Open document';
-  return (
-    <Button href={src} target="_blank" rel="noreferrer" variant="outlined" size="small" startIcon={<InsertDriveFileOutlinedIcon />} sx={{ my: 0.5, bgcolor: 'rgba(255,255,255,.45)' }}>
-      {fileName}
-    </Button>
-  );
+  return <AuthenticatedMedia source={source} mediaType={mediaType} fileName={fileName} alt={message.caption || 'Message attachment'} onMediaLoad={onMediaLoad} />;
 }
 
 function messageSummary(message) {

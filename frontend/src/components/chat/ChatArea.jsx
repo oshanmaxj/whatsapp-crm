@@ -24,6 +24,31 @@ import InteractiveMessageDialog from './InteractiveMessageDialog';
 import { hasPermission } from '../../utils/access';
 import api from '../../services/api';
 
+const MEDIA_CACHE_LIMIT = 100;
+const mediaPromiseCache = new Map();
+const mediaObjectUrlCache = new Map();
+
+function loadAuthenticatedMedia(source) {
+  const cachedUrl = mediaObjectUrlCache.get(source);
+  if (cachedUrl) return Promise.resolve(cachedUrl);
+  const pending = mediaPromiseCache.get(source);
+  if (pending) return pending;
+  const request = api.get(source.replace(/^\/api/, ''), { responseType: 'blob' })
+    .then((response) => {
+      const objectUrl = URL.createObjectURL(response.data);
+      mediaObjectUrlCache.set(source, objectUrl);
+      if (mediaObjectUrlCache.size > MEDIA_CACHE_LIMIT) {
+        const [oldestSource, oldestUrl] = mediaObjectUrlCache.entries().next().value;
+        mediaObjectUrlCache.delete(oldestSource);
+        URL.revokeObjectURL(oldestUrl);
+      }
+      return objectUrl;
+    })
+    .finally(() => mediaPromiseCache.delete(source));
+  mediaPromiseCache.set(source, request);
+  return request;
+}
+
 function StatusTicks({ message }) {
   if (message.direction !== 'outbound') return null;
   const status = message.status || 'pending';
@@ -56,7 +81,6 @@ function MessageMedia({ message, onMediaLoad }) {
   const source = media.url || message.mediaUrl || '';
   const [mediaState, setMediaState] = useState({ src: resolveMediaUrl(source), loading: false, error: null, retry: 0 });
   useEffect(() => {
-    let objectUrl;
     let cancelled = false;
     if (!source) {
       setMediaState({ src: '', loading: false, error: null, retry: 0 });
@@ -67,10 +91,14 @@ function MessageMedia({ message, onMediaLoad }) {
       return undefined;
     }
     setMediaState((current) => ({ ...current, loading: true, error: null }));
-    api.get(source.replace(/^\/api/, ''), { responseType: 'blob' })
-      .then((response) => {
+    if (mediaState.retry > 0) {
+      const failedUrl = mediaObjectUrlCache.get(source);
+      mediaObjectUrlCache.delete(source);
+      if (failedUrl) URL.revokeObjectURL(failedUrl);
+    }
+    loadAuthenticatedMedia(source)
+      .then((objectUrl) => {
         if (cancelled) return;
-        objectUrl = URL.createObjectURL(response.data);
         setMediaState((current) => ({ ...current, src: objectUrl, loading: false, error: null }));
       })
       .catch(() => {
@@ -78,7 +106,6 @@ function MessageMedia({ message, onMediaLoad }) {
       });
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [source, mediaState.retry]);
   const fail = () => setMediaState((current) => ({ ...current, src: '', error: 'Media could not be loaded.' }));

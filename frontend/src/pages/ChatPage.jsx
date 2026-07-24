@@ -62,6 +62,7 @@ const MEDIA_ACCEPT = [
   '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'
 ].join(',');
 const selectedConversationStorageKey = 'crmSelectedConversationId';
+const UNREAD_REFRESH_THROTTLE_MS = 5000;
 
 function inferMediaType(file) {
   const extension = `.${String(file.name || '').split('.').pop().toLowerCase()}`;
@@ -89,6 +90,11 @@ function ChatPage() {
   const fileInputRef = useRef(null);
   const selectedRef = useRef(null);
   const seenSocketMessageIdsRef = useRef(new Set());
+  const agentsRef = useRef([]);
+  const conversationsRequestRef = useRef(null);
+  const detailsRequestRef = useRef(null);
+  const unreadRequestRef = useRef(null);
+  const unreadRefreshRef = useRef({ lastRun: 0, timer: null });
 
   const [conversations, setConversations] = useState([]);
   const [agents, setAgents] = useState([]);
@@ -132,6 +138,10 @@ function ChatPage() {
     || safeArray(conversations).find((item) => String(item.id) === String(selected))
     || null;
   const windowOpen = isMessagingWindowOpen(selectedConversation, windowNow);
+
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
 
   const handleMarkPaymentSlip = async (message, alreadyDetected) => {
     if (alreadyDetected && message.paymentSlip?.id) {
@@ -180,40 +190,68 @@ function ChatPage() {
   }, [inlineWorkspace]);
 
   const loadConversations = useCallback(async ({ silent = false } = {}) => {
+    conversationsRequestRef.current?.abort();
+    const controller = new AbortController();
+    conversationsRequestRef.current = controller;
     if (!silent) setLoading(true);
     try {
-      const response = await getConversations(queryFilters);
+      const response = await getConversations(queryFilters, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setConversations(safeArray(response.data?.data));
     } catch (requestError) {
-      if (!silent) setError(requestError.response?.data?.message || 'Unable to load conversations.');
+      if (!controller.signal.aborted && !silent) setError(requestError.response?.data?.message || 'Unable to load conversations.');
     } finally {
-      if (!silent) setLoading(false);
+      if (conversationsRequestRef.current === controller) {
+        conversationsRequestRef.current = null;
+        if (!silent) setLoading(false);
+      }
     }
   }, [queryFilters]);
 
   const loadDetails = useCallback(async (conversationId, { silent = false } = {}) => {
     if (!conversationId) return;
+    detailsRequestRef.current?.abort();
+    const controller = new AbortController();
+    detailsRequestRef.current = controller;
     try {
       const [conversationResponse, messageResponse, mediaResponse, noteResponse] = await Promise.all([
-        getConversation(conversationId),
-        getConversationMessages(conversationId),
-        getMedia(conversationId),
-        getNotes(conversationId)
+        getConversation(conversationId, { signal: controller.signal }),
+        getConversationMessages(conversationId, { signal: controller.signal }),
+        getMedia(conversationId, { signal: controller.signal }),
+        getNotes(conversationId, { signal: controller.signal })
       ]);
-      if (String(selectedRef.current) !== String(conversationId)) return;
+      if (controller.signal.aborted || String(selectedRef.current) !== String(conversationId)) return;
       setConversation(conversationResponse.data?.data || null);
       setMessages(safeArray(messageResponse.data?.data));
       setMedia(safeArray(mediaResponse.data?.data));
       setNotes(safeArray(noteResponse.data?.data));
     } catch (requestError) {
-      if (!silent) setError(requestError.response?.data?.message || 'Unable to load conversation details.');
+      if (!controller.signal.aborted && !silent) setError(requestError.response?.data?.message || 'Unable to load conversation details.');
+    } finally {
+      if (detailsRequestRef.current === controller) detailsRequestRef.current = null;
     }
   }, []);
 
-  const refreshUnread = useCallback(() => {
-    getUnreadCount()
-      .then((response) => setUnread(response.data?.data?.unread || 0))
-      .catch(() => {});
+  const refreshUnread = useCallback(({ immediate = false } = {}) => {
+    const run = () => {
+      unreadRefreshRef.current.timer = null;
+      unreadRefreshRef.current.lastRun = Date.now();
+      if (unreadRequestRef.current) return unreadRequestRef.current;
+      const request = getUnreadCount()
+        .then((response) => setUnread(response.data?.data?.unread || 0))
+        .catch(() => {})
+        .finally(() => {
+          if (unreadRequestRef.current === request) unreadRequestRef.current = null;
+        });
+      unreadRequestRef.current = request;
+      return request;
+    };
+    const elapsed = Date.now() - unreadRefreshRef.current.lastRun;
+    if (immediate || elapsed >= UNREAD_REFRESH_THROTTLE_MS) return run();
+    if (!unreadRefreshRef.current.timer) {
+      unreadRefreshRef.current.timer = window.setTimeout(run, UNREAD_REFRESH_THROTTLE_MS - elapsed);
+    }
+    return unreadRequestRef.current;
   }, []);
 
   const applyInteractionMessage = useCallback((currentConversation, message) => {
@@ -239,6 +277,7 @@ function ChatPage() {
 
   useEffect(() => {
     loadConversations();
+    return () => conversationsRequestRef.current?.abort();
   }, [loadConversations]);
 
   useEffect(() => {
@@ -248,9 +287,9 @@ function ChatPage() {
       getTemplates().then((response) => setTemplates(safeArray(response.data?.data))),
       getLabels().then((response) => setLabels(safeArray(response.data?.data))),
       listWhatsAppTemplates({ status: 'APPROVED' }).then((response) => setWhatsAppTemplates(safeArray(response.data?.data))),
-      getUnreadCount().then((response) => setUnread(response.data?.data?.unread || 0))
+      refreshUnread({ immediate: true })
     ]);
-  }, []);
+  }, [refreshUnread]);
 
   useEffect(() => {
     if (!selected) {
@@ -262,7 +301,12 @@ function ChatPage() {
       return;
     }
     loadDetails(selected);
+    return () => detailsRequestRef.current?.abort();
   }, [selected, loadDetails]);
+
+  useEffect(() => () => {
+    if (unreadRefreshRef.current.timer) window.clearTimeout(unreadRefreshRef.current.timer);
+  }, []);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -313,7 +357,6 @@ function ChatPage() {
         ));
         return updated.sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0));
       });
-      loadConversations({ silent: true });
       refreshUnread();
     };
 
@@ -339,10 +382,6 @@ function ChatPage() {
           ? { ...item, lastMessage: { ...item.lastMessage, status: update.status } }
           : item
       )));
-      if (update.status) {
-        if (selectedRef.current) loadDetails(selectedRef.current, { silent: true });
-        loadConversations({ silent: true });
-      }
     };
 
     const handleSocketError = ({ message } = {}) => setError(message || 'Unable to send WhatsApp message.');
@@ -350,7 +389,7 @@ function ChatPage() {
       if (payload.leadId == null && payload.conversationId == null) return;
       const owner = payload.ownerId == null
         ? null
-        : agents.find((agent) => String(agent.id) === String(payload.ownerId)) || null;
+        : agentsRef.current.find((agent) => String(agent.id) === String(payload.ownerId)) || null;
       const matches = (item) => String(item?.lead?.id ?? '') === String(payload.leadId ?? '')
         || String(item?.id ?? '') === String(payload.conversationId ?? '')
         || safeArray(payload.conversationIds).some((id) => String(id) === String(item?.id));
@@ -407,36 +446,13 @@ function ChatPage() {
       socket.off('lead.agent.changed', applyLeadUpdate);
       socket.off('conversation.merged', handleConversationMerged);
     };
-  }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage, agents]);
+  }, [socket, loadConversations, refreshUnread, applyInteractionMessage]);
 
   useEffect(() => {
     if (!socket || !connected || !selected) return;
     socket.emit('chat:join', { conversationId: selected });
     socket.emit('chat:markRead', { conversationId: selected });
   }, [socket, connected, selected]);
-
-  useEffect(() => {
-    if (connected) return undefined;
-    const interval = window.setInterval(() => {
-      loadConversations({ silent: true });
-      refreshUnread();
-    }, 30000);
-    return () => window.clearInterval(interval);
-  }, [connected, loadConversations, refreshUnread]);
-
-  useEffect(() => {
-    if (!selected) return undefined;
-    const interval = window.setInterval(() => {
-      getConversationMessages(selected)
-        .then((response) => {
-          if (String(selectedRef.current) === String(selected)) {
-            setMessages(safeArray(response.data?.data));
-          }
-        })
-        .catch(() => {});
-    }, 30000);
-    return () => window.clearInterval(interval);
-  }, [selected]);
 
   const handleSelectConversation = useCallback((conversationId) => {
     setConversation(null);

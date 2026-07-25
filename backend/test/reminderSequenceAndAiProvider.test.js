@@ -37,10 +37,12 @@ test('blank provider key updates cannot overwrite encrypted key columns', () => 
 
 test('reminder migration is restart-safe and protects active and execution duplicates', () => {
   const source = fs.readFileSync(path.join(__dirname, '../migrations/046_reminder_sequences_ai_providers.js'), 'utf8');
-  assert.match(source, /IF NOT EXISTS reminder_active_subscription_uq/);
+  assert.match(source, /check duplicate active reminder subscriptions/);
+  assert.match(source, /MIGRATION_DUPLICATES_FOUND/);
   assert.match(source, /reminder_execution_step_uq/);
   assert.match(source, /WHERE status IN \('active','paused'\)/);
   assert.match(source, /WHERE NOT EXISTS \(SELECT 1 FROM permissions/);
+  assert.doesNotMatch(source, /\.catch\(\(\)=>null\)/);
 });
 
 test('worker claims due executions with a database lock and skip locked', () => {

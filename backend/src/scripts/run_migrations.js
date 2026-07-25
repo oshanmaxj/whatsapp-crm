@@ -48,6 +48,41 @@ const commissionFinanceUpgradeMigration = require('../../migrations/044_commissi
 const whatsappAiAgentsMigration = require('../../migrations/045_whatsapp_ai_agents');
 const reminderSequencesAiProvidersMigration = require('../../migrations/046_reminder_sequences_ai_providers');
 
+function originalDatabaseError(error) {
+  let current = error;
+  const seen = new Set();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const next = current.original || current.parent || current.cause;
+    if (!next || next === current) break;
+    current = next;
+  }
+  return current || error;
+}
+
+async function runMigration(filename, migration, queryInterface) {
+  console.log(`Running migration: ${filename}`);
+  try {
+    await migration.up(queryInterface, Sequelize);
+    console.log(`Completed migration: ${filename}`);
+  } catch (error) {
+    const original = originalDatabaseError(error);
+    console.error('Migration failed and its current transaction was rolled back.', {
+      migration: filename,
+      operation: error.migrationOperation || 'migration up',
+      message: original.message || error.message,
+      sqlState: original.code || error.original?.code || error.parent?.code || null,
+      sql: original.sql || error.sql || error.original?.sql || error.parent?.sql || null,
+      table: original.table || null,
+      column: original.column || null,
+      constraint: original.constraint || null,
+      duplicates: error.migrationDuplicates || null,
+      orphans: error.migrationOrphans || null
+    });
+    throw error;
+  }
+}
+
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
   if (!tableDesc) return false;
@@ -210,7 +245,7 @@ async function run() {
     console.log('Applied: canonical agent and lecturer commission finance upgrade');
     await whatsappAiAgentsMigration.up(queryInterface, Sequelize);
     console.log('Applied: WhatsApp AI agents, knowledge, conversation state, and audit decisions');
-    await reminderSequencesAiProvidersMigration.up(queryInterface, Sequelize);
+    await runMigration('046_reminder_sequences_ai_providers.js', reminderSequencesAiProvidersMigration, queryInterface);
     console.log('Applied: reminder sequences and AI provider configuration');
     console.log('Applied: canonical payment WhatsApp conversation context');
 

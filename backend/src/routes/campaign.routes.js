@@ -8,6 +8,7 @@ router.use(authMiddleware.authenticate);
 router.get('/audience/preview', campaignController.previewAudience.bind(campaignController));
 router.post('/audience/preview', campaignController.previewAudience.bind(campaignController));
 router.get('/audience/options', campaignController.audienceOptions.bind(campaignController));
+router.post('/header-media', express.json({ limit: '30mb' }), campaignController.uploadHeaderMedia.bind(campaignController));
 router.get('/', campaignController.list.bind(campaignController));
 router.get('/:id', campaignController.get.bind(campaignController));
 router.post('/', campaignController.create.bind(campaignController));

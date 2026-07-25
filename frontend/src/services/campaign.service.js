@@ -13,3 +13,4 @@ export const getCampaignAnalytics = (id) => api.get(`/campaigns/${id}/analytics`
 export const previewAudience = (params = {}) => api.get('/campaigns/audience/preview', { params });
 export const previewBroadcastAudience = (payload = {}) => api.post('/campaigns/audience/preview', payload);
 export const getCampaignAudienceOptions = () => api.get('/campaigns/audience/options');
+export const uploadCampaignHeaderMedia = (payload) => api.post('/campaigns/header-media', payload);

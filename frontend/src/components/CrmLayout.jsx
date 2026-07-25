@@ -166,6 +166,8 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
   const [soundMuted, setSoundMuted] = useState(() => localStorage.getItem(chatSoundMutedStorageKey) === 'true');
   const recentMessageIdsRef = useRef(new Map());
   const audioContextRef = useRef(null);
+  const notificationTriggerRef = useRef(null);
+  const userTriggerRef = useRef(null);
   const token = localStorage.getItem('accessToken');
   const { socket, connected } = useSocket(token);
   const location = useLocation();
@@ -185,6 +187,7 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
   };
 
   const logout = async () => {
+    userTriggerRef.current?.focus();
     setUserAnchor(null);
     await logoutSession().catch(() => null);
     navigate('/login', { replace: true });
@@ -315,20 +318,20 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
               {soundMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
             </IconButton>
           </Tooltip>
-          <IconButton color="inherit" aria-label="Notifications" onClick={(event) => setNotificationAnchor(event.currentTarget)}>
+          <IconButton ref={notificationTriggerRef} color="inherit" aria-label="Notifications" onClick={(event) => setNotificationAnchor(event.currentTarget)}>
             <Badge badgeContent={unreadCount} color="error">
               <NotificationsIconBell />
             </Badge>
           </IconButton>
-          <IconButton onClick={(event) => setUserAnchor(event.currentTarget)} color="inherit" aria-label="Profile menu">
+          <IconButton ref={userTriggerRef} onClick={(event) => setUserAnchor(event.currentTarget)} color="inherit" aria-label="Profile menu">
             <AccountCircleIcon />
           </IconButton>
         </Toolbar>
       </AppBar>
-      <Menu anchorEl={notificationAnchor} open={Boolean(notificationAnchor)} onClose={() => setNotificationAnchor(null)}>
+      <Menu anchorEl={notificationAnchor} open={Boolean(notificationAnchor)} onClose={() => { notificationTriggerRef.current?.focus(); setNotificationAnchor(null); }}>
         {notifications.length === 0 && <MenuItem>No unread notifications</MenuItem>}
         {notifications.map((notification) => (
-          <MenuItem key={notification.id} component={Link} to="/notifications" onClick={() => setNotificationAnchor(null)}>
+          <MenuItem key={notification.id} component={Link} to="/notifications" onClick={() => { notificationTriggerRef.current?.focus(); setNotificationAnchor(null); }}>
             <Box sx={{ maxWidth: 320 }}>
               <Typography variant="body2" fontWeight={800} noWrap>{notification.title}</Typography>
               <Typography variant="caption" color="text.secondary" noWrap>{notification.message || notification.type}</Typography>
@@ -336,11 +339,11 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
           </MenuItem>
         ))}
       </Menu>
-      <Menu anchorEl={userAnchor} open={Boolean(userAnchor)} onClose={() => setUserAnchor(null)}>
-        <MenuItem component={Link} to="/profile" onClick={() => setUserAnchor(null)}>
+      <Menu anchorEl={userAnchor} open={Boolean(userAnchor)} onClose={() => { userTriggerRef.current?.focus(); setUserAnchor(null); }}>
+        <MenuItem component={Link} to="/profile" onClick={() => { userTriggerRef.current?.focus(); setUserAnchor(null); }}>
           <AccountCircleIcon fontSize="small" style={{ marginRight: 8 }} /> Profile
         </MenuItem>
-        <MenuItem component={Link} to="/change-password" onClick={() => setUserAnchor(null)}>
+        <MenuItem component={Link} to="/change-password" onClick={() => { userTriggerRef.current?.focus(); setUserAnchor(null); }}>
           <LockIcon fontSize="small" style={{ marginRight: 8 }} /> Change Password
         </MenuItem>
         <MenuItem onClick={logout}>

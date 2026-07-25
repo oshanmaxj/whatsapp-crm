@@ -5,7 +5,7 @@ module.exports = (sequelize, DataTypes) => {
     name: { type: DataTypes.STRING(180), allowNull: false },
     description: { type: DataTypes.TEXT, allowNull: true },
     status: {
-      type: DataTypes.ENUM('Draft', 'Scheduled', 'Processing', 'Completed', 'Failed', 'Cancelled'),
+      type: DataTypes.ENUM('Draft', 'Scheduled', 'Processing', 'Completed', 'Completed with failures', 'Failed', 'Cancelled'),
       allowNull: false,
       defaultValue: 'Draft'
     },
@@ -20,6 +20,8 @@ module.exports = (sequelize, DataTypes) => {
     templateName: { type: DataTypes.STRING(150), allowNull: true },
     messageBody: { type: DataTypes.TEXT, allowNull: false },
     variables: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },
+    headerMedia: { type: DataTypes.JSONB, allowNull: true },
+    headerText: { type: DataTypes.TEXT, allowNull: true },
     mediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     scheduledAt: { type: DataTypes.DATE, allowNull: true },
     sentAt: { type: DataTypes.DATE, allowNull: true },

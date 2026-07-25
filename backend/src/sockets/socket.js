@@ -7,10 +7,16 @@ const logger = require('../config/logger');
 const { corsOptions } = require('../config/cors');
 
 const activeSockets = new Map();
+const SOCKET_PATH = '/socket.io';
+const socketMetadata = socket => ({
+  origin: socket.handshake.headers.origin || null,
+  transport: socket.conn.transport.name,
+  path: SOCKET_PATH
+});
 
 function initSocket(server) {
   const io = new Server(server, {
-    path: '/socket.io',
+    path: SOCKET_PATH,
     transports: ['polling', 'websocket'],
     cors: {
       origin: corsOptions.origin,
@@ -21,27 +27,46 @@ function initSocket(server) {
 
   socketService.setIo(io);
 
-  io.on('connection', async (socket) => {
+  io.engine.on('connection_error', error => {
+    logger.warn('socket_engine_connection_failed', {
+      origin: error.req?.headers?.origin || null,
+      transport: error.req?._query?.transport || null,
+      path: error.req?.url?.split('?')[0] || SOCKET_PATH,
+      code: error.code,
+      message: error.message
+    });
+  });
+
+  io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) {
-      socket.disconnect(true);
-      return;
+      logger.warn('socket_authentication_failed', { ...socketMetadata(socket), result: 'missing_token' });
+      const error = new Error('Authentication required');
+      error.data = { code: 'AUTH_REQUIRED' };
+      return next(error);
     }
 
     try {
-      const payload = authService.verifyAccessToken(token);
-      socket.user = payload;
+      socket.user = authService.verifyAccessToken(token);
+      logger.info('socket_authentication_succeeded', { ...socketMetadata(socket), result: 'authenticated', userId: socket.user?.id || null });
+      return next();
     } catch (error) {
-      socket.disconnect(true);
-      return;
+      const code = error.name === 'TokenExpiredError' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
+      logger.warn('socket_authentication_failed', { ...socketMetadata(socket), result: code.toLowerCase() });
+      const authError = new Error('Authentication failed');
+      authError.data = { code };
+      return next(authError);
     }
+  });
 
+  io.on('connection', async (socket) => {
     const userId = socket.user?.id;
     if (!userId) {
       socket.disconnect(true);
       return;
     }
 
+    logger.info('socket_connected', { ...socketMetadata(socket), userId });
     activeSockets.set(userId, socket.id);
     socket.join(`user_${userId}`);
     let access;
@@ -121,8 +146,9 @@ function initSocket(server) {
       }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', reason => {
       activeSockets.delete(userId);
+      logger.info('socket_disconnected', { ...socketMetadata(socket), userId, reason });
       io.emit('presence:update', { userId, online: false });
     });
   });

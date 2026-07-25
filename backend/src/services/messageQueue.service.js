@@ -5,6 +5,19 @@ const outboundHistoryService = require('./outboundHistory.service');
 const logger = require('../config/logger');
 
 const RATE_LIMIT_PER_TICK = Number(process.env.QUEUE_RATE_LIMIT_PER_TICK || 5);
+const PERMANENT_TEMPLATE_CODES = new Set([132000, 132001, 132005, 132007, 132012, 132015, 132016]);
+
+function campaignFailure(error) {
+  const meta = error.response?.data?.error || error.whatsappApiResponse?.error || {};
+  if (Number(meta.code) === 132012) {
+    return { permanent: true, message: 'Template requires an image header, but no valid image was provided.' };
+  }
+  const status = Number(error.response?.status || error.status || 0);
+  return {
+    permanent: PERMANENT_TEMPLATE_CODES.has(Number(meta.code)) || (status >= 400 && status < 500 && status !== 408 && status !== 429),
+    message: String(meta.error_user_msg || meta.message || error.message || 'WhatsApp delivery failed.').slice(0, 255)
+  };
+}
 
 function templatePreview(body, components = []) {
   const parameters = components.find((component) => component.type === 'body')?.parameters || [];
@@ -228,10 +241,11 @@ class MessageQueueService {
         return row;
       }
       if (preparedHistory) await outboundHistoryService.fail(preparedHistory, error).catch(() => null);
-      const hasAttempts = row.attempts < row.maxAttempts;
+      const classified = campaignFailure(error);
+      const hasAttempts = !classified.permanent && row.attempts < row.maxAttempts;
       await row.update({
         status: hasAttempts ? 'retrying' : 'failed',
-        lastError: error.message,
+        lastError: classified.message,
         nextAttemptAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : null,
         scheduledAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : row.scheduledAt
       });
@@ -251,13 +265,13 @@ class MessageQueueService {
       if (row.campaignRecipientId && !hasAttempts) {
         await CampaignRecipient.update({
           status: 'failed',
-          errorMessage: error.message
+          errorMessage: classified.message
         }, { where: { id: row.campaignRecipientId } });
         await CampaignEvent.create({
           campaignId: row.campaignId,
           recipientId: row.campaignRecipientId,
           eventType: 'failed',
-          payload: { queueId: row.id, error: error.message }
+          payload: { queueId: row.id, error: classified.message, permanent: classified.permanent }
         });
         await this.refreshCampaignStatus(row.campaignId);
       }
@@ -266,10 +280,22 @@ class MessageQueueService {
   }
 
   async dispatch(row, resolvedWhatsappAccountId = null) {
-    const payload = row.payload || {};
+    let payload = row.payload || {};
     const whatsappAccountId = resolvedWhatsappAccountId || row.whatsappAccountId;
     if (row.channel !== 'whatsapp') return { id: `system-${row.id}` };
-    if (row.messageType === 'template') return whatsappService.sendTemplateMessage({ ...payload, whatsappAccountId, log: false });
+    if (row.messageType === 'template') {
+      const headerType = String(payload.templateHeaderType || 'NONE').toLowerCase();
+      if (['image', 'video', 'document'].includes(headerType)) {
+        const resolved = await require('./interactiveMedia.service').resolveHeader(
+          { type: headerType, ...(payload.headerMedia || {}) },
+          { whatsappAccountId, interactiveType: 'button' }
+        );
+        const components = (payload.components || []).filter(component => component.type !== 'header');
+        components.unshift({ type: 'header', parameters: [{ type: headerType, [headerType]: resolved.header[headerType] }] });
+        payload = { ...payload, components };
+      }
+      return whatsappService.sendTemplateMessage({ ...payload, whatsappAccountId, log: false });
+    }
     if (['image', 'document', 'audio', 'video'].includes(row.messageType)) return whatsappService.sendMediaMessage({ ...payload, whatsappAccountId, mediaType: row.messageType, log: false });
     return whatsappService.sendTextMessage({ to: row.toNumber, text: payload.text || payload.message || '', whatsappAccountId, log: false });
   }
@@ -283,7 +309,7 @@ class MessageQueueService {
     ]);
     if (remaining > 0) return;
     await Campaign.update({
-      status: sent > 0 ? 'Completed' : (failed > 0 ? 'Failed' : 'Completed'),
+      status: sent > 0 && failed > 0 ? 'Completed with failures' : (sent > 0 ? 'Completed' : (failed > 0 ? 'Completed with failures' : 'Completed')),
       sentAt: new Date()
     }, { where: { id: campaignId } });
   }
@@ -296,3 +322,4 @@ class MessageQueueService {
 
 module.exports = new MessageQueueService();
 module.exports.MessageQueueService = MessageQueueService;
+module.exports.campaignFailure = campaignFailure;

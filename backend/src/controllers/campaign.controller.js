@@ -1,7 +1,24 @@
 const campaignService = require('../services/campaign.service');
 const whatsappAccountAccessService = require('../services/whatsappAccountAccess.service');
+const interactiveMediaService = require('../services/interactiveMedia.service');
 
 class CampaignController {
+  async uploadHeaderMedia(req, res, next) {
+    try {
+      const whatsappAccountId = req.body?.whatsappAccountId;
+      await whatsappAccountAccessService.assertAccess(whatsappAccountId, req.user?.id);
+      const media = await interactiveMediaService.storeAndUpload({
+        scope: 'campaign',
+        scopeId: `draft-${req.user?.id || 'unknown'}`,
+        dataBase64: req.body?.dataBase64,
+        fileName: req.body?.fileName,
+        mimeType: req.body?.mimeType,
+        mediaType: req.body?.mediaType,
+        whatsappAccountId
+      });
+      return res.status(201).json({ success: true, data: media });
+    } catch (err) { return next(err); }
+  }
   async list(req, res, next) {
     try { return res.json({ success: true, data: await campaignService.listCampaigns(req.query, req.user?.id) }); } catch (err) { next(err); }
   }

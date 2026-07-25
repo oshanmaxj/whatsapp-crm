@@ -10,21 +10,22 @@ import AnalyticsIcon from '@mui/icons-material/Analytics';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import {
-  createCampaign, deleteCampaign, getCampaignAnalytics, getCampaigns, importCampaignRecipients,
-  getCampaignAudienceOptions, previewBroadcastAudience, scheduleCampaign, sendCampaign
+  createCampaign, deleteCampaign, getCampaignAnalytics, getCampaigns, importCampaignRecipients, updateCampaign,
+  getCampaignAudienceOptions, previewBroadcastAudience, scheduleCampaign, sendCampaign, uploadCampaignHeaderMedia
 } from '../services/campaign.service';
 import { getContacts } from '../services/contact.service';
-import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
+import { listWhatsAppTemplates, syncWhatsAppTemplates } from '../services/whatsappTemplate.service';
 import { getRoles } from '../services/userManagement.service';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 
 const steps = ['Details', 'Template', 'Recipients', 'Variables', 'Schedule', 'Review'];
 const leadStatuses = ['New', 'Contacted', 'Interested', 'Ignore', 'Agreed', 'Registered', 'Lost'];
-const statusColors = { Draft: 'default', Scheduled: 'info', Processing: 'warning', Completed: 'success', Failed: 'error', Cancelled: 'default' };
+const statusColors = { Draft: 'default', Scheduled: 'info', Processing: 'warning', Completed: 'success', 'Completed with failures': 'warning', Failed: 'error', Cancelled: 'default' };
 const blankForm = () => ({
   name: '', description: '', whatsappTemplateId: '', recipientMode: 'all', contactIds: [],
   tag: '', leadStatus: '', departmentId: '', csv: '', startDate: '', endDate: '',
-  statusId: '', sourceId: '', variables: {}, sendMode: 'now', scheduledAt: '', whatsappAccountId: ''
+  statusId: '', sourceId: '', variables: {}, headerMedia: null, headerPreview: '', headerText: '',
+  sendMode: 'now', scheduledAt: '', whatsappAccountId: ''
 });
 
 function displayName(contact) {
@@ -72,6 +73,7 @@ function CampaignsPage() {
     try {
       setLoading(true);
       setError('');
+      if (selectedAccountId) await syncWhatsAppTemplates(selectedAccountId);
       const [campaignRes, templateRes, contactRes, roleRes, audienceOptionsRes] = await Promise.all([
         getCampaigns({ whatsappAccountId: selectedAccountId || undefined }),
         listWhatsAppTemplates({ status: 'APPROVED', whatsappAccountId: selectedAccountId || undefined }),
@@ -107,6 +109,12 @@ function CampaignsPage() {
     if (step === 0 && !form.whatsappAccountId) return 'Select a WhatsApp number.';
     if (step === 0 && !form.name.trim()) return 'Campaign name is required.';
     if (step === 1 && !form.whatsappTemplateId) return 'Select an approved WhatsApp template.';
+    if (step === 1 && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate?.headerType) && !form.headerMedia?.mediaId) {
+      return `${selectedTemplate.headerType.charAt(0)}${selectedTemplate.headerType.slice(1).toLowerCase()} header media is required.`;
+    }
+    if (step === 1 && selectedTemplate?.headerType === 'TEXT' && /\{\{\s*\d+\s*\}\}/.test(selectedTemplate.headerContent || '') && !form.headerText.trim()) {
+      return 'Header text is required.';
+    }
     if (step === 2) {
       if (form.recipientMode === 'selected' && !form.contactIds.length) return 'Select at least one contact.';
       if (form.recipientMode === 'tag' && !form.tag) return 'Select a contact tag.';
@@ -188,6 +196,8 @@ function CampaignsPage() {
         whatsappAccountId: form.whatsappAccountId,
         ...audience,
         variables: form.variables,
+        headerMedia: form.headerMedia,
+        headerText: form.headerText.trim() || null,
         scheduledAt: form.sendMode === 'schedule' ? new Date(form.scheduledAt).toISOString() : null
       });
       const campaign = response.data.data;
@@ -254,12 +264,72 @@ function CampaignsPage() {
     reader.readAsText(file);
   };
 
+  const uploadHeader = (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedTemplate) return;
+    const mediaType = selectedTemplate.headerType.toLowerCase();
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        setSaving(true);
+        setError('');
+        const dataBase64 = String(reader.result || '');
+        const response = await uploadCampaignHeaderMedia({
+          whatsappAccountId: form.whatsappAccountId,
+          mediaType,
+          fileName: file.name,
+          mimeType: file.type,
+          dataBase64
+        });
+        setForm((current) => ({ ...current, headerMedia: response.data.data, headerPreview: dataBase64 }));
+      } catch (err) {
+        setError(apiMessage(err, `Unable to upload the required ${mediaType} header.`));
+      } finally {
+        setSaving(false);
+        event.target.value = '';
+      }
+    };
+    reader.onerror = () => setError('Unable to read the selected header media.');
+    reader.readAsDataURL(file);
+  };
+
+  const repairFailedHeader = (event) => {
+    const file = event.target.files?.[0];
+    const campaign = analytics?.campaign;
+    const headerType = campaign?.whatsappTemplate?.headerType;
+    if (!file || !campaign || !['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerType)) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        setSaving(true);
+        setError('');
+        const uploaded = await uploadCampaignHeaderMedia({
+          whatsappAccountId: campaign.whatsappAccountId,
+          mediaType: headerType.toLowerCase(),
+          fileName: file.name,
+          mimeType: file.type,
+          dataBase64: String(reader.result || '')
+        });
+        await updateCampaign(campaign.id, { headerMedia: uploaded.data.data });
+        const refreshed = await getCampaignAnalytics(campaign.id);
+        setAnalytics(refreshed.data.data);
+        setSuccess('Header media corrected. Retry Failed is now available.');
+      } catch (err) {
+        setError(apiMessage(err, 'Unable to correct the campaign header media.'));
+      } finally {
+        setSaving(false);
+        event.target.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const renderStep = () => {
     if (step === 0) return <Grid container spacing={2}>
       <Grid item xs={12}><WhatsAppAccountSelect value={form.whatsappAccountId} onChange={(value) => {
         setField('whatsappAccountId', value);
         setSelectedAccountId(value);
-        setForm((current) => ({ ...current, whatsappAccountId: value, whatsappTemplateId: '' }));
+        setForm((current) => ({ ...current, whatsappAccountId: value, whatsappTemplateId: '', headerMedia: null, headerPreview: '', headerText: '' }));
       }} fullWidth required /></Grid>
       <Grid item xs={12}><TextField label="Campaign name" value={form.name} onChange={(e) => setField('name', e.target.value)} required fullWidth /></Grid>
       <Grid item xs={12}><TextField label="Campaign description" value={form.description} onChange={(e) => setField('description', e.target.value)} multiline minRows={3} fullWidth /></Grid>
@@ -267,9 +337,20 @@ function CampaignsPage() {
     if (step === 1) return <Stack spacing={2}>
       <FormControl fullWidth><InputLabel>Approved WhatsApp template</InputLabel><Select label="Approved WhatsApp template" value={form.whatsappTemplateId} onChange={(e) => {
         setField('whatsappTemplateId', e.target.value);
-        setForm((current) => ({ ...current, whatsappTemplateId: e.target.value, variables: {} }));
+        setForm((current) => ({ ...current, whatsappTemplateId: e.target.value, variables: {}, headerMedia: null, headerPreview: '', headerText: '' }));
       }}>{templates.map((template) => <MenuItem key={template.id} value={template.id}>{template.name} · {template.language}</MenuItem>)}</Select></FormControl>
       {selectedTemplate && <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}><Typography fontWeight={850}>{selectedTemplate.name}</Typography><Typography sx={{ whiteSpace: 'pre-wrap', mt: 1 }}>{selectedTemplate.body}</Typography><Stack direction="row" spacing={1} sx={{ mt: 1 }}><Chip size="small" label={selectedTemplate.category} /><Chip size="small" color="success" label="APPROVED" /></Stack></Paper>}
+      {selectedTemplate && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate.headerType) && <Stack spacing={1}>
+        <Button component="label" variant="outlined" disabled={saving}>
+          {`Header ${selectedTemplate.headerType.charAt(0)}${selectedTemplate.headerType.slice(1).toLowerCase()} *`}
+          <input hidden type="file" accept={selectedTemplate.headerType === 'IMAGE' ? 'image/jpeg,image/png' : selectedTemplate.headerType === 'VIDEO' ? 'video/mp4,video/3gpp' : 'application/pdf'} onChange={uploadHeader} />
+        </Button>
+        {form.headerPreview && selectedTemplate.headerType === 'IMAGE' && <Box component="img" src={form.headerPreview} alt="Selected header preview" sx={{ maxHeight: 220, maxWidth: '100%', objectFit: 'contain', borderRadius: 1 }} />}
+        {form.headerPreview && selectedTemplate.headerType === 'VIDEO' && <Box component="video" src={form.headerPreview} controls sx={{ maxHeight: 220, maxWidth: '100%' }} />}
+        {form.headerMedia && <Chip color="success" label={`${form.headerMedia.fileName} uploaded to WhatsApp`} />}
+        <Typography variant="caption" color="text.secondary">Required by the approved Meta template. Template sample media is not used for delivery.</Typography>
+      </Stack>}
+      {selectedTemplate?.headerType === 'TEXT' && /\{\{\s*\d+\s*\}\}/.test(selectedTemplate.headerContent || '') && <TextField required label="Header Text *" value={form.headerText} onChange={(e) => setField('headerText', e.target.value)} fullWidth />}
     </Stack>;
     if (step === 2) return <Stack spacing={2}>
       <FormControl fullWidth><InputLabel>Recipient source</InputLabel><Select label="Recipient source" value={form.recipientMode} onChange={(e) => { setField('recipientMode', e.target.value); setPreview(null); }}>
@@ -303,7 +384,7 @@ function CampaignsPage() {
       {form.sendMode === 'schedule' && <TextField label="Schedule date/time" type="datetime-local" value={form.scheduledAt} onChange={(e) => setField('scheduledAt', e.target.value)} InputLabelProps={{ shrink: true }} inputProps={{ min: new Date().toISOString().slice(0, 16) }} fullWidth />}
     </Stack>;
     return <Grid container spacing={2}>
-      {[['Campaign', form.name], ['Template', selectedTemplate?.name], ['Recipients', preview ? `${preview.total} unique recipient(s)` : form.recipientMode], ['Delivery', form.sendMode === 'schedule' ? formatDate(form.scheduledAt) : 'Send now']].map(([label, value]) => <Grid item xs={12} sm={6} key={label}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography fontWeight={850}>{value || '-'}</Typography></Paper></Grid>)}
+      {[['Campaign', form.name], ['Template', selectedTemplate?.name], ['Header', selectedTemplate?.headerType === 'NONE' ? 'None' : form.headerMedia?.fileName || form.headerText || selectedTemplate?.headerType], ['Recipients', preview ? `${preview.total} unique recipient(s)` : form.recipientMode], ['Delivery', form.sendMode === 'schedule' ? formatDate(form.scheduledAt) : 'Send now']].map(([label, value]) => <Grid item xs={12} sm={6} key={label}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography fontWeight={850}>{value || '-'}</Typography></Paper></Grid>)}
       <Grid item xs={12}><Alert severity="warning">Confirming will create deduplicated queue jobs. Actual delivery requires valid WhatsApp Cloud API credentials.</Alert></Grid>
     </Grid>;
   };
@@ -314,13 +395,13 @@ function CampaignsPage() {
     {loading && <LinearProgress />}
     <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider' }}><Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}><Box sx={{ flex: 1 }}><Typography variant="h5" fontWeight={850}>Broadcasting / Campaigns</Typography><Typography color="text.secondary">Create compliant WhatsApp broadcasts, schedule queue delivery, and monitor results.</Typography></Box><WhatsAppAccountSelect value={selectedAccountId} onChange={setSelectedAccountId} sx={{ minWidth: 260 }} /><Button variant="contained" startIcon={<AddIcon />} onClick={openWizard}>Create Broadcast</Button></Stack></Paper>
     <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}><TableContainer><Table><TableHead><TableRow><TableCell>Campaign</TableCell><TableCell>Template</TableCell><TableCell>Recipients</TableCell><TableCell>Status</TableCell><TableCell>Scheduled</TableCell><TableCell>Sent</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-      {campaigns.map((campaign) => <TableRow key={campaign.id} hover><TableCell><Typography fontWeight={850}>{campaign.name}</Typography><Typography variant="caption" color="text.secondary">{campaign.description || 'No description'}</Typography></TableCell><TableCell>{campaign.whatsappTemplate?.name || campaign.templateName || '-'}</TableCell><TableCell>{campaign.recipientCount || 0}</TableCell><TableCell><Chip size="small" label={campaign.status} color={statusColors[campaign.status] || 'default'} /></TableCell><TableCell>{formatDate(campaign.scheduledAt)}</TableCell><TableCell>{formatDate(campaign.sentAt)}</TableCell><TableCell align="right">{['Draft', 'Failed', 'Completed'].includes(campaign.status) && <IconButton title={campaign.status === 'Draft' ? 'Send now' : 'Retry failed recipients'} onClick={() => retryOrSend(campaign)}><PlayArrowIcon /></IconButton>}<IconButton title="Analytics" onClick={() => showAnalytics(campaign)}><AnalyticsIcon /></IconButton><IconButton color="error" title="Delete" onClick={() => remove(campaign)}><DeleteOutlineIcon /></IconButton></TableCell></TableRow>)}
+      {campaigns.map((campaign) => <TableRow key={campaign.id} hover><TableCell><Typography fontWeight={850}>{campaign.name}</Typography><Typography variant="caption" color="text.secondary">{campaign.description || 'No description'}</Typography></TableCell><TableCell>{campaign.whatsappTemplate?.name || campaign.templateName || '-'}</TableCell><TableCell>{campaign.recipientCount || 0}</TableCell><TableCell><Chip size="small" label={campaign.status} color={statusColors[campaign.status] || 'default'} /></TableCell><TableCell>{formatDate(campaign.scheduledAt)}</TableCell><TableCell>{formatDate(campaign.sentAt)}</TableCell><TableCell align="right">{campaign.status === 'Draft' && <IconButton title="Send now" onClick={() => retryOrSend(campaign)}><PlayArrowIcon /></IconButton>}<IconButton title="Analytics" onClick={() => showAnalytics(campaign)}><AnalyticsIcon /></IconButton><IconButton color="error" title="Delete" onClick={() => remove(campaign)}><DeleteOutlineIcon /></IconButton></TableCell></TableRow>)}
       {!campaigns.length && !loading && <TableRow><TableCell colSpan={7}><Box sx={{ py: 6, textAlign: 'center' }}><Typography fontWeight={850}>No broadcasts yet</Typography><Typography color="text.secondary">Create your first professional WhatsApp campaign.</Typography></Box></TableCell></TableRow>}
     </TableBody></Table></TableContainer></Paper>
 
     <Dialog open={wizardOpen} onClose={() => !saving && setWizardOpen(false)} maxWidth="md" fullWidth><DialogTitle>Create Broadcast</DialogTitle><DialogContent><Stepper activeStep={step} alternativeLabel sx={{ py: 2 }}>{steps.map((label) => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}</Stepper><Box sx={{ py: 2, minHeight: 300 }}>{renderStep()}</Box></DialogContent><DialogActions><Button onClick={() => setWizardOpen(false)} disabled={saving}>Cancel</Button>{step > 0 && <Button onClick={() => { setError(''); setStep((current) => current - 1); }} disabled={saving}>Back</Button>}{step < steps.length - 1 ? <Button variant="contained" onClick={next} disabled={saving}>{saving ? 'Checking...' : 'Next'}</Button> : <><Button onClick={() => confirm(true)} disabled={saving}>Save Draft</Button><Button variant="contained" onClick={() => confirm(false)} disabled={saving}>{saving ? 'Queueing...' : form.sendMode === 'schedule' ? 'Confirm Schedule' : 'Confirm & Send'}</Button></>}</DialogActions></Dialog>
 
-    <Dialog open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} maxWidth="md" fullWidth><DialogTitle>Campaign Analytics</DialogTitle><DialogContent>{analytics && <Stack spacing={2}><Typography variant="h6" fontWeight={850}>{analytics.campaign?.name}</Typography><Grid container spacing={2}>{Object.entries(analytics.totals || {}).map(([key, value]) => <Grid item xs={6} md={4} key={key}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="h5" fontWeight={900}>{value}</Typography><Typography color="text.secondary">{key.replaceAll(/([A-Z])/g, ' $1')}</Typography></Paper></Grid>)}</Grid><Stack direction="row" spacing={1}>{Object.entries(analytics.rates || {}).map(([key, value]) => <Chip key={key} color="primary" variant="outlined" label={`${key.replaceAll(/([A-Z])/g, ' $1')}: ${Number(value).toFixed(1)}%`} />)}</Stack><Typography fontWeight={850}>Failed recipients</Typography>{analytics.failureReport?.length ? <Table size="small"><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Phone</TableCell><TableCell>Reason</TableCell></TableRow></TableHead><TableBody>{analytics.failureReport.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.phone}</TableCell><TableCell>{item.errorMessage || item.status}</TableCell></TableRow>)}</TableBody></Table> : <Alert severity="success">No failed recipients.</Alert>}</Stack>}</DialogContent><DialogActions><Button onClick={() => setAnalyticsOpen(false)}>Close</Button></DialogActions></Dialog>
+    <Dialog open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} maxWidth="md" fullWidth><DialogTitle>Campaign Analytics</DialogTitle><DialogContent>{analytics && <Stack spacing={2}><Typography variant="h6" fontWeight={850}>{analytics.campaign?.name}</Typography><Grid container spacing={2}>{Object.entries(analytics.totals || {}).map(([key, value]) => <Grid item xs={6} md={4} key={key}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="h5" fontWeight={900}>{value}</Typography><Typography color="text.secondary">{key.replaceAll(/([A-Z])/g, ' $1')}</Typography></Paper></Grid>)}</Grid><Stack direction="row" spacing={1}>{Object.entries(analytics.rates || {}).map(([key, value]) => <Chip key={key} color="primary" variant="outlined" label={`${key.replaceAll(/([A-Z])/g, ' $1')}: ${Number(value).toFixed(1)}%`} />)}</Stack><Typography fontWeight={850}>Failed recipients</Typography>{analytics.failureReport?.length ? <Table size="small"><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Phone</TableCell><TableCell>Reason</TableCell></TableRow></TableHead><TableBody>{analytics.failureReport.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.phone}</TableCell><TableCell>{item.errorMessage || item.status}</TableCell></TableRow>)}</TableBody></Table> : <Alert severity="success">No failed recipients.</Alert>}{analytics.failureReport?.length > 0 && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(analytics.campaign?.whatsappTemplate?.headerType) && <Button component="label" variant="outlined" disabled={saving}>Correct Header Media<input hidden type="file" accept={analytics.campaign.whatsappTemplate.headerType === 'IMAGE' ? 'image/jpeg,image/png' : analytics.campaign.whatsappTemplate.headerType === 'VIDEO' ? 'video/mp4,video/3gpp' : 'application/pdf'} onChange={repairFailedHeader} /></Button>}</Stack>}</DialogContent><DialogActions>{analytics?.failureReport?.length > 0 && analytics?.campaign?.headerMedia?.mediaId && <Button variant="contained" disabled={saving} onClick={async () => { await retryOrSend(analytics.campaign); setAnalyticsOpen(false); }}>Retry Failed</Button>}<Button onClick={() => setAnalyticsOpen(false)}>Close</Button></DialogActions></Dialog>
   </Stack>;
 }
 

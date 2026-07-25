@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { SOCKET_URL } from '../config/apiConfig';
+import { clearAuthState, refreshAccessToken } from '../services/api';
 
 export const SOCKET_PATH = '/socket.io';
 export const SOCKET_TRANSPORTS = ['polling', 'websocket'];
@@ -24,7 +25,13 @@ export function useSocket(token) {
       path: SOCKET_PATH,
       transports: SOCKET_TRANSPORTS,
       upgrade: true,
-      withCredentials: true
+      withCredentials: true,
+      reconnection: true,
+      reconnectionAttempts: 8,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 30000,
+      randomizationFactor: 0.5,
+      timeout: 20000
     });
   }, [currentToken]);
 
@@ -44,6 +51,18 @@ export function useSocket(token) {
       setConnected(false);
       if (process.env.NODE_ENV === 'development') {
         console.log('WhatsApp CRM socket disconnected', reason);
+      }
+    });
+    socketClient.on('connect_error', async (error) => {
+      const code = error?.data?.code;
+      if (!['AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_EXPIRED'].includes(code)) return;
+      socketClient.io.reconnection(false);
+      try {
+        await refreshAccessToken();
+      } catch {
+        clearAuthState();
+        if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('authNotice', 'Your session expired. Please sign in again.');
+        if (window.location.pathname !== '/login') window.location.assign('/login');
       }
     });
 

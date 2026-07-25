@@ -16,7 +16,10 @@ const {
 const messageQueueService = require('./messageQueue.service');
 const whatsappComplianceService = require('./whatsappCompliance.service');
 const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
+const whatsappTemplateService = require('./whatsappTemplate.service');
+const interactiveMediaService = require('./interactiveMedia.service');
 const { normalizePhone } = require('../utils/phone');
+const logger = require('../config/logger');
 
 function fullName(person) {
   return [person?.firstName, person?.lastName].filter(Boolean).join(' ') || person?.name || person?.phone || 'Unknown';
@@ -66,17 +69,36 @@ function resolveVariable(source, recipient, campaign) {
   return values[key] ?? data[key] ?? key;
 }
 
-function templateComponents(campaign, recipient) {
+function templateComponents(template, campaign, recipient, headerBinding = null) {
+  const components = [];
+  const headerType = String(template?.headerType || 'NONE').toUpperCase();
+  if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerType)) {
+    const type = headerType.toLowerCase();
+    const source = headerBinding?.[type];
+    if (!source?.id && !source?.link) {
+      throw Object.assign(new Error(`Template requires a ${type} header, but no valid ${type} was provided.`), {
+        status: 422, code: 'CAMPAIGN_TEMPLATE_HEADER_REQUIRED',
+        errors: { headerMedia: `${headerType.charAt(0)}${headerType.slice(1).toLowerCase()} header media is required.` }
+      });
+    }
+    components.push({ type: 'header', parameters: [{ type, [type]: source }] });
+  } else if (headerType === 'TEXT' && /\{\{\s*\d+\s*\}\}/.test(String(template.headerContent || ''))) {
+    if (!String(campaign.headerText || '').trim()) {
+      throw Object.assign(new Error('Template requires a text header value.'), {
+        status: 422, code: 'CAMPAIGN_TEMPLATE_HEADER_REQUIRED', errors: { headerText: 'Header text is required.' }
+      });
+    }
+    components.push({ type: 'header', parameters: [{ type: 'text', text: String(campaign.headerText).trim() }] });
+  }
   const mappings = campaign.variables || {};
   const keys = Object.keys(mappings).sort((a, b) => Number(a) - Number(b));
-  if (!keys.length) return [];
-  return [{
-    type: 'body',
-    parameters: keys.map((key) => ({
+  if (keys.length) components.push({
+    type: 'body', parameters: keys.map((key) => ({
       type: 'text',
       text: String(resolveVariable(mappings[key], recipient, campaign))
     }))
-  }];
+  });
+  return components;
 }
 
 function legacyMessageBody(campaign, recipient) {
@@ -175,6 +197,8 @@ class CampaignService {
       templateName: template.name,
       messageBody: template.body,
       variables: payload.variables || {},
+      headerMedia: payload.headerMedia || null,
+      headerText: payload.headerText || null,
       mediaId: payload.mediaId || null,
       scheduledAt: payload.scheduledAt || null,
       createdBy
@@ -362,11 +386,28 @@ class CampaignService {
   async queueCampaign(id, { scheduledAt = null } = {}) {
     const campaign = await this.getCampaign(id);
     if (campaign.status === 'Cancelled') throw Object.assign(new Error('Cancelled campaigns cannot be sent'), { status: 409 });
+    if (campaign.whatsappAccountId) await whatsappTemplateService.sync(campaign.whatsappAccountId);
     const template = campaign.whatsappTemplateId
       ? await this.approvedTemplate(campaign.whatsappTemplateId, campaign.whatsappAccountId)
       : await WhatsAppTemplate.findOne({ where: { name: campaign.templateName, status: 'APPROVED', whatsappAccountId: campaign.whatsappAccountId } });
     if (!template && !String(campaign.messageBody || '').trim()) {
       throw Object.assign(new Error('This legacy campaign has no approved WhatsApp template or message body'), { status: 422 });
+    }
+    let resolvedHeader = null;
+    if (template && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(template.headerType).toUpperCase())) {
+      const mediaType = String(template.headerType).toLowerCase();
+      if (!campaign.headerMedia || String(campaign.headerMedia.mediaType).toLowerCase() !== mediaType) {
+        throw Object.assign(new Error(`Template requires a ${mediaType} header, but no valid ${mediaType} was provided.`), {
+          status: 422, code: 'CAMPAIGN_TEMPLATE_HEADER_REQUIRED',
+          errors: { headerMedia: `${template.headerType} header media is required.` }
+        });
+      }
+      const resolved = await interactiveMediaService.resolveHeader(
+        { type: mediaType, ...campaign.headerMedia },
+        { whatsappAccountId: campaign.whatsappAccountId, interactiveType: 'button' }
+      );
+      resolvedHeader = resolved.header;
+      if (resolved.binding) await campaign.update({ headerMedia: resolved.binding });
     }
     const recipients = await this.ensureRecipients(campaign);
     if (!recipients.length) throw Object.assign(new Error('No valid recipients matched this broadcast'), { status: 422 });
@@ -408,7 +449,9 @@ class CampaignService {
               to: recipient.phone,
               templateName: template.name,
               language: template.language,
-              components: templateComponents(campaign, recipient),
+              components: templateComponents(template, campaign, recipient, resolvedHeader),
+              templateHeaderType: template.headerType,
+              headerMedia: campaign.headerMedia,
               log: true
               , whatsappAccountId: campaign.whatsappAccountId
             }
@@ -419,6 +462,19 @@ class CampaignService {
               , whatsappAccountId: campaign.whatsappAccountId
             }
       }, campaign.createdBy);
+      if (template) {
+        const components = templateComponents(template, campaign, recipient, resolvedHeader);
+        logger.info('campaign_template_payload_ready', {
+          campaignId: campaign.id,
+          recipientId: recipient.id,
+          templateName: template.name,
+          headerType: template.headerType,
+          components: components.map(component => ({
+            type: component.type,
+            parameterTypes: (component.parameters || []).map(parameter => parameter.type)
+          }))
+        });
+      }
       await recipient.update({ status: 'queued', queueId: queueItem.id, errorMessage: null });
       await CampaignEvent.create({
         campaignId: campaign.id,
@@ -430,7 +486,7 @@ class CampaignService {
     }
     if (!queued) {
       const failed = await CampaignRecipient.count({ where: { campaignId: campaign.id, status: { [Op.in]: ['failed', 'unreachable'] } } });
-      if (failed) await campaign.update({ status: 'Failed', sentAt: new Date() });
+      if (failed) await campaign.update({ status: 'Completed with failures', sentAt: new Date() });
       return { campaign: await this.getCampaign(id), queued, skipped };
     }
     const isFuture = runAt.getTime() > Date.now() + 1000;
@@ -488,3 +544,4 @@ class CampaignService {
 }
 
 module.exports = new CampaignService();
+module.exports.templateComponents = templateComponents;

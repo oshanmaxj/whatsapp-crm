@@ -46,6 +46,7 @@ const crmLabelsVoiceDashboardMigration = require('../../migrations/042_crm_label
 const whatsappNumberRoutingMigration = require('../../migrations/043_whatsapp_number_routing');
 const commissionFinanceUpgradeMigration = require('../../migrations/044_commission_finance_upgrade');
 const whatsappAiAgentsMigration = require('../../migrations/045_whatsapp_ai_agents');
+const reminderSequencesAiProvidersMigration = require('../../migrations/046_reminder_sequences_ai_providers');
 
 async function columnExists(queryInterface, tableName, columnName) {
   const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
@@ -209,6 +210,8 @@ async function run() {
     console.log('Applied: canonical agent and lecturer commission finance upgrade');
     await whatsappAiAgentsMigration.up(queryInterface, Sequelize);
     console.log('Applied: WhatsApp AI agents, knowledge, conversation state, and audit decisions');
+    await reminderSequencesAiProvidersMigration.up(queryInterface, Sequelize);
+    console.log('Applied: reminder sequences and AI provider configuration');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

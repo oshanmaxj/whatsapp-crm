@@ -5,8 +5,48 @@ const whatsapp = require('./whatsapp.service');
 const logger = require('../config/logger');
 
 const ACTIVE = ['active', 'paused'];
+const DELAY_UNITS = new Set(['minutes', 'hours', 'days']);
 const delayMs = (step) => Number(step.delayValue) * ({ minutes: 60000, hours: 3600000, days: 86400000 }[step.delayUnit] || 60000);
 const safeError = (error) => String(error?.message || 'Delivery failed').replace(/(bearer|api[_ -]?key|token)\s*[:=]?\s*\S+/ig, '$1 [redacted]').slice(0, 1000);
+const optional = value => value === undefined || value === null || String(value).trim() === '' ? null : value;
+const validationError = errors => Object.assign(new Error('Validation failed'), {
+  status: 422, code: 'VALIDATION_FAILED', errors
+});
+
+function normalizeSequence(payload = {}) {
+  const steps = Array.isArray(payload.steps) ? payload.steps.map((step = {}) => ({
+    ...step,
+    delayValue: Number(step.delayValue ?? step.sendAfter),
+    delayUnit: String(step.delayUnit ?? step.unit ?? '').trim().toLowerCase(),
+    body: optional(step.body ?? step.message),
+    templateId: optional(step.templateId ?? step.fallbackTemplateId),
+    mediaId: optional(step.mediaId),
+    flowId: optional(step.flowId),
+    templateLanguage: optional(step.templateLanguage)
+  })) : [];
+  return {
+    ...payload,
+    name: String(payload.name || '').trim(),
+    description: optional(payload.description),
+    whatsappAccountId: optional(payload.whatsappAccountId),
+    stopOnLabelAdded: optional(payload.stopOnLabelAdded),
+    steps
+  };
+}
+
+function validateSequence(values) {
+  const errors = {};
+  if (!values.name) errors.name = 'Sequence name is required.';
+  if (!values.steps.length) errors.steps = 'Add at least one reminder step.';
+  values.steps.forEach((step, index) => {
+    const prefix = `steps.${index}`;
+    if (!Number.isInteger(step.delayValue) || step.delayValue < 0) errors[`${prefix}.delayValue`] = 'Send after must be a whole number of zero or more.';
+    if (!DELAY_UNITS.has(step.delayUnit)) errors[`${prefix}.delayUnit`] = 'Unit must be minutes, hours, or days.';
+    if (step.enabled !== false && step.sessionMessageType === 'text' && !step.body) errors[`${prefix}.body`] = 'Message is required.';
+    if (step.templateId !== null && !/^\d+$/.test(String(step.templateId))) errors[`${prefix}.templateId`] = 'Fallback template is invalid.';
+  });
+  if (Object.keys(errors).length) throw validationError(errors);
+}
 
 class ReminderSequenceService {
   async listSequences(query = {}) {
@@ -21,23 +61,38 @@ class ReminderSequenceService {
     return row;
   }
   async saveSequence(id, payload, userId) {
-    const values = { ...payload, createdBy: userId, updatedBy: userId };
-    delete values.id; delete values.steps;
-    const row = id ? await this.getSequence(id) : await models.ReminderSequence.create(values);
-    if (id) await row.update(values);
-    if (Array.isArray(payload.steps)) {
-      await models.sequelize.transaction(async transaction => {
+    const normalized = normalizeSequence(payload);
+    validateSequence(normalized);
+    return models.sequelize.transaction(async transaction => {
+      const values = { ...normalized, createdBy: userId, updatedBy: userId };
+      delete values.id; delete values.steps;
+      let row;
+      if (id) {
+        row = await models.ReminderSequence.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+        if (!row) throw Object.assign(new Error('Reminder sequence not found.'), { status: 404 });
+        await row.update(values, { transaction });
+      } else {
+        row = await models.ReminderSequence.create(values, { transaction });
+      }
+      if (Array.isArray(normalized.steps)) {
         const ids = [];
-        for (let i = 0; i < payload.steps.length; i++) {
-          const values = { ...payload.steps[i], sequenceId: row.id, stepNumber: i + 1 };
-          delete values.id;
-          const [step] = await models.ReminderSequenceStep.upsert({ ...(payload.steps[i].id ? { id: payload.steps[i].id } : {}), ...values }, { transaction, returning: true });
+        for (let i = 0; i < normalized.steps.length; i++) {
+          const stepValues = { ...normalized.steps[i], sequenceId: row.id, stepNumber: i + 1 };
+          delete stepValues.id;
+          delete stepValues.fallbackTemplateId;
+          delete stepValues.sendAfter;
+          delete stepValues.unit;
+          delete stepValues.message;
+          const [step] = await models.ReminderSequenceStep.upsert({ ...(normalized.steps[i].id ? { id: normalized.steps[i].id } : {}), ...stepValues }, { transaction, returning: true });
           ids.push(step.id);
         }
         await models.ReminderSequenceStep.destroy({ where: { sequenceId: row.id, ...(ids.length ? { id: { [Op.notIn]: ids } } : {}) }, transaction });
+      }
+      return models.ReminderSequence.findByPk(row.id, {
+        include: [{ model: models.ReminderSequenceStep, as: 'steps' }],
+        transaction
       });
-    }
-    return this.getSequence(row.id);
+    });
   }
   async removeSequence(id, userId) {
     const row = await this.getSequence(id); await row.update({ updatedBy: userId }); await row.destroy(); return { id: row.id };

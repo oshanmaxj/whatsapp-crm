@@ -20,6 +20,9 @@ module.exports = (err, req, res, next) => {
   if (err.details) {
     response.details = err.details;
   }
+  if (err.errors) {
+    response.errors = err.errors;
+  }
   if ([
     'AUTH_REQUIRED', 'AUTH_INVALID', 'AUTH_EXPIRED', 'AUTH_REFRESH_REQUIRED', 'AUTH_REFRESH_INVALID', 'USER_DISABLED',
     'STUDENT_NOT_FOUND', 'INVALID_PHONE', 'OTP_RATE_LIMITED', 'OTP_SEND_FAILED',
@@ -42,7 +45,7 @@ module.exports = (err, req, res, next) => {
     'SLIP_MEDIA_MISSING','SLIP_FILE_TOO_LARGE','SLIP_UNSUPPORTED_FILE','SLIP_MESSAGE_NOT_FOUND','SLIP_FILE_ACCESS_DENIED',
     'PAYMENT_SLIP_NOT_FOUND','PAYMENT_SLIP_ALREADY_PROCESSED','PAYMENT_SLIP_DUPLICATE','INSTALLMENT_REQUIRED',
     'FEE_INSTALLMENT_MISMATCH','STUDENT_FEE_MISMATCH','INVALID_CONFIRMED_AMOUNT','INVALID_SLIP_ACTION',
-    'FILE_TOO_LARGE','REQUEST_TOO_LARGE','MEDIA_FILE_REQUIRED','INTERACTIVE_MEDIA_TYPE_UNSUPPORTED',
+    'VALIDATION_FAILED','AI_AGENT_INVALID','FILE_TOO_LARGE','REQUEST_TOO_LARGE','MEDIA_FILE_REQUIRED','INTERACTIVE_MEDIA_TYPE_UNSUPPORTED',
     'INTERACTIVE_MEDIA_MIME_UNSUPPORTED','INTERACTIVE_MEDIA_EMPTY','INTERACTIVE_MEDIA_TOO_LARGE',
     'INTERACTIVE_MEDIA_INVALID','INTERACTIVE_MEDIA_CONTENT_INVALID','INTERACTIVE_VIDEO_CODEC_UNSUPPORTED',
     'INTERACTIVE_VIDEO_AUDIO_UNSUPPORTED','MEDIA_STORAGE_FAILED','META_MEDIA_ID_MISSING','UPLOAD_INVALID'
@@ -58,9 +61,13 @@ module.exports = (err, req, res, next) => {
     method: req.method,
     path: req.originalUrl,
     userId: req.user?.id || null,
-    errorCode: uploadCode,
+    errorCode: err.code || uploadCode,
     rejectedLayer: err.rejectedLayer || (err.uploadError ? 'app' : null),
-    message: err.message
+    message: err.message,
+    errorName: err.name,
+    databaseCode: err.parent?.code || err.original?.code || null,
+    constraint: err.parent?.constraint || err.original?.constraint || null,
+    validationFields: err.errors ? Object.keys(err.errors) : undefined
   });
 
   if (process.env.NODE_ENV === 'development') {

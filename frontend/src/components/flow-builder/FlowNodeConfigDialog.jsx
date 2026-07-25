@@ -236,12 +236,12 @@ const ACTION_LABELS = {
   CREATE_CALENDAR_EVENT: 'Send to Google Calendar', START_FLOW: 'Start Another Flow', STOP_FLOW: 'Stop Current Flow'
 };
 
-function OptionMultiSelect({ label, options = [], value = [], onChange }) {
+function OptionMultiSelect({ label, options = [], value = [], onChange, loading = false, error = '', onOpen }) {
   const selected = options.filter((item) => value.map(String).includes(String(item.id)));
-  return <Autocomplete multiple size="small" options={options} value={selected} getOptionLabel={(item) => item.name || item.email || String(item.id)} isOptionEqualToValue={(a, b) => String(a.id) === String(b.id)} onChange={(_, rows) => onChange(rows.map((item) => item.id))} renderInput={(params) => <TextField {...params} label={label} />} />;
+  return <Autocomplete multiple size="small" options={options} value={selected} loading={loading} onOpen={onOpen} noOptionsText={error||'No active reminder sequences'} getOptionLabel={(item) => item.stepCount==null?(item.name||item.email||String(item.id)):`${item.name} · ${item.stepCount} step${item.stepCount===1?'':'s'}`} isOptionEqualToValue={(a, b) => String(a.id) === String(b.id)} onChange={(_, rows) => onChange(rows.map((item) => item.id))} renderInput={(params) => <TextField {...params} label={label} error={Boolean(error)} helperText={error||'Only active sequences available to this WhatsApp account are shown.'} />} />;
 }
 
-function AutomationActionsEditor({ value, onChange, options = {}, onLabelOptionsChange }) {
+function AutomationActionsEditor({ value, onChange, options = {}, onLabelOptionsChange, optionsLoading, optionsError, onRefreshOptions }) {
   const actions = Array.isArray(value) ? value : [];
   const update = (index, patch) => onChange(actions.map((action, itemIndex) => itemIndex === index ? { ...action, ...patch } : action));
   const updateConfig = (index, patch) => update(index, { config: { ...(actions[index].config || {}), ...patch } });
@@ -259,7 +259,7 @@ function AutomationActionsEditor({ value, onChange, options = {}, onLabelOptions
         </Stack>
         {['ADD_LABELS', 'REMOVE_LABELS'].includes(type) && <LabelMultiSelect label="Labels" options={options.labels || []} value={config.labelIds || []} onChange={(labelIds) => updateConfig(index, { labelIds })} onOptionsChange={onLabelOptionsChange} />}
         {['ADD_TO_LISTS', 'REMOVE_FROM_LISTS'].includes(type) && <OptionMultiSelect label="Contact lists" options={options.lists} value={config.listIds || []} onChange={(listIds) => updateConfig(index, { listIds })} />}
-        {['SUBSCRIBE_SEQUENCE', 'UNSUBSCRIBE_SEQUENCE'].includes(type) && <OptionMultiSelect label="Sequences" options={options.sequences} value={config.sequenceIds || []} onChange={(sequenceIds) => updateConfig(index, { sequenceIds })} />}
+        {['SUBSCRIBE_SEQUENCE', 'UNSUBSCRIBE_SEQUENCE'].includes(type) && <OptionMultiSelect label="Sequences" options={options.sequences} value={config.sequenceIds || []} onChange={(sequenceIds) => updateConfig(index, { sequenceIds })} loading={optionsLoading} error={optionsError} onOpen={onRefreshOptions} />}
         {type === 'ASSIGN_TEAM' && <Autocomplete size="small" options={options.departments || []} value={(options.departments || []).find((item) => String(item.id) === String(config.roleId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => updateConfig(index, { roleId: item?.id || '' })} renderInput={(params) => <TextField {...params} label="Team" />} />}
         {type === 'ASSIGN_AGENT' && <Autocomplete size="small" options={options.agents || []} value={(options.agents || []).find((item) => String(item.id) === String(config.userId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => updateConfig(index, { userId: item?.id || '' })} renderInput={(params) => <TextField {...params} label="Agent" />} />}
         {type === 'SET_CUSTOM_FIELD' && <Stack direction="row" spacing={1}><TextField select size="small" label="Record" value={config.entity || 'contact'} onChange={(event) => updateConfig(index, { entity: event.target.value })}><MenuItem value="contact">Contact</MenuItem><MenuItem value="lead">Lead</MenuItem><MenuItem value="conversation">Conversation</MenuItem></TextField><TextField size="small" label="Field key" value={config.field || ''} onChange={(event) => updateConfig(index, { field: event.target.value })} fullWidth /><TextField size="small" label="Value / {{variable}}" value={config.value || ''} onChange={(event) => updateConfig(index, { value: event.target.value })} fullWidth /></Stack>}
@@ -381,7 +381,7 @@ function WhatsAppPreview({ type, config, label }) {
   );
 }
 
-export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDelete, departments = [], users = [], actionOptions = {}, onLabelOptionsChange, flowId, whatsappAccountId }) {
+export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDelete, departments = [], users = [], actionOptions = {}, actionOptionsLoading = false, actionOptionsError = '', onRefreshActionOptions, onLabelOptionsChange, flowId, whatsappAccountId }) {
   const [label, setLabel] = useState('');
   const [config, setConfig] = useState({});
   const [errors, setErrors] = useState({});
@@ -531,7 +531,7 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
       <FormControlLabel control={<Checkbox checked={config.caseInsensitive !== false} onChange={(event) => set('caseInsensitive', event.target.checked)} />} label="Case insensitive" />
       <FormControlLabel control={<Checkbox checked={config.normalizeWhitespace !== false} onChange={(event) => set('normalizeWhitespace', event.target.checked)} />} label="Trim and normalize whitespace" />
       <FormControlLabel control={<Checkbox checked={config.stopAfterMatch !== false} onChange={(event) => set('stopAfterMatch', event.target.checked)} />} label="Stop after first matched trigger" />
-    </Section><Section title="Automation actions" description="Actions can run before or after this flow starts."><AutomationActionsEditor value={config.automationActions || []} onChange={(automationActions) => set('automationActions', automationActions)} options={actionOptions} onLabelOptionsChange={onLabelOptionsChange} /></Section></>;
+    </Section><Section title="Automation actions" description="Actions can run before or after this flow starts."><AutomationActionsEditor value={config.automationActions || []} onChange={(automationActions) => set('automationActions', automationActions)} options={actionOptions} optionsLoading={actionOptionsLoading} optionsError={actionOptionsError} onRefreshOptions={onRefreshActionOptions} onLabelOptionsChange={onLabelOptionsChange} /></Section></>;
   } else if (type === 'interactive_message') {
     form = <>
       <Section title="Header" description="Optional content shown above the message body.">

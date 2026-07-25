@@ -228,10 +228,20 @@ class FlowService {
 
   async actionOptions(userId = null, currentFlowId = null) {
     const accessWhere = userId ? await whatsappAccountAccessService.whereForUser(userId) : {};
+    const accessibleAccountIds = userId ? await whatsappAccountAccessService.accessibleIds(userId) : null;
+    const sequenceWhere = {
+      status: 'active',
+      ...(accessibleAccountIds === null ? {} : {
+        [Op.or]: [
+          { whatsappAccountId: null },
+          { whatsappAccountId: { [Op.in]: accessibleAccountIds } }
+        ]
+      })
+    };
     const [labels, lists, sequences, departments, users, flows, courses, campaigns] = await Promise.all([
       require('../models').Label.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }),
       require('../models').ContactList.findAll({ where: { status: 'active' }, attributes: ['id', 'name', 'status'], order: [['name', 'ASC']] }),
-      require('../models').Sequence.findAll({ where: { status: 'active' }, attributes: ['id', 'name', 'status'], order: [['name', 'ASC']] }),
+      require('../models').ReminderSequence.findAll({ where: sequenceWhere, attributes: ['id', 'name', 'status', 'whatsappAccountId'], include: [{ model: require('../models').ReminderSequenceStep, as: 'steps', attributes: ['id'], required: false }], order: [['name', 'ASC']] }),
       Role.findAll({ attributes: ['id', 'name'], order: [['name', 'ASC']] }),
       User.findAll({ where: { status: { [Op.ne]: 'inactive' } }, attributes: ['id', 'firstName', 'lastName', 'email', 'status'], order: [['first_name', 'ASC']] }),
       Flow.findAll({ where: { status: 'published', id: { [Op.ne]: currentFlowId || 0 }, ...accessWhere }, attributes: ['id', 'name', 'status', 'whatsappAccountId'], order: [['name', 'ASC']] }),
@@ -239,7 +249,7 @@ class FlowService {
       require('../models').Campaign.findAll({ attributes: ['id', 'name', 'status', 'whatsappAccountId'], order: [['name', 'ASC']] })
     ]);
     return {
-      labels, lists, sequences, departments, courses,
+      labels, lists, sequences: sequences.map(sequence => ({ id: sequence.id, name: sequence.name, status: sequence.status, accountId: sequence.whatsappAccountId, stepCount: sequence.steps?.length || 0 })), departments, courses,
       campaigns: campaigns.map((item) => ({ id: item.id, name: item.name, status: item.status, accountId: item.whatsappAccountId })),
       agents: users.map((user) => ({ id: user.id, name: contactName(user) || user.email, status: user.status })),
       flows: flows.map((flow) => ({ id: flow.id, name: flow.name, status: flow.status, scope: flow.whatsappAccountId ? 'account' : 'global', accountId: flow.whatsappAccountId })),

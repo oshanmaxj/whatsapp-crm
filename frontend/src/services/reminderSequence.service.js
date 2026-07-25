@@ -2,6 +2,8 @@ import api from './api';
 export const listSequences=params=>api.get('/reminder-sequences',{params});
 export const getReminderDashboard=()=>api.get('/reminder-sequences/dashboard');
 export const saveSequence=(id,payload)=>id?api.patch(`/reminder-sequences/${id}`,payload):api.post('/reminder-sequences',payload);
+export const changeSequenceStatus=(id,status)=>api.patch(`/reminder-sequences/${id}/status`,{status});
+export const duplicateSequence=id=>api.post(`/reminder-sequences/${id}/duplicate`);
 export const deleteSequence=id=>api.delete(`/reminder-sequences/${id}`);
 export const listSubscriptions=params=>api.get('/reminder-sequences/subscriptions',{params});
 export const listExecutions=params=>api.get('/reminder-sequences/executions',{params});

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const matcher = require('../src/services/flowTriggerMatcher.service');
 const flowService = require('../src/services/flow.service');
 const flowActionService = require('../src/services/flowAction.service');
+const reminderSequenceService = require('../src/services/reminderSequence.service');
 const models = require('../src/models');
 
 const flow = (config = {}) => ({ id: 1, whatsappAccountId: 7, triggerType: 'inbound_message', triggerKeywords: [], triggerConfig: config });
@@ -56,17 +57,23 @@ test('label and list actions add and remove records', async () => {
 });
 
 test('sequence subscribe avoids duplicates and unsubscribe stops active subscription', async () => {
-  const originalFind = models.SequenceSubscription.findOrCreate;
-  const originalUpdate = models.SequenceSubscription.update;
+  const originalSubscribe = reminderSequenceService.subscribe;
+  const originalConversation = models.Conversation.findByPk;
+  const originalUpdate = models.ReminderSubscription.update;
+  const originalFind = models.ReminderSubscription.findAll;
+  const originalExecutionUpdate = models.ReminderExecution.update;
   let creates = 0; let unsubscribed = false;
-  models.SequenceSubscription.findOrCreate = async () => { creates += 1; return [{ status: 'active', update: async () => {} }, false]; };
-  models.SequenceSubscription.update = async () => { unsubscribed = true; };
+  reminderSequenceService.subscribe = async () => { creates += 1; return { status: 'active' }; };
+  models.Conversation.findByPk = async () => ({ id: 3 });
+  models.ReminderSubscription.update = async () => { unsubscribed = true; };
+  models.ReminderSubscription.findAll = async () => [{ id: 8 }];
+  models.ReminderExecution.update = async () => {};
   try {
-    const context = { contactId: 2, flowRun: { id: 4 }, nodeKey: 'start' };
+    const context = { contactId: 2, conversationId: 3, whatsappAccountId: 7, contact: { phone: '94770000000' }, flowRun: { id: 4 }, nodeKey: 'start' };
     await flowActionService.executeOne('SUBSCRIBE_SEQUENCE', { sequenceIds: [9] }, context);
     await flowActionService.executeOne('UNSUBSCRIBE_SEQUENCE', { sequenceIds: [9] }, context);
     assert.equal(creates, 1); assert.equal(unsubscribed, true);
-  } finally { models.SequenceSubscription.findOrCreate = originalFind; models.SequenceSubscription.update = originalUpdate; }
+  } finally { reminderSequenceService.subscribe = originalSubscribe; models.Conversation.findByPk = originalConversation; models.ReminderSubscription.update = originalUpdate; models.ReminderSubscription.findAll = originalFind; models.ReminderExecution.update = originalExecutionUpdate; }
 });
 
 test('agent assignment and unassignment reuse the canonical conversation and write history', async () => {

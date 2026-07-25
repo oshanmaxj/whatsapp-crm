@@ -3,6 +3,19 @@ const models = require('../models');
 const crypto = require('./secretCrypto.service');
 const audit = require('./audit.service');
 const allowedTypes = new Set(['openai', 'gemini', 'anthropic', 'openai_compatible']);
+const optional = value => value === undefined || value === null || String(value).trim() === '' ? null : String(value).trim();
+const validation = errors => Object.assign(new Error('Validation failed'), { status: 422, code: 'VALIDATION_FAILED', errors });
+const normalize = payload => ({
+  ...payload,
+  name: String(payload.name || '').trim(),
+  providerType: String(payload.providerType || '').trim().toLowerCase(),
+  apiBaseUrl: optional(payload.apiBaseUrl ?? payload.baseUrl)?.replace(/\/+$/, '') || null,
+  model: String(payload.model ?? payload.defaultModel ?? '').trim(),
+  apiKey: optional(payload.apiKey),
+  organizationId: optional(payload.organizationId),
+  projectId: optional(payload.projectId),
+  dailyBudget: optional(payload.dailyBudget)
+});
 const publicRow = row => {
   const value = row.toJSON ? row.toJSON() : { ...row };
   delete value.encryptedApiKey; delete value.keyIv; delete value.keyTag;
@@ -16,13 +29,32 @@ class AiProviderService {
     return secret ? row : publicRow(row);
   }
   async save(id, payload, user) {
-    if (!allowedTypes.has(payload.providerType)) throw Object.assign(new Error('Unsupported AI provider type.'), { status: 400 });
-    const values = { ...payload, updatedBy: user.id }; delete values.apiKey; delete values.encryptedApiKey; delete values.keyIv; delete values.keyTag; delete values.keyConfigured;
+    const input = normalize(payload);
+    const errors = {};
+    if (!input.name) errors.name = 'Provider name is required.';
+    if (!allowedTypes.has(input.providerType)) errors.providerType = 'Choose a supported provider type.';
+    if (!input.model) errors.model = 'Model is required.';
+    if (input.apiBaseUrl) {
+      try { const url = new URL(input.apiBaseUrl); if (url.protocol !== 'https:') errors.apiBaseUrl = 'API Base URL must use HTTPS.'; }
+      catch { errors.apiBaseUrl = 'Enter a valid API Base URL.'; }
+    }
+    if (!id && !input.apiKey) errors.apiKey = 'API key is required.';
+    if (Object.keys(errors).length) throw validation(errors);
+    const encrypted = input.apiKey ? crypto.encrypt(input.apiKey) : null;
+    const values = { ...input, updatedBy: user.id };
+    delete values.apiKey; delete values.baseUrl; delete values.defaultModel; delete values.encryptedApiKey; delete values.keyIv; delete values.keyTag; delete values.keyConfigured;
     let row;
-    if (id) { row = await this.get(id, true); await row.update(values); }
-    else row = await models.AiProvider.create({ ...values, createdBy: user.id });
-    if (payload.apiKey) { await row.update(crypto.encrypt(payload.apiKey)); await this.record(user, id ? 'AI_PROVIDER_KEY_REPLACED' : 'AI_PROVIDER_KEY_CREATED', row.id); }
-    if (row.isDefault) await models.AiProvider.update({ isDefault: false }, { where: { id: { [require('sequelize').Op.ne]: row.id } } });
+    await models.sequelize.transaction(async transaction => {
+      if (id) {
+        row = await models.AiProvider.unscoped().findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+        if (!row) throw Object.assign(new Error('AI provider not found.'), { status: 404 });
+        await row.update({ ...values, ...(encrypted || {}) }, { transaction });
+      } else {
+        row = await models.AiProvider.create({ ...values, ...encrypted, createdBy: user.id }, { transaction });
+      }
+      if (row.isDefault) await models.AiProvider.update({ isDefault: false }, { where: { id: { [require('sequelize').Op.ne]: row.id } }, transaction });
+    });
+    if (encrypted) await this.record(user, id ? 'AI_PROVIDER_KEY_REPLACED' : 'AI_PROVIDER_KEY_CREATED', row.id);
     return publicRow(row);
   }
   async remove(id, user) { const row = await this.get(id, true); await row.destroy(); await this.record(user, 'AI_PROVIDER_DELETED', id); return { id }; }
@@ -39,7 +71,13 @@ class AiProviderService {
       await row.update({ lastTestStatus: 'success', lastTestAt: new Date() }); await this.record(user, 'AI_PROVIDER_CONNECTION_TESTED', id, { status: 'success' }); return { status: 'success', testedAt: row.lastTestAt };
     } catch (error) {
       await row.update({ lastTestStatus: 'failed', lastTestAt: new Date() }); await this.record(user, 'AI_PROVIDER_CONNECTION_TESTED', id, { status: 'failed' });
-      throw Object.assign(new Error('Provider connection test failed. Verify the provider settings and key.'), { status: 422, code: 'AI_PROVIDER_TEST_FAILED' });
+      const providerStatus = error.response?.status;
+      const providerCode = error.response?.data?.error?.code;
+      let message = 'Provider connection test failed. Verify the provider settings.';
+      if (providerStatus === 401 || providerCode === 'invalid_api_key') message = 'OpenAI rejected the API key.';
+      else if (providerStatus === 429) message = 'OpenAI rate limit or billing quota prevented the connection test.';
+      else if (providerStatus === 404 || providerCode === 'model_not_found') message = 'The configured OpenAI model is unavailable to this account.';
+      throw Object.assign(new Error(message), { status: 422, code: 'AI_PROVIDER_TEST_FAILED' });
     }
   }
   record(user, action, id, changes = {}) { return audit.record({ userId: user.id, action, entityType: 'ai_provider', entityId: id, method: 'POST', path: '/api/ai-providers', changes }); }

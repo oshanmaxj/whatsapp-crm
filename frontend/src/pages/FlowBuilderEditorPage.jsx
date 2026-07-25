@@ -176,6 +176,8 @@ function Editor() {
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
   const [actionOptions, setActionOptions] = useState({ labels: [], lists: [], sequences: [], departments: [], agents: [], flows: [], courses: [], campaigns: [], customFields: [] });
+  const [actionOptionsLoading, setActionOptionsLoading] = useState(false);
+  const [actionOptionsError, setActionOptionsError] = useState('');
   const [isDirty, setIsDirty] = useState(false);
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('');
@@ -217,13 +219,23 @@ function Editor() {
     }).catch((requestError) => setError(requestError.response?.data?.message || 'Unable to load flow.'));
   }, [id, setEdges, setNodes]);
 
+  const refreshActionOptions = useCallback(async () => {
+    setActionOptionsLoading(true); setActionOptionsError('');
+    try {
+      const optionsResponse = await getFlowActionOptions(id);
+      setActionOptions(optionsResponse.data.data || {});
+    } catch (requestError) {
+      setActionOptionsError(requestError.response?.data?.message || 'Unable to load reminder sequence options.');
+    } finally { setActionOptionsLoading(false); }
+  }, [id]);
   useEffect(() => {
     Promise.all([getRoles(), getUsers(), getFlowActionOptions(id)]).then(([rolesResponse, usersResponse, optionsResponse]) => {
       setDepartments(rolesResponse.data.data || []);
       setUsers(usersResponse.data.data || []);
       setActionOptions(optionsResponse.data.data || {});
-    }).catch(() => {});
-  }, []);
+    }).catch((requestError) => setActionOptionsError(requestError.response?.data?.message || 'Unable to load action options.'));
+  }, [id]);
+  useEffect(() => { if (editorOpen) refreshActionOptions(); }, [editorOpen, refreshActionOptions]);
 
   const decoratedNodes = useMemo(() => nodes.map((node) => ({
     ...node, data: {
@@ -363,6 +375,9 @@ function Editor() {
       departments={departments}
       users={users}
       actionOptions={actionOptions}
+      actionOptionsLoading={actionOptionsLoading}
+      actionOptionsError={actionOptionsError}
+      onRefreshActionOptions={refreshActionOptions}
       onLabelOptionsChange={(labels) => setActionOptions((current) => ({ ...current, labels }))}
       onDelete={() => selected && deleteNode(selected.id)}
       onClose={() => setEditorOpen(false)}

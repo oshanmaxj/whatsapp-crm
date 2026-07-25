@@ -3,6 +3,8 @@ const models = require('../models');
 const compliance = require('./whatsappCompliance.service');
 const whatsapp = require('./whatsapp.service');
 const logger = require('../config/logger');
+const whatsappAccountAccess = require('./whatsappAccountAccess.service');
+const { REMINDER_SEQUENCE_STATUS, REMINDER_SEQUENCE_STATUSES, REMINDER_SEQUENCE_TRANSITIONS } = require('../constants/reminderSequenceStatus');
 
 const ACTIVE = ['active', 'paused'];
 const DELAY_UNITS = new Set(['minutes', 'hours', 'days']);
@@ -48,21 +50,46 @@ function validateSequence(values) {
   if (Object.keys(errors).length) throw validationError(errors);
 }
 
+function validateForActivation(sequence) {
+  const errors = {};
+  if (!String(sequence.name || '').trim()) errors.name = 'Sequence name is required.';
+  const steps = [...(sequence.steps || [])].sort((a, b) => Number(a.stepNumber) - Number(b.stepNumber));
+  if (!steps.length) errors.steps = 'Add at least one reminder step.';
+  steps.forEach((step, index) => {
+    const prefix = `steps.${index}`;
+    if (!Number.isInteger(Number(step.delayValue)) || Number(step.delayValue) <= 0) errors[`${prefix}.delayValue`] = 'Send after must be a positive whole number.';
+    if (!DELAY_UNITS.has(step.delayUnit)) errors[`${prefix}.delayUnit`] = 'Unit must be minutes, hours, or days.';
+    if (!String(step.body || '').trim()) errors[`${prefix}.body`] = 'Message is required.';
+    if (Number(step.stepNumber) !== index + 1) errors[`${prefix}.stepNumber`] = 'Step ordering is invalid.';
+  });
+  if (Object.keys(errors).length) throw validationError(errors);
+  return {
+    warnings: steps.filter(step => !step.templateId).map((step, index) => ({
+      field: `steps.${index}.templateId`,
+      message: `Reminder ${index + 1} will not send outside the WhatsApp 24-hour service window without an approved fallback template.`
+    }))
+  };
+}
+
 class ReminderSequenceService {
-  async listSequences(query = {}) {
-    const where = query.status ? { status: query.status } : {};
+  async listSequences(query = {}, userId = null) {
+    const accessibleIds = userId ? await whatsappAccountAccess.accessibleIds(userId) : null;
+    const scope = accessibleIds === null ? {} : { [Op.or]: [{ whatsappAccountId: null }, { whatsappAccountId: { [Op.in]: accessibleIds } }] };
+    const where = query.status ? { [Op.and]: [scope, { status: query.status }] } : scope;
     const limit = Math.min(Number(query.limit || 50), 200), offset = Math.max(Number(query.offset || 0), 0);
     const result = await models.ReminderSequence.findAndCountAll({ where, include: [{ model: models.ReminderSequenceStep, as: 'steps' }], order: [['created_at', 'DESC']], limit, offset, distinct: true });
     return { rows: result.rows, count: result.count, limit, offset };
   }
-  async getSequence(id) {
+  async getSequence(id, userId = null) {
     const row = await models.ReminderSequence.findByPk(id, { include: [{ model: models.ReminderSequenceStep, as: 'steps' }] });
     if (!row) throw Object.assign(new Error('Reminder sequence not found.'), { status: 404 });
+    if (userId && row.whatsappAccountId) await whatsappAccountAccess.assertAccess(row.whatsappAccountId, userId);
     return row;
   }
   async saveSequence(id, payload, userId) {
     const normalized = normalizeSequence(payload);
     validateSequence(normalized);
+    if (normalized.whatsappAccountId) await whatsappAccountAccess.assertAccess(normalized.whatsappAccountId, userId);
     return models.sequelize.transaction(async transaction => {
       const values = { ...normalized, createdBy: userId, updatedBy: userId };
       delete values.id; delete values.steps;
@@ -70,6 +97,7 @@ class ReminderSequenceService {
       if (id) {
         row = await models.ReminderSequence.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
         if (!row) throw Object.assign(new Error('Reminder sequence not found.'), { status: 404 });
+        if (row.whatsappAccountId) await whatsappAccountAccess.assertAccess(row.whatsappAccountId, userId);
         await row.update(values, { transaction });
       } else {
         row = await models.ReminderSequence.create(values, { transaction });
@@ -94,10 +122,39 @@ class ReminderSequenceService {
       });
     });
   }
-  async removeSequence(id, userId) {
-    const row = await this.getSequence(id); await row.update({ updatedBy: userId }); await row.destroy(); return { id: row.id };
+  async changeSequenceStatus(id, requestedStatus, userId) {
+    const status = String(requestedStatus || '').trim().toLowerCase();
+    if (!REMINDER_SEQUENCE_STATUSES.has(status)) throw validationError({ status: 'Choose draft, active, paused, or archived.' });
+    return models.sequelize.transaction(async transaction => {
+      const row = await models.ReminderSequence.findByPk(id, {
+        include: [{ model: models.ReminderSequenceStep, as: 'steps' }],
+        transaction,
+        lock: transaction.LOCK.UPDATE
+      });
+      if (!row) throw Object.assign(new Error('Reminder sequence not found.'), { status: 404 });
+      if (row.whatsappAccountId) await whatsappAccountAccess.assertAccess(row.whatsappAccountId, userId);
+      if (row.status === status) return { sequence: row, warnings: [] };
+      if (!REMINDER_SEQUENCE_TRANSITIONS[row.status]?.has(status)) throw Object.assign(new Error(`Cannot change reminder sequence from ${row.status} to ${status}.`), {
+        status: 409, code: 'REMINDER_STATUS_TRANSITION_INVALID'
+      });
+      const result = status === REMINDER_SEQUENCE_STATUS.ACTIVE ? validateForActivation(row) : { warnings: [] };
+      await row.update({ status, updatedBy: userId }, { transaction });
+      return { sequence: row, warnings: result.warnings };
+    });
   }
-  async subscribe(input, userId = null) {
+  async duplicateSequence(id, userId) {
+    const source = await this.getSequence(id, userId);
+    return this.saveSequence(null, {
+      ...source.toJSON(),
+      name: `${source.name} (Copy)`.slice(0, 180),
+      status: REMINDER_SEQUENCE_STATUS.DRAFT,
+      steps: source.steps.map(step => ({ ...step.toJSON(), id: undefined }))
+    }, userId);
+  }
+  async removeSequence(id, userId) {
+    const row = await this.getSequence(id, userId); await row.update({ updatedBy: userId }); await row.destroy(); return { id: row.id };
+  }
+  async subscribe(input, userId = null, existingTransaction = null) {
     const sequence = await this.getSequence(input.sequenceId);
     if (sequence.status !== 'active') throw Object.assign(new Error('Only active reminder sequences can be subscribed.'), { status: 409 });
     const conversation = await models.Conversation.findByPk(input.conversationId);
@@ -107,7 +164,7 @@ class ReminderSequenceService {
       throw Object.assign(new Error('Sequence belongs to a different WhatsApp account.'), { status: 409, code: 'REMINDER_ACCOUNT_MISMATCH' });
     const phone = conversation.normalizedPhone || input.phone;
     if (!phone) throw Object.assign(new Error('Conversation has no phone identity.'), { status: 409 });
-    return models.sequelize.transaction(async transaction => {
+    const createSubscription = async transaction => {
       const existing = await models.ReminderSubscription.findOne({ where: { sequenceId: sequence.id, conversationId: conversation.id, status: ACTIVE }, transaction, lock: transaction.LOCK.UPDATE });
       if (existing) return existing;
       const first = sequence.steps.filter(s => s.enabled).sort((a, b) => a.stepNumber - b.stepNumber)[0];
@@ -118,7 +175,8 @@ class ReminderSequenceService {
       }, { transaction });
       await models.ReminderExecution.create({ subscriptionId: subscription.id, sequenceStepId: first.id, conversationId: conversation.id, whatsappAccountId: conversation.whatsappAccountId, scheduledAt }, { transaction });
       return subscription;
-    });
+    };
+    return existingTransaction ? createSubscription(existingTransaction) : models.sequelize.transaction(createSubscription);
   }
   async changeStatus(id, action) {
     const row = await models.ReminderSubscription.findByPk(id);

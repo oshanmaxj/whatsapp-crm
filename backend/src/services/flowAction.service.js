@@ -84,15 +84,28 @@ class FlowActionService {
     }
     if (type === 'SUBSCRIBE_SEQUENCE') {
       const sequenceIds = actionIds(config, 'sequenceId', 'sequenceIds');
+      if (!sequenceIds.length) throw Object.assign(new Error('Select an active reminder sequence.'), { status: 422, code: 'FLOW_SEQUENCE_REQUIRED' });
+      const conversation = await models.Conversation.findByPk(conversationId, { transaction });
+      if (!conversation || !contactId || !context.whatsappAccountId) throw Object.assign(new Error('A canonical contact, conversation, and WhatsApp account are required for reminder subscriptions.'), { status: 422, code: 'FLOW_REMINDER_IDENTITY_REQUIRED' });
       for (const sequenceId of sequenceIds) {
-        const [row, created] = await models.SequenceSubscription.findOrCreate({ where: { sequenceId, contactId }, defaults: { sequenceId, contactId, status: 'active', sourceFlowRunId: context.flowRun?.id, sourceNodeKey: context.nodeKey, sourceButtonId: context.buttonId }, transaction });
-        if (!created && row.status !== 'active' && config.restart === true) await row.update({ status: 'active', unsubscribedAt: null, sourceFlowRunId: context.flowRun?.id }, { transaction });
+        await require('./reminderSequence.service').subscribe({
+          sequenceId,
+          contactId,
+          conversationId,
+          whatsappAccountId: context.whatsappAccountId,
+          phone: context.contact?.whatsappId || context.contact?.phone || context.phone,
+          leadId,
+          subscriptionSource: 'flow',
+          sourceReferenceId: context.flowRun?.id ? String(context.flowRun.id) : null,
+          metadata: { nodeKey: context.nodeKey || null, buttonId: context.buttonId || null }
+        }, context.actor?.userId || null, transaction);
       }
       return { sequenceIds };
     }
     if (type === 'UNSUBSCRIBE_SEQUENCE') {
       const sequenceIds = actionIds(config, 'sequenceId', 'sequenceIds');
-      await models.SequenceSubscription.update({ status: 'unsubscribed', unsubscribedAt: new Date() }, { where: { sequenceId: { [require('sequelize').Op.in]: sequenceIds }, contactId, status: 'active' }, transaction });
+      await models.ReminderSubscription.update({ status: 'cancelled', cancelledAt: new Date(), nextRunAt: null }, { where: { sequenceId: { [require('sequelize').Op.in]: sequenceIds }, contactId, status: 'active' }, transaction });
+      await models.ReminderExecution.update({ status: 'cancelled' }, { where: { subscriptionId: { [require('sequelize').Op.in]: (await models.ReminderSubscription.findAll({ where: { sequenceId: { [require('sequelize').Op.in]: sequenceIds }, contactId }, attributes: ['id'], transaction })).map(row => row.id) }, status: 'scheduled' }, transaction });
       return { sequenceIds };
     }
     if (['ASSIGN_TEAM', 'ASSIGN_AGENT', 'AUTO_ASSIGN', 'UNASSIGN_AGENT', 'REMOVE_TEAM'].includes(type)) {

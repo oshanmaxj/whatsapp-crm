@@ -8,18 +8,25 @@ export const SOCKET_TRANSPORTS = ['polling', 'websocket'];
 export function useSocket(token) {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
+  const [currentToken, setCurrentToken] = useState(token);
+
+  useEffect(() => {
+    const updateToken = () => setCurrentToken(localStorage.getItem('accessToken'));
+    window.addEventListener('crm-auth-token-changed', updateToken);
+    return () => window.removeEventListener('crm-auth-token-changed', updateToken);
+  }, []);
 
   const socketClient = useMemo(() => {
-    if (!token) return null;
+    if (!currentToken) return null;
     return io(SOCKET_URL, {
-      auth: { token },
+      auth: { token: currentToken },
       autoConnect: false,
       path: SOCKET_PATH,
       transports: SOCKET_TRANSPORTS,
       upgrade: true,
       withCredentials: true
     });
-  }, [token]);
+  }, [currentToken]);
 
   useEffect(() => {
     if (!socketClient) return;

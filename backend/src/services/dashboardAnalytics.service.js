@@ -105,7 +105,7 @@ class DashboardAnalyticsService {
       LEFT JOIN (SELECT lead.owner_id,
           COUNT(*) AS assigned,
           SUM(CASE WHEN ls.code = 'registered' THEN 1 ELSE 0 END) AS converted
-        FROM leads lead LEFT JOIN lead_statuses ls ON ls.id = lead.status_id
+        FROM leads lead LEFT JOIN lead_status ls ON ls.id = lead.status_id
         WHERE lead.deleted_at IS NULL AND lead.created_at >= :start AND lead.created_at < :end GROUP BY lead.owner_id) l ON l.owner_id = u.id
       LEFT JOIN (SELECT sent_by_user_id,
           COUNT(*) AS replies, COUNT(DISTINCT conversation_id) AS unique_conversations

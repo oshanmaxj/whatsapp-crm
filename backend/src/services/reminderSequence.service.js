@@ -125,22 +125,48 @@ class ReminderSequenceService {
   async changeSequenceStatus(id, requestedStatus, userId) {
     const status = String(requestedStatus || '').trim().toLowerCase();
     if (!REMINDER_SEQUENCE_STATUSES.has(status)) throw validationError({ status: 'Choose draft, active, paused, or archived.' });
-    return models.sequelize.transaction(async transaction => {
-      const row = await models.ReminderSequence.findByPk(id, {
-        include: [{ model: models.ReminderSequenceStep, as: 'steps' }],
-        transaction,
-        lock: transaction.LOCK.UPDATE
-      });
+    const operation = async (name, fn) => {
+      try {
+        return await fn();
+      } catch (error) {
+        logger.error('reminder_sequence_status_query_failed', {
+          operation: name,
+          sequenceId: String(id),
+          status,
+          databaseCode: error?.original?.code || error?.parent?.code || null,
+          message: safeError(error?.original || error?.parent || error)
+        });
+        throw error;
+      }
+    };
+    try {
+      return await models.sequelize.transaction(async transaction => {
+      // Lock only the sequence row. PostgreSQL rejects FOR UPDATE on the nullable
+      // side of the LEFT JOIN Sequelize creates for an included steps collection.
+      const row = await operation('lock_sequence', () => models.ReminderSequence.findByPk(id, {
+        transaction, lock: transaction.LOCK.UPDATE
+      }));
       if (!row) throw Object.assign(new Error('Reminder sequence not found.'), { status: 404 });
-      if (row.whatsappAccountId) await whatsappAccountAccess.assertAccess(row.whatsappAccountId, userId);
+      if (row.whatsappAccountId) await operation('verify_whatsapp_account_access', () => whatsappAccountAccess.assertAccess(row.whatsappAccountId, userId));
+      row.steps = await operation('load_sequence_steps', () => models.ReminderSequenceStep.findAll({
+        where: { sequenceId: row.id }, order: [['step_number', 'ASC']], transaction
+      }));
       if (row.status === status) return { sequence: row, warnings: [] };
       if (!REMINDER_SEQUENCE_TRANSITIONS[row.status]?.has(status)) throw Object.assign(new Error(`Cannot change reminder sequence from ${row.status} to ${status}.`), {
         status: 409, code: 'REMINDER_STATUS_TRANSITION_INVALID'
       });
       const result = status === REMINDER_SEQUENCE_STATUS.ACTIVE ? validateForActivation(row) : { warnings: [] };
-      await row.update({ status, updatedBy: userId }, { transaction });
+      await operation('update_sequence_status', () => row.update({ status, updatedBy: userId }, { transaction }));
       return { sequence: row, warnings: result.warnings };
-    });
+      });
+    } catch (error) {
+      logger.error('reminder_sequence_status_change_failed', {
+        sequenceId: String(id), status,
+        databaseCode: error?.original?.code || error?.parent?.code || null,
+        message: safeError(error?.original || error?.parent || error)
+      });
+      throw error;
+    }
   }
   async duplicateSequence(id, userId) {
     const source = await this.getSequence(id, userId);

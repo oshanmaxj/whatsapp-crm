@@ -55,6 +55,7 @@ test('worker claims due executions with a database lock and skip locked', () => 
 test('reminder lifecycle publishes valid drafts, pauses, and resumes with canonical statuses', async () => {
   const originalTransaction = models.sequelize.transaction;
   const originalFind = models.ReminderSequence.findByPk;
+  const originalFindSteps = models.ReminderSequenceStep.findAll;
   const row = {
     id: 7, name: 'Follow up', status: 'draft',
     steps: [{ stepNumber: 1, delayValue: 1, delayUnit: 'hours', body: 'Hello', templateId: null }],
@@ -62,6 +63,7 @@ test('reminder lifecycle publishes valid drafts, pauses, and resumes with canoni
   };
   models.sequelize.transaction = async callback => callback({ LOCK: { UPDATE: 'UPDATE' } });
   models.ReminderSequence.findByPk = async () => row;
+  models.ReminderSequenceStep.findAll = async () => row.steps;
   try {
     const activated = await reminderSequenceService.changeSequenceStatus(7, 'ACTIVE', 2);
     assert.equal(row.status, 'active');
@@ -73,14 +75,18 @@ test('reminder lifecycle publishes valid drafts, pauses, and resumes with canoni
   } finally {
     models.sequelize.transaction = originalTransaction;
     models.ReminderSequence.findByPk = originalFind;
+    models.ReminderSequenceStep.findAll = originalFindSteps;
   }
 });
 
 test('publishing rejects invalid steps with field-level errors', async () => {
   const originalTransaction = models.sequelize.transaction;
   const originalFind = models.ReminderSequence.findByPk;
+  const originalFindSteps = models.ReminderSequenceStep.findAll;
+  const steps = [{ stepNumber: 1, delayValue: 0, delayUnit: 'weeks', body: '' }];
   models.sequelize.transaction = async callback => callback({ LOCK: { UPDATE: 'UPDATE' } });
-  models.ReminderSequence.findByPk = async () => ({ id: 8, name: 'Broken', status: 'draft', steps: [{ stepNumber: 1, delayValue: 0, delayUnit: 'weeks', body: '' }] });
+  models.ReminderSequence.findByPk = async () => ({ id: 8, name: 'Broken', status: 'draft' });
+  models.ReminderSequenceStep.findAll = async () => steps;
   try {
     await assert.rejects(
       reminderSequenceService.changeSequenceStatus(8, 'active', 2),
@@ -89,7 +95,14 @@ test('publishing rejects invalid steps with field-level errors', async () => {
   } finally {
     models.sequelize.transaction = originalTransaction;
     models.ReminderSequence.findByPk = originalFind;
+    models.ReminderSequenceStep.findAll = originalFindSteps;
   }
+});
+
+test('leaderboard uses the canonical lead_status table', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/dashboardAnalytics.service.js'), 'utf8');
+  assert.match(source, /LEFT JOIN lead_status ls ON ls\.id = lead\.status_id/);
+  assert.doesNotMatch(source, /JOIN lead_statuses/);
 });
 
 test('Flow Builder uses active canonical reminder sequences and stores sequence IDs', () => {

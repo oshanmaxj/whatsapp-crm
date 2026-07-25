@@ -12,6 +12,7 @@ export function clearAuthState() {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('crm-auth-token-changed'));
 }
 
 export function storeAuthResponse(response) {
@@ -21,6 +22,7 @@ export function storeAuthResponse(response) {
   localStorage.setItem('accessToken', accessToken);
   localStorage.removeItem('refreshToken');
   if (data.user) localStorage.setItem('user', JSON.stringify(data.user));
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('crm-auth-token-changed'));
   return accessToken;
 }
 
@@ -73,6 +75,7 @@ api.interceptors.response.use((response) => response, async (error) => {
       original.headers.Authorization = `Bearer ${token}`;
       return api(original);
     } catch (refreshError) {
+      if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('authNotice', 'Your session expired. Please sign in again.');
       clearAuthState();
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') window.location.assign('/login');
       return Promise.reject(refreshError);

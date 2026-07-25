@@ -45,6 +45,24 @@ class AiProviderService {
     delete values.apiKey; delete values.baseUrl; delete values.defaultModel; delete values.encryptedApiKey; delete values.keyIv; delete values.keyTag; delete values.keyConfigured;
     let row;
     await models.sequelize.transaction(async transaction => {
+      if (models.sequelize.getDialect() === 'postgres') {
+        await models.sequelize.query(
+          "SELECT pg_advisory_xact_lock(hashtext('ai_provider_identity_v1'))",
+          { transaction }
+        );
+      }
+      const duplicate = await models.AiProvider.unscoped().findOne({
+        where: {
+          providerType: input.providerType,
+          apiBaseUrl: input.apiBaseUrl,
+          ...(id ? { id: { [require('sequelize').Op.ne]: id } } : {})
+        },
+        transaction
+      });
+      if (duplicate) throw Object.assign(new Error('A provider with this type and API Base URL already exists.'), {
+        status: 409, code: 'AI_PROVIDER_DUPLICATE',
+        errors: { apiBaseUrl: 'This provider type and API Base URL are already configured.' }
+      });
       if (id) {
         row = await models.AiProvider.unscoped().findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
         if (!row) throw Object.assign(new Error('AI provider not found.'), { status: 404 });

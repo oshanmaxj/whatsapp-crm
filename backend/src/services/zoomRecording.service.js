@@ -28,10 +28,16 @@ function encryptSecret(value) {
 
 function decryptSecret(value) {
   if (!value || typeof value !== 'string' || !value.startsWith('enc:')) return value || '';
-  const [, iv, tag, encrypted] = value.split(':');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(iv, 'base64'));
-  decipher.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64')), decipher.final()]).toString('utf8');
+  try {
+    const [, iv, tag, encrypted] = value.split(':');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(tag, 'base64'));
+    return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64')), decipher.final()]).toString('utf8');
+  } catch {
+    throw Object.assign(new Error('Stored Zoom credentials cannot be decrypted with the configured application settings key. Re-enter the Zoom credentials.'), {
+      status: 409, code: 'ZOOM_CREDENTIALS_RECONFIGURATION_REQUIRED', exposeMessage: true
+    });
+  }
 }
 
 function normalizeMeetingId(value) {

@@ -52,6 +52,11 @@ function LoginPage() {
   const [form, setForm] = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notice] = useState(() => {
+    const value = sessionStorage.getItem('authNotice') || '';
+    sessionStorage.removeItem('authNotice');
+    return value;
+  });
 
   const redirectTo = location.state?.from?.pathname || '/dashboard';
 
@@ -120,6 +125,7 @@ function LoginPage() {
             </Typography>
           </Stack>
 
+          {notice && <Alert severity="info">{notice}</Alert>}
           {error && <Alert severity="error">{error}</Alert>}
 
           <TextField

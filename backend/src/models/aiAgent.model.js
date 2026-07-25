@@ -6,5 +6,6 @@ module.exports=(sequelize,D)=>sequelize.define('AiAgent',{
   prohibitedStatements:{type:D.JSONB,allowNull:false,defaultValue:[]},handoverRules:{type:D.JSONB,allowNull:false,defaultValue:{}},workingHours:{type:D.JSONB,allowNull:false,defaultValue:{}},
   responseDelaySeconds:{type:D.INTEGER,allowNull:false,defaultValue:0},maxAiReplies:{type:D.INTEGER,allowNull:false,defaultValue:10},status:{type:D.STRING(20),allowNull:false,defaultValue:'paused'},
   model:{type:D.STRING(80),allowNull:false,defaultValue:'gpt-4.1-mini'},temperature:{type:D.DECIMAL(3,2),allowNull:false,defaultValue:.3},allowedActions:{type:D.JSONB,allowNull:false,defaultValue:['send_text','request_human']},
+  providerId:D.BIGINT,confidenceThreshold:{type:D.DECIMAL(4,3),allowNull:false,defaultValue:.65},stopOnHumanReply:{type:D.BOOLEAN,allowNull:false,defaultValue:true},contextMessageLimit:{type:D.INTEGER,allowNull:false,defaultValue:20},outcomeSequenceId:D.BIGINT,
   automationPriority:{type:D.STRING(30),allowNull:false,defaultValue:'flow_first_then_ai'},humanPauseMinutes:{type:D.INTEGER,allowNull:false,defaultValue:60},createdBy:D.BIGINT,updatedBy:D.BIGINT
 },{tableName:'ai_agents',timestamps:true,underscored:true});

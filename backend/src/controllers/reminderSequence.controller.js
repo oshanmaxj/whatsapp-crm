@@ -1,0 +1,15 @@
+const service = require('../services/reminderSequence.service');
+const models = require('../models');
+const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
+const wrap = fn => async (req, res, next) => { try { return await fn(req, res); } catch (error) { return next(error); } };
+exports.list = wrap(async (req,res)=>ok(res,await service.listSequences(req.query)));
+exports.get = wrap(async (req,res)=>ok(res,await service.getSequence(req.params.id)));
+exports.create = wrap(async (req,res)=>ok(res,await service.saveSequence(null,req.body,req.user.id),201));
+exports.update = wrap(async (req,res)=>ok(res,await service.saveSequence(req.params.id,req.body,req.user.id)));
+exports.remove = wrap(async (req,res)=>ok(res,await service.removeSequence(req.params.id,req.user.id)));
+exports.subscribe = wrap(async (req,res)=>ok(res,await service.subscribe(req.body,req.user.id),201));
+exports.change = wrap(async (req,res)=>ok(res,await service.changeStatus(req.params.id,req.params.action)));
+exports.subscriptions = wrap(async(req,res)=>ok(res,await models.ReminderSubscription.findAndCountAll({where:req.query.status?{status:req.query.status}:{},limit:Math.min(Number(req.query.limit||50),200),offset:Number(req.query.offset||0),order:[['created_at','DESC']],include:[{model:models.ReminderSequence,as:'sequence'}]})));
+exports.executions = wrap(async(req,res)=>ok(res,await models.ReminderExecution.findAndCountAll({where:req.query.status?{status:req.query.status}:{},limit:Math.min(Number(req.query.limit||50),200),offset:Number(req.query.offset||0),order:[['scheduled_at','DESC']]})));
+exports.retry = wrap(async(req,res)=>{const row=await models.ReminderExecution.findByPk(req.params.id);if(!row||!['failed','skipped'].includes(row.status))throw Object.assign(new Error('Execution cannot be retried.'),{status:409});await row.update({status:'scheduled',scheduledAt:new Date(),errorCode:null,errorMessage:null});const sub=await models.ReminderSubscription.findByPk(row.subscriptionId);if(sub?.status==='failed')await sub.update({status:'active',nextRunAt:new Date()});return ok(res,row);});
+exports.dashboard = wrap(async(req,res)=>{const now=new Date(),hour=new Date(Date.now()+3600000),today=new Date(now);today.setHours(0,0,0,0);const [activeSequences,activeSubscriptions,dueNextHour,sentToday,failedToday,stoppedByReply]=await Promise.all([models.ReminderSequence.count({where:{status:'active'}}),models.ReminderSubscription.count({where:{status:'active'}}),models.ReminderExecution.count({where:{status:'scheduled',scheduledAt:{[require('sequelize').Op.between]:[now,hour]}}}),models.ReminderExecution.count({where:{status:'sent',sentAt:{[require('sequelize').Op.gte]:today}}}),models.ReminderExecution.count({where:{status:'failed',updatedAt:{[require('sequelize').Op.gte]:today}}}),models.ReminderSubscription.count({where:{status:'stopped_by_reply'}})]);return ok(res,{activeSequences,activeSubscriptions,dueNextHour,sentToday,failedToday,stoppedByReply});});

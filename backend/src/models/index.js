@@ -109,6 +109,11 @@ const AiAgent = require('./aiAgent.model');
 const AiConversationState = require('./aiConversationState.model');
 const AiKnowledgeSource = require('./aiKnowledgeSource.model');
 const AiDecisionLog = require('./aiDecisionLog.model');
+const ReminderSequence = require('./reminderSequence.model');
+const ReminderSequenceStep = require('./reminderSequenceStep.model');
+const ReminderSubscription = require('./reminderSubscription.model');
+const ReminderExecution = require('./reminderExecution.model');
+const AiProvider = require('./aiProvider.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -152,6 +157,10 @@ const models = {
   ContactListMember: ContactListMember(sequelize, Sequelize.DataTypes),
   Sequence: Sequence(sequelize, Sequelize.DataTypes),
   SequenceSubscription: SequenceSubscription(sequelize, Sequelize.DataTypes),
+  ReminderSequence: ReminderSequence(sequelize, Sequelize.DataTypes),
+  ReminderSequenceStep: ReminderSequenceStep(sequelize, Sequelize.DataTypes),
+  ReminderSubscription: ReminderSubscription(sequelize, Sequelize.DataTypes),
+  ReminderExecution: ReminderExecution(sequelize, Sequelize.DataTypes),
   GoogleSheetConnection: GoogleSheetConnection(sequelize, Sequelize.DataTypes),
   Appointment: Appointment(sequelize, Sequelize.DataTypes),
   AppointmentRequest: AppointmentRequest(sequelize, Sequelize.DataTypes),
@@ -179,6 +188,7 @@ const models = {
   LoginHistory: LoginHistory(sequelize, Sequelize.DataTypes),
   PasswordResetToken: PasswordResetToken(sequelize, Sequelize.DataTypes),
   AuthSession: AuthSession(sequelize, Sequelize.DataTypes),
+  AiProvider: AiProvider(sequelize, Sequelize.DataTypes),
   PaymentReceipt: PaymentReceipt(sequelize, Sequelize.DataTypes),
   PaymentReceiptJob: PaymentReceiptJob(sequelize, Sequelize.DataTypes),
   PaymentSlip: PaymentSlip(sequelize, Sequelize.DataTypes),
@@ -312,6 +322,12 @@ models.ContactListMember.belongsTo(models.Contact, { foreignKey: 'contact_id', a
 models.Sequence.hasMany(models.SequenceSubscription, { foreignKey: 'sequence_id', as: 'subscriptions' });
 models.SequenceSubscription.belongsTo(models.Sequence, { foreignKey: 'sequence_id', as: 'sequence' });
 models.SequenceSubscription.belongsTo(models.Contact, { foreignKey: 'contact_id', as: 'contact' });
+models.ReminderSequence.hasMany(models.ReminderSequenceStep,{foreignKey:'sequence_id',as:'steps'});
+models.ReminderSequenceStep.belongsTo(models.ReminderSequence,{foreignKey:'sequence_id',as:'sequence'});
+models.ReminderSequence.hasMany(models.ReminderSubscription,{foreignKey:'sequence_id',as:'subscriptions'});
+models.ReminderSubscription.belongsTo(models.ReminderSequence,{foreignKey:'sequence_id',as:'sequence'});
+models.ReminderSubscription.hasMany(models.ReminderExecution,{foreignKey:'subscription_id',as:'executions'});
+models.ReminderExecution.belongsTo(models.ReminderSubscription,{foreignKey:'subscription_id',as:'subscription'});
 models.ConversationAssignmentHistory.belongsTo(models.Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
 models.ConversationAssignmentHistory.belongsTo(models.User, { foreignKey: 'previous_user_id', as: 'previousUser' });
 models.ConversationAssignmentHistory.belongsTo(models.User, { foreignKey: 'new_user_id', as: 'newUser' });

@@ -45,6 +45,8 @@ import LmsCourseBuilderPage, { LmsCoursesPage } from './pages/LmsCourseBuilderPa
 import CourseSchedulerPage from './pages/CourseSchedulerPage';
 import CommissionPage from './pages/CommissionPage';
 import AiAgentsPage from './pages/AiAgentsPage';
+import ReminderSequencesPage from './pages/ReminderSequencesPage';
+import AiProviderSettingsPage from './pages/AiProviderSettingsPage';
 import PaymentVerificationPage from './pages/PaymentVerificationPage';
 import PaymentReceiptsPage from './pages/PaymentReceiptsPage';
 import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
@@ -154,6 +156,8 @@ function App() {
             <Route path="/inbox" element={<Navigate to="/chat" replace />} />
             <Route path="/auto-replies" element={permit('settings.view', <AutoReplyManagement />)} />
             <Route path="/ai-agents" element={permit('settings.view', <AiAgentsPage />)} />
+            <Route path="/reminder-sequences" element={permit('reminder_sequences.view', <ReminderSequencesPage />)} />
+            <Route path="/settings/ai-providers" element={permit('ai_providers.view', <AiProviderSettingsPage />)} />
             <Route path="/settings" element={permit('settings.view', <ProductionSettingsPage />)} />
             <Route path="/settings/integrations/zoom" element={permit('settings.view', <CourseSchedulerPage settingsOnly />)} />
             <Route path="/settings/message-templates" element={permit('settings.view', <StudentMessageTemplatesPage />)} />

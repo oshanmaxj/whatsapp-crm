@@ -14,6 +14,7 @@ const paymentSlipQueueService = require('./services/paymentSlipQueue.service');
 const automationService = require('./services/automation.service');
 const flowService = require('./services/flow.service');
 const pipelineService = require('./services/pipeline.service');
+const reminderSequenceService = require('./services/reminderSequence.service');
 const { isMissingTableError } = require('./utils/databaseError');
 const { ensureUnifiedLeadStatuses } = require('./services/unifiedLeadStatuses.service');
 
@@ -55,6 +56,7 @@ const startServer = async () => {
     paymentSlipQueueService.start();
     flowService.start();
     pipelineService.start();
+    reminderSequenceService.start();
   } catch (error) {
     logger.error('server_start_failed', error);
     process.exit(1);

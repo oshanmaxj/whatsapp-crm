@@ -45,7 +45,7 @@ export const modules = [
   { id: 'commissions', label: 'Commissions', path: '/commissions', icon: <PaymentsIcon />, permission: 'commission.view_own', routes: ['/commissions'] },
   {
     id: 'whatsapp', label: 'WhatsApp', path: '/whatsapp', icon: <WhatsAppIcon />,
-    routes: ['/whatsapp', '/whatsapp-dashboard', '/connect-whatsapp', '/whatsapp-accounts', '/whatsapp-templates', '/campaigns', '/compliance', '/auto-replies', '/ai-agents', '/flow-builder'],
+    routes: ['/whatsapp', '/whatsapp-dashboard', '/connect-whatsapp', '/whatsapp-accounts', '/whatsapp-templates', '/campaigns', '/compliance', '/auto-replies', '/ai-agents', '/flow-builder', '/reminder-sequences'],
     items: [
       { label: 'Connect WhatsApp', path: '/connect-whatsapp', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
       { label: 'WhatsApp Numbers', path: '/whatsapp-accounts', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
@@ -54,6 +54,7 @@ export const modules = [
       { label: 'Compliance', path: '/compliance', icon: <FactCheckIcon />, permission: 'connect-whatsapp.view' },
       { label: 'Auto Replies', path: '/auto-replies', icon: <SmartToyIcon />, permission: 'settings.view' },
       { label: 'AI Agents', path: '/ai-agents', icon: <SmartToyIcon />, permission: 'settings.view' },
+      { label: 'Reminder Sequences', path: '/reminder-sequences', icon: <NotificationsIcon />, permission: 'reminder_sequences.view' },
       { label: 'Flow Builder', path: '/flow-builder', icon: <AccountTreeOutlinedIcon />, permission: 'flow-builder.view' }
     ]
   },
@@ -107,6 +108,7 @@ export const modules = [
       { label: 'Backup', path: '/settings?tab=backup', icon: <BackupIcon />, permission: 'settings.view', tab: 'backup' },
       { label: 'System Info', path: '/settings?tab=system', icon: <StorageIcon />, permission: 'settings.view', tab: 'system' },
       { label: 'Zoom Integration', path: '/settings/integrations/zoom', icon: <VideoLibraryIcon />, permission: 'settings.view' },
+      { label: 'AI Providers', path: '/settings/ai-providers', icon: <SmartToyIcon />, permission: 'ai_providers.view' },
       { label: 'User Manager', path: '/users', icon: <ManageAccountsIcon />, permission: 'user-manager.view' },
       { label: 'Departments & Permissions', path: '/permissions', icon: <AdminPanelSettingsIcon />, permission: 'user-manager.edit' },
       { label: 'Message Templates', path: '/settings/message-templates', icon: <ChatBubbleOutlineIcon />, permission: 'settings.view' },

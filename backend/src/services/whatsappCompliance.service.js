@@ -13,12 +13,13 @@ function windowStatus(open) {
 }
 
 class WhatsAppComplianceService {
-  async getLastInboundMessage(contactId, whatsappAccountId = null) {
+  async getLastInboundMessage(contactId, whatsappAccountId = null, conversationId = null) {
     if (!contactId) return null;
     return Message.findOne({
       where: {
         contactId,
         ...(whatsappAccountId ? { whatsappAccountId } : {}),
+        ...(conversationId ? { conversationId } : {}),
         [Op.or]: [
           { direction: 'inbound' },
           { status: 'received' }
@@ -28,8 +29,8 @@ class WhatsAppComplianceService {
     });
   }
 
-  async isConversationWindowOpen(contactId, whatsappAccountId = null) {
-    const lastInbound = await this.getLastInboundMessage(contactId, whatsappAccountId);
+  async isConversationWindowOpen(contactId, whatsappAccountId = null, conversationId = null) {
+    const lastInbound = await this.getLastInboundMessage(contactId, whatsappAccountId, conversationId);
     if (!lastInbound) return { open: false, lastInboundAt: null };
     const open = Date.now() - new Date(lastInbound.createdAt).getTime() <= WINDOW_MS;
     return { open, lastInboundAt: lastInbound.createdAt };

@@ -79,6 +79,10 @@ function createInboundWhatsappMessageService(dependencies = {}) {
         throw error;
       }
 
+      if (typeof transaction.afterCommit === 'function') {
+        transaction.afterCommit(() => require('./reminderSequence.service')
+          .stopForConversation(conversationId, 'reply').catch(() => null));
+      }
       return { messageRecord, replyToMessage, created: true };
     }
   };

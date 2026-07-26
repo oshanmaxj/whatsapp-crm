@@ -44,6 +44,7 @@ const advancedFlowActionsMigration = require('../../migrations/040_advanced_flow
 const educationSearchIndexesMigration = require('../../migrations/041_education_search_indexes');
 const crmLabelsVoiceDashboardMigration = require('../../migrations/042_crm_labels_voice_dashboard');
 const whatsappNumberRoutingMigration = require('../../migrations/043_whatsapp_number_routing');
+const callCenterPhase1Migration = require('../../migrations/048_call_center_phase1');
 const commissionFinanceUpgradeMigration = require('../../migrations/044_commission_finance_upgrade');
 const whatsappAiAgentsMigration = require('../../migrations/045_whatsapp_ai_agents');
 const reminderSequencesAiProvidersMigration = require('../../migrations/046_reminder_sequences_ai_providers');
@@ -250,6 +251,8 @@ async function run() {
     console.log('Applied: reminder sequences and AI provider configuration');
     await runMigration('047_campaign_template_headers.js', campaignTemplateHeadersMigration, queryInterface);
     console.log('Applied: approved template header media for campaigns');
+    await runMigration('048_call_center_phase1.js', callCenterPhase1Migration, queryInterface);
+    console.log('Applied: call center phase 1');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

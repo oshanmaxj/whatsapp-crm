@@ -35,12 +35,14 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
+import HeadsetMicIcon from '@mui/icons-material/HeadsetMic';
 
 export const modules = [
   { id: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, permission: 'dashboard.view', routes: ['/dashboard'] },
   { id: 'chat', label: 'Inbox / Chat', path: '/chat', icon: <ChatBubbleOutlineIcon />, permission: 'inbox.view', routes: ['/chat', '/inbox'] },
   { id: 'contacts', label: 'Contacts', path: '/contacts', icon: <ContactsIcon />, permission: 'contacts.view', routes: ['/contacts'] },
   { id: 'leads', label: 'Leads', path: '/leads', icon: <TrendingUpIcon />, permission: 'leads.view', routes: ['/leads'] },
+  { id: 'call-center', label: 'Call Center', path: '/call-center', icon: <HeadsetMicIcon />, permission: ['callcenter.dashboard.view','calls.view.own','calls.view.team'], routes: ['/call-center'] },
   { id: 'appointments', label: 'Appointments', path: '/appointments', icon: <CalendarMonthIcon />, permission: 'appointments.view', routes: ['/appointments'] },
   { id: 'commissions', label: 'Commissions', path: '/commissions', icon: <PaymentsIcon />, permission: 'commission.view_own', routes: ['/commissions'] },
   {

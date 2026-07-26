@@ -49,6 +49,7 @@ import ReminderSequencesPage from './pages/ReminderSequencesPage';
 import AiProviderSettingsPage from './pages/AiProviderSettingsPage';
 import PaymentVerificationPage from './pages/PaymentVerificationPage';
 import PaymentReceiptsPage from './pages/PaymentReceiptsPage';
+import CallCenterPage from './pages/CallCenterPage';
 import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
 import {
   StudentCoursePage, StudentCoursesPage, StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLiveClassesPage, StudentLoginPage, StudentMaterialsPage,
@@ -149,6 +150,7 @@ function App() {
             <Route path="/notifications" element={permit('settings.view', <NotificationsPage />)} />
             <Route path="/reports" element={permit('reports.view', <ReportsPage />)} />
             <Route path="/leads" element={permit('leads.view', <LeadsPage />)} />
+            <Route path="/call-center" element={permit(['callcenter.dashboard.view','calls.view.own','calls.view.team'], <CallCenterPage />)} />
             <Route path="/lead-pipeline" element={<Navigate to="/leads" replace />} />
             <Route path="/followups" element={<Navigate to="/leads" replace />} />
             <Route path="/agents" element={permit('agents.view', <AgentsPage />)} />

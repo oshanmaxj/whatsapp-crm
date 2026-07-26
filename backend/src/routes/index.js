@@ -46,6 +46,7 @@ const aiProviderRoutes = require('./aiProvider.routes');
 const paymentSlipRoutes = require('./paymentSlip.routes');
 const paymentReceiptRoutes = require('./paymentReceipt.routes');
 const pipelineRoutes=require('./pipeline.routes'),followupRoutes=require('./followup.routes'),lostReasonRoutes=require('./lostReason.routes');
+const callCenterRoutes=require('./callCenter.routes');
 
 const router = express.Router();
 
@@ -64,6 +65,7 @@ router.use('/ai', aiRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/contacts', contactRoutes);
 router.use('/leads', leadRoutes);
+router.use('/call-center',callCenterRoutes);
 router.use('/agents', agentRoutes);
 router.use('/conversations', conversationRoutes);
 router.use('/media', mediaRoutes);

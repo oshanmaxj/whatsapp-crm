@@ -1,0 +1,1 @@
+const r=require('express').Router(),a=require('../middleware/auth.middleware'),c=require('../controllers/callCenter.controller');r.use(a.authenticate);r.post('/calls/start',c.start);r.post('/calls/:id/complete',c.complete);r.post('/calls/log',c.log);r.get('/dashboard',c.dashboard);module.exports=r;

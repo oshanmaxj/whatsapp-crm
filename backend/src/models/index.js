@@ -114,6 +114,9 @@ const ReminderSequenceStep = require('./reminderSequenceStep.model');
 const ReminderSubscription = require('./reminderSubscription.model');
 const ReminderExecution = require('./reminderExecution.model');
 const AiProvider = require('./aiProvider.model');
+const CallActivity = require('./callActivity.model');
+const LeadStatusHistory = require('./leadStatusHistory.model');
+const ConversionAttribution = require('./conversionAttribution.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -224,6 +227,7 @@ const models = {
   CommissionAccountingLink: CommissionAccountingLink(sequelize, Sequelize.DataTypes),
   AiAgent: AiAgent(sequelize, Sequelize.DataTypes), AiConversationState: AiConversationState(sequelize, Sequelize.DataTypes),
   AiKnowledgeSource: AiKnowledgeSource(sequelize, Sequelize.DataTypes), AiDecisionLog: AiDecisionLog(sequelize, Sequelize.DataTypes)
+  ,CallActivity:CallActivity(sequelize,Sequelize.DataTypes),LeadStatusHistory:LeadStatusHistory(sequelize,Sequelize.DataTypes),ConversionAttribution:ConversionAttribution(sequelize,Sequelize.DataTypes)
 };
 
 models.User.belongsToMany(models.Role, {
@@ -279,6 +283,7 @@ models.Contact.hasMany(models.Lead, { foreignKey: 'contact_id', as: 'leads' });
 models.User.hasMany(models.Lead, { foreignKey: 'owner_id', as: 'ownedLeads' });
 models.LeadStatus.hasMany(models.Lead, { foreignKey: 'status_id', as: 'leads' });
 models.LeadSource.hasMany(models.Lead, { foreignKey: 'source_id', as: 'leads' });
+models.Lead.hasMany(models.CallActivity,{foreignKey:'lead_id',as:'calls'});models.CallActivity.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.CallActivity.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'});models.Lead.hasMany(models.LeadStatusHistory,{foreignKey:'lead_id',as:'statusHistory'});models.Lead.hasMany(models.ConversionAttribution,{foreignKey:'lead_id',as:'conversionAttributions'});
 
 models.Lead.hasMany(models.LeadAssignment, { foreignKey: 'lead_id', as: 'assignments' });
 models.Lead.hasMany(models.LeadActivity,{foreignKey:'leadId',as:'activities'});models.LeadActivity.belongsTo(models.Lead,{foreignKey:'leadId',as:'lead'});models.LeadActivity.belongsTo(models.User,{foreignKey:'actorUserId',as:'actor'});models.Lead.belongsTo(models.LostReason,{foreignKey:'lost_reason_id',as:'lostReason'});

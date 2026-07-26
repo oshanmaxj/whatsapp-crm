@@ -6,12 +6,14 @@ const { createLeadSchema, updateLeadSchema, updateLeadStatusSchema, assignLeadSc
 
 const router = express.Router();
 const pipelineController = require('../controllers/pipeline.controller');
+const callCenterController = require('../controllers/callCenter.controller');
 
 router.use(authMiddleware.authenticate);
 
 router.get('/pipeline', pipelineController.board);
 router.patch('/:id/status', validateBody(updateLeadStatusSchema, { status: 400, code: 'INVALID_LEAD_STATUS' }), leadController.updateStatus.bind(leadController));
 router.get('/:id/history', pipelineController.history);
+router.get('/:id/timeline', callCenterController.timeline);
 router.get('/', leadController.list.bind(leadController));
 router.get('/:id', leadController.get.bind(leadController));
 router.post('/', validateBody(createLeadSchema), leadController.create.bind(leadController));

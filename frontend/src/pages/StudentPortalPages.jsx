@@ -57,10 +57,12 @@ export function StudentLoginPage() {
       const messages = {
         OTP_RATE_LIMITED: 'Please wait before requesting another code.',
         INVALID_PHONE: 'Enter a valid Sri Lankan WhatsApp number.',
+        WHATSAPP_NUMBER_MISSING: 'No WhatsApp number is registered for this student. Please contact the office.',
         STUDENT_NOT_FOUND: 'Unable to send a code. Check your details or contact the office.',
         WHATSAPP_CONFIGURATION_MISSING: 'WhatsApp login is temporarily unavailable. Please contact the office.',
         WHATSAPP_AUTHENTICATION_FAILED: 'WhatsApp login is temporarily unavailable. Please contact the office.',
-        WHATSAPP_META_REJECTED: 'WhatsApp could not send this login code. Please contact the office.',
+        WHATSAPP_META_REJECTED: 'WhatsApp rejected the login message. Please contact the office and quote the request ID.',
+        WHATSAPP_BILLING_REQUIRED: 'WhatsApp billing needs attention. Please contact the office and quote the request ID.',
         WHATSAPP_TEMPORARY_FAILURE: 'WhatsApp is temporarily unavailable. Please try again shortly.'
       };
       setError(messages[code] || 'Unable to send a code. Check your details or try again later.');

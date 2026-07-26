@@ -25,7 +25,8 @@ test('OTP request sends the configured Meta authentication template without logg
   const originals = {
     scope: models.Student.scope, findAll: models.StudentPortalSession.findAll,
     update: models.StudentPortalSession.update, create: models.StudentPortalSession.create,
-    runtime: whatsappService.getRuntimeConfig, send: whatsappService.sendTemplateMessage
+    runtime: whatsappService.getRuntimeConfig, send: whatsappService.sendTemplateMessage,
+    accounts: models.WhatsAppAccount.findAll, template: models.WhatsAppTemplate.findOne
   };
   const student = row({ id: 4, studentNo: 'STU-4', phone: '775652000', status: 'active' });
   let sent;
@@ -38,12 +39,15 @@ test('OTP request sends the configured Meta authentication template without logg
     models.StudentPortalSession.findAll = async () => [];
     models.StudentPortalSession.update = async () => [0];
     models.StudentPortalSession.create = async (values) => { Object.assign(session, values); return session; };
+    models.WhatsAppAccount.findAll = async () => [{ id: 19 }];
+    models.WhatsAppTemplate.findOne = async () => ({ id: 23, category: 'AUTHENTICATION', status: 'APPROVED' });
     whatsappService.getRuntimeConfig = async () => ({ accessToken: 'configured', phoneNumberId: 'configured', apiVersion: 'v25.0' });
     whatsappService.sendTemplateMessage = async (payload) => { sent = payload; return { id: 'message-id' }; };
     const result = await studentPortal.login({ identifier: '0775652000', method: 'otp' }, { requestId: 'test-request' });
     assert.equal(sent.to, '94775652000');
     assert.equal(sent.templateName, 'student_login_otp');
     assert.equal(sent.language, 'en_US');
+    assert.equal(sent.whatsappAccountId, 19);
     assert.match(sent.components[0].parameters[0].text, /^\d{6}$/);
     assert.notEqual(session.otpHash, sent.components[0].parameters[0].text);
     assert.ok(await bcrypt.compare(sent.components[0].parameters[0].text, session.otpHash));
@@ -53,6 +57,7 @@ test('OTP request sends the configured Meta authentication template without logg
     models.Student.scope = originals.scope; models.StudentPortalSession.findAll = originals.findAll;
     models.StudentPortalSession.update = originals.update; models.StudentPortalSession.create = originals.create;
     whatsappService.getRuntimeConfig = originals.runtime; whatsappService.sendTemplateMessage = originals.send;
+    models.WhatsAppAccount.findAll = originals.accounts; models.WhatsAppTemplate.findOne = originals.template;
   }
 });
 
@@ -60,6 +65,7 @@ test('OTP Meta failures retain actionable internal classifications', () => {
   assert.deepEqual(studentPortal.mapOtpSendFailure({ response: { status: 401, data: { error: { code: 190 } } } }).code, 'WHATSAPP_AUTHENTICATION_FAILED');
   assert.equal(studentPortal.mapOtpSendFailure({ response: { status: 429, data: { error: { code: 4 } } } }).status, 503);
   assert.equal(studentPortal.mapOtpSendFailure({ response: { status: 400, data: { error: { code: 132001 } } } }).code, 'WHATSAPP_META_REJECTED');
+  assert.equal(studentPortal.mapOtpSendFailure({ response: { status: 400, data: { error: { code: 131042 } } } }).code, 'WHATSAPP_BILLING_REQUIRED');
 });
 
 test('OTP resend cooldown and expiry are enforced', async () => {
@@ -67,10 +73,14 @@ test('OTP resend cooldown and expiry are enforced', async () => {
   const originalScope = models.Student.scope;
   const originalSessionFind = models.StudentPortalSession.findOne;
   const originalRuntime = whatsappService.getRuntimeConfig;
+  const originalAccounts = models.WhatsAppAccount.findAll;
+  const originalTemplate = models.WhatsAppTemplate.findOne;
   const env = { ...process.env };
   try {
     process.env.WHATSAPP_SEND_ENABLED = 'true'; process.env.WHATSAPP_OTP_TEMPLATE_NAME = 'otp';
     models.Student.scope = () => ({ findOne: async () => row({ id: 1, phone: '0775652000', status: 'active' }) });
+    models.WhatsAppAccount.findAll = async () => [{ id: 19 }];
+    models.WhatsAppTemplate.findOne = async () => ({ id: 23 });
     whatsappService.getRuntimeConfig = async () => ({ accessToken: 'x', phoneNumberId: 'y', apiVersion: 'v25.0' });
     models.StudentPortalSession.findAll = async () => [{ createdAt: new Date() }];
     await assert.rejects(() => studentPortal.login({ identifier: '0775652000', method: 'otp' }), (error) => error.code === 'OTP_RATE_LIMITED' && error.status === 429);
@@ -81,6 +91,7 @@ test('OTP resend cooldown and expiry are enforced', async () => {
   } finally {
     process.env = env; models.Student.scope = originalScope; models.StudentPortalSession.findAll = originalFindAll;
     models.StudentPortalSession.findOne = originalSessionFind; whatsappService.getRuntimeConfig = originalRuntime;
+    models.WhatsAppAccount.findAll = originalAccounts; models.WhatsAppTemplate.findOne = originalTemplate;
   }
 });
 

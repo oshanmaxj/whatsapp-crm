@@ -6,10 +6,11 @@ const logger = require('../config/logger');
 const {
   AttendanceRecord, Batch, Course, FeeInstallment, LmsLesson, LmsLessonMaterial, LmsLiveClassJoin,
   LmsLessonBatchOverride, LmsLessonComment, LmsStudentProgress, LmsTopic, Student, StudentEnrollment,
-  StudentFee, StudentPortalSession, User
+  StudentFee, StudentPortalSession, User, WhatsAppAccount, WhatsAppTemplate
 } = require('../models');
 const whatsappService = require('./whatsapp.service');
 const { normalizeSriLankanPhone, sriLankanPhoneCandidates } = require('../utils/phone');
+const { isStudentVisibleLesson, studentVisibleLessonWhere, studentVisibleTopicWhere } = require('../utils/lmsVisibility');
 const {
   PAYMENT_BLOCKED_MESSAGE, checkEnrollmentAccess, evaluateFeeAccess
 } = require('./enrollmentAccess.service');
@@ -205,20 +206,43 @@ class StudentPortalService {
   async otpConfiguration() {
     const templateName = String(process.env.WHATSAPP_OTP_TEMPLATE_NAME || '').trim();
     const language = String(process.env.WHATSAPP_OTP_TEMPLATE_LANGUAGE || process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
-    const config = await whatsappService.getRuntimeConfig();
     const missing = [];
     if (process.env.WHATSAPP_SEND_ENABLED !== 'true') missing.push('WHATSAPP_SEND_ENABLED');
-    if (!config?.accessToken) missing.push('WHATSAPP_ACCESS_TOKEN');
-    if (!config?.phoneNumberId) missing.push('WHATSAPP_PHONE_NUMBER_ID');
-    if (!config?.apiVersion) missing.push('WHATSAPP_API_VERSION');
     if (!templateName) missing.push('WHATSAPP_OTP_TEMPLATE_NAME');
     if (!language) missing.push('WHATSAPP_OTP_TEMPLATE_LANGUAGE');
+    const requestedAccountId = Number(process.env.WHATSAPP_OTP_ACCOUNT_ID || 0);
+    let account = requestedAccountId
+      ? await WhatsAppAccount.findOne({ where: { id: requestedAccountId, status: 'active', sendEnabled: true } })
+      : null;
+    if (!account && !requestedAccountId) {
+      const activeAccounts = await WhatsAppAccount.findAll({
+        where: { status: 'active', sendEnabled: true }, attributes: ['id'], limit: 2
+      });
+      if (activeAccounts.length === 1) [account] = activeAccounts;
+      else missing.push('WHATSAPP_OTP_ACCOUNT_ID');
+    } else if (!account) {
+      missing.push('WHATSAPP_OTP_ACCOUNT_ID');
+    }
+    const whatsappAccountId = account?.id || null;
+    const template = whatsappAccountId && templateName
+      ? await WhatsAppTemplate.findOne({
+        where: {
+          whatsappAccountId, name: templateName, language,
+          status: 'APPROVED', category: 'AUTHENTICATION'
+        }
+      })
+      : null;
+    if (whatsappAccountId && templateName && !template) missing.push('WHATSAPP_OTP_APPROVED_AUTH_TEMPLATE');
+    const config = whatsappAccountId ? await whatsappService.getRuntimeConfig(whatsappAccountId) : null;
+    if (whatsappAccountId && !config?.accessToken) missing.push('WHATSAPP_ACCESS_TOKEN');
+    if (whatsappAccountId && !config?.phoneNumberId) missing.push('WHATSAPP_PHONE_NUMBER_ID');
+    if (whatsappAccountId && !config?.apiVersion) missing.push('WHATSAPP_API_VERSION');
     if (missing.length) {
       const error = portalError('WHATSAPP_CONFIGURATION_MISSING', 'WhatsApp OTP is temporarily unavailable.', 500);
       error.missingConfiguration = missing;
       throw error;
     }
-    return { config, templateName, language };
+    return { config, template, templateName, language, whatsappAccountId };
   }
 
   otpComponents(otp) {
@@ -233,6 +257,7 @@ class StudentPortalService {
     const meta = error.response?.data?.error || error.whatsappApiResponse?.error || {};
     const httpStatus = Number(error.response?.status || 0);
     const code = Number(meta.code || 0);
+    if (code === 131042) return { code: 'WHATSAPP_BILLING_REQUIRED', status: 502, meta };
     if ([401, 403].includes(httpStatus) || code === 190) return { code: 'WHATSAPP_AUTHENTICATION_FAILED', status: 502, meta };
     if (httpStatus === 429 || [4, 17, 80004].includes(code) || httpStatus >= 500) return { code: 'WHATSAPP_TEMPORARY_FAILURE', status: 503, meta };
     return { code: 'WHATSAPP_META_REJECTED', status: 502, meta };
@@ -240,7 +265,13 @@ class StudentPortalService {
 
   async testOtpConfiguration() {
     const { config, templateName, language } = await this.otpConfiguration();
-    return { configured: true, sendEnabled: true, templateName, language, apiVersion: config.apiVersion, phoneNumberIdConfigured: Boolean(config.phoneNumberId), accessTokenConfigured: Boolean(config.accessToken) };
+    return {
+      configured: true, sendEnabled: true, templateName, language,
+      whatsappAccountId: config.whatsappAccountId, apiVersion: config.apiVersion,
+      phoneNumberIdConfigured: Boolean(config.phoneNumberId),
+      businessAccountIdConfigured: Boolean(config.businessAccountId),
+      accessTokenConfigured: Boolean(config.accessToken)
+    };
   }
 
   feeAccess(fee, installments = []) {
@@ -323,7 +354,7 @@ class StudentPortalService {
     }
 
     const phone = normalizeSriLankanPhone(student.phone);
-    if (!phone) throw portalError('INVALID_PHONE', 'A valid WhatsApp number is not registered for this account.', 422);
+    if (!phone) throw portalError('WHATSAPP_NUMBER_MISSING', 'No WhatsApp number is registered for this student. Please contact the office.', 422);
     let otpSettings;
     try {
       otpSettings = await this.otpConfiguration();
@@ -352,17 +383,21 @@ class StudentPortalService {
       otpHash: await bcrypt.hash(otp, 10),
       otpExpiresAt: otpExpiry(), expiresAt: otpExpiry()
     });
-    const { templateName, language } = otpSettings;
+    const { templateName, language, whatsappAccountId } = otpSettings;
     try {
       logger.info('student_otp_send_attempt', { requestId: context.requestId || null, studentId: student.id, recipient: maskedPhone(phone), templateName, language });
-      await whatsappService.sendTemplateMessage({ to: phone, templateName, language, components: this.otpComponents(otp), log: false });
+      await whatsappService.sendTemplateMessage({
+        to: phone, templateName, language, components: this.otpComponents(otp),
+        log: false, whatsappAccountId
+      });
       logger.info('student_otp_sent', { requestId: context.requestId || null, studentId: student.id, recipient: maskedPhone(phone), templateName, language });
     } catch (error) {
       const mapped = this.mapOtpSendFailure(error);
       logger.error('student_otp_send_failed', {
         requestId: context.requestId || null, recipient: maskedPhone(phone), templateName, language,
         metaHttpStatus: error.response?.status || null, metaErrorCode: mapped.meta.code || null,
-        metaErrorSubcode: mapped.meta.error_subcode || null, metaErrorMessage: mapped.meta.message || error.message
+        metaErrorSubcode: mapped.meta.error_subcode || null, metaErrorMessage: mapped.meta.message || error.message,
+        metaErrorDetails: mapped.meta.error_data?.details || null, metaTraceId: mapped.meta.fbtrace_id || null
       });
       await session.update({ revokedAt: new Date() });
       throw portalError(mapped.code, 'Unable to deliver the WhatsApp code. Please try again later.', mapped.status);
@@ -448,12 +483,12 @@ class StudentPortalService {
     });
     if (!course || course.lmsStatus !== 'published') throw portalError('COURSE_UNAVAILABLE', 'Course is unavailable.', 404);
     const topics = await LmsTopic.findAll({
-      where: { courseId, status: 'published' },
+      where: studentVisibleTopicWhere(courseId),
       include: [{
         model: LmsLesson, as: 'lessons', required: false,
         where: {
           [Op.and]: [
-            { [Op.or]: [{ status: 'published' }, { isPublished: true }] },
+            studentVisibleLessonWhere(),
             { [Op.or]: enrollment.batchId ? [{ batchId: null }, { batchId: enrollment.batchId }] : [{ batchId: null }] }
           ]
         },
@@ -472,7 +507,7 @@ class StudentPortalService {
         .sort((a,b)=>Number(a.sortOrder||a.lessonOrder||0)-Number(b.sortOrder||b.lessonOrder||0)||Number(a.id)-Number(b.id));
       const lessons = uniqueLessons.map((raw) => {
         const lesson = applyBatchOverride(raw, raw.batchOverrides?.[0]);
-        if (lesson.status === 'hidden' || lesson.status === 'archived') return null;
+        if (!isStudentVisibleLesson(lesson)) return null;
         const progress = lesson.progress?.[0] || null;
         const release = lessonReleaseState(lesson, enrollment, previousCompleted, course.dripEnabled);
         if (release.reason === 'scheduled_release') return null;
@@ -494,7 +529,10 @@ class StudentPortalService {
     return {
       course: courseData, enrollment: { id: enrollment.id, batchId: enrollment.batchId, enrolledAt: enrollment.enrolledAt },
       enrollmentAccess, topics: safeTopics,
-      progress: { completedLessons: completedCount, totalLessons, percentage: totalLessons ? Math.round(completedCount / totalLessons * 100) : 0 }
+      progress: {
+        totalTopics: safeTopics.length, completedLessons: completedCount, totalLessons,
+        percentage: totalLessons ? Math.round(completedCount / totalLessons * 100) : 0
+      }
     };
   }
 

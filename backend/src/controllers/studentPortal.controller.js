@@ -7,7 +7,12 @@ exports.verifyOtp = async (req, res, next) => { try { return ok(res, await stude
 exports.me = async (req, res) => ok(res, { student: req.student, paymentAccess: req.studentPaymentAccess });
 exports.dashboard = async (req, res, next) => { try { return ok(res, await studentPortalService.dashboard(req.student, req.studentPaymentAccess)); } catch (error) { next(error); } };
 exports.myCourses = async (req, res, next) => { try { return ok(res, await studentPortalService.myCourses(req.student, req.studentPaymentAccess)); } catch (error) { next(error); } };
-exports.courseCurriculum = async (req, res, next) => { try { return ok(res, await studentPortalService.courseCurriculum(req.student, req.params.courseId, req.studentPaymentAccess)); } catch (error) { next(error); } };
+exports.courseCurriculum = async (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'private, no-store');
+    return ok(res, await studentPortalService.courseCurriculum(req.student, req.params.courseId, req.studentPaymentAccess));
+  } catch (error) { next(error); }
+};
 exports.upcomingClasses = async (req, res, next) => { try { return ok(res, await studentPortalService.upcomingClasses(req.student, req.studentPaymentAccess)); } catch (error) { next(error); } };
 exports.liveClasses = async (req, res, next) => { try { return ok(res, await studentPortalService.liveClasses(req.student, req.studentPaymentAccess)); } catch (error) { next(error); } };
 exports.lessons = async (req, res, next) => { try { return ok(res, await studentPortalService.lessons(req.student, req.studentPaymentAccess)); } catch (error) { next(error); } };

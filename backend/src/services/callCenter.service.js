@@ -2,8 +2,11 @@ const { Op, fn, col }=require('sequelize');
 const db=require('../models');
 const leadStatusService=require('./leadStatus.service');
 const audit=require('./audit.service');
+const crypto=require('crypto');
 const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,message,status,exposeMessage:true});
 const own=(actor,id)=>actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||String(actor?.id)===String(id);
+const clean=v=>String(v??'').trim();
+const validPhone=v=>/^\+?[0-9][0-9 ()-]{5,24}$/.test(clean(v));
 function periodRange(period='today'){const local=new Date(Date.now()+19800000),y=local.getUTCFullYear(),m=local.getUTCMonth(),d=local.getUTCDate();let start=new Date(Date.UTC(y,m,d)-19800000),end=new Date(start.getTime()+86400000);if(period==='yesterday'){end=start;start=new Date(start-86400000);}if(period==='week'){const day=(local.getUTCDay()+6)%7;start=new Date(start-day*86400000);}if(period==='month')start=new Date(Date.UTC(y,m,1)-19800000);return{start,end};}
 class CallCenterService{
  leadScope(actor){return actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||actor?.permissions?.includes('callcenter.team.view')?{}:{ownerId:actor.id};}
@@ -22,17 +25,20 @@ class CallCenterService{
  }
  async start(payload,actor){
   if(!actor?.isSystemAdmin&&!actor?.permissions?.includes('calls.create'))throw fail('CALL_CREATE_FORBIDDEN','You cannot create calls.',403);
+  if(!payload?.leadId)throw fail('VALIDATION_FAILED','Lead is required.',422);
+  if(payload.method&&!['manual','mobile_manual'].includes(payload.method))throw fail('VALIDATION_FAILED','Call method must be manual.',422);
   return db.sequelize.transaction(async t=>{
-   const lead=await db.Lead.findByPk(payload.leadId,{transaction:t,lock:t.LOCK.UPDATE});if(!lead)throw fail('LEAD_NOT_FOUND','Lead not found.',404);
+   const lead=await db.Lead.findByPk(payload.leadId,{transaction:t,lock:t.LOCK.UPDATE,include:[{model:db.Contact,as:'contact',attributes:['id','phone']}]});if(!lead)throw fail('LEAD_NOT_FOUND','Lead not found.',404);
    if(!own(actor,lead.ownerId))throw fail('CALL_LEAD_FORBIDDEN','You cannot call this lead.',403);
+   if(!validPhone(lead.contact?.phone))throw fail('CALL_PHONE_INVALID','This lead does not have a valid phone number.',422);
    const existing=await db.CallActivity.findOne({where:{agentUserId:actor.id,endedAt:null},transaction:t,lock:t.LOCK.UPDATE});if(existing)throw fail('ACTIVE_CALL_EXISTS','Finish your active call first.',409);
    if(payload.idempotencyKey){const duplicate=await db.CallActivity.findOne({where:{idempotencyKey:payload.idempotencyKey},transaction:t});if(duplicate)return duplicate;}
-   const row=await db.CallActivity.create({leadId:lead.id,contactId:lead.contactId,agentUserId:actor.id,whatsappAccountId:lead.whatsappAccountId,direction:payload.direction||'outbound',method:payload.method||'mobile_manual',verificationSource:'agent_reported',startedAt:new Date(),previousStatusId:lead.statusId,idempotencyKey:payload.idempotencyKey||null},{transaction:t});
+   const row=await db.CallActivity.create({leadId:lead.id,contactId:lead.contactId,agentUserId:actor.id,whatsappAccountId:lead.whatsappAccountId,direction:'outbound',method:'mobile_manual',verificationSource:'agent_reported',startedAt:new Date(),previousStatusId:lead.statusId,idempotencyKey:payload.idempotencyKey||null,attributionKey:`call:${crypto.randomUUID()}`},{transaction:t});
    await db.LeadActivity.create({leadId:lead.id,actorUserId:actor.id,activityType:'CALL_STARTED',action:'CALL_STARTED',newValue:{callActivityId:row.id,method:row.method},note:'Agent started a reported call.',createdAt:new Date()},{transaction:t});return row;
   });
  }
- async complete(id,payload,actor){
-  return db.sequelize.transaction(async t=>{
+ async complete(id,payload,actor,transaction=null){
+  const run=async t=>{
    const call=await db.CallActivity.findByPk(id,{transaction:t,lock:t.LOCK.UPDATE});if(!call)throw fail('CALL_NOT_FOUND','Call not found.',404);if(!own(actor,call.agentUserId))throw fail('CALL_UPDATE_FORBIDDEN','You cannot complete this call.',403);if(call.endedAt)return call;
    const status=await db.LeadStatus.findOne({where:{id:payload.newStatusId,active:true},transaction:t});if(!status)throw fail('INVALID_LEAD_STATUS','Select a valid lead status.');
    const currentStatus=await db.LeadStatus.findByPk(call.previousStatusId,{transaction:t});const allowed=Array.isArray(currentStatus?.allowedNextStatusIds)?currentStatus.allowedNextStatusIds:[];if(allowed.length&&!allowed.map(String).includes(String(payload.newStatusId)))throw fail('LEAD_STATUS_TRANSITION_INVALID','This status transition is not allowed.');
@@ -47,9 +53,21 @@ class CallCenterService{
    if(payload.nextFollowUpAt)await db.Followup.create({leadId:call.leadId,contactId:call.contactId,assignedTo:actor.id,createdByUserId:actor.id,dueDate:payload.nextFollowUpAt,status:'pending',priority:'normal',followupType:'call',note:payload.notes||null},{transaction:t});
    if(status.countsAsConversion||status.code==='registered'){const attributionKey=`${call.leadId}:${call.courseId||'unspecified'}`;await db.ConversionAttribution.findOrCreate({where:{attributionKey},defaults:{leadId:call.leadId,courseId:call.courseId||null,originalOwnerUserId:actor.id,convertingUserId:actor.id,convertedAt:now,attributionMethod:'call_result',callActivityId:call.id},transaction:t});}
    await audit.record({userId:actor.id,action:'CALL_COMPLETED',entityType:'call_activity',entityId:call.id,changes:{disposition:payload.disposition,newStatusId:status.id},transaction:t,required:true});return call;
+  };
+  return transaction?run(transaction):db.sequelize.transaction(run);
+ }
+ async log(payload,actor){
+  if(!actor?.isSystemAdmin&&!actor?.permissions?.includes('calls.create'))throw fail('CALL_CREATE_FORBIDDEN','You cannot create calls.',403);
+  if(!payload?.leadId)throw fail('VALIDATION_FAILED','Lead is required.',422);
+  return db.sequelize.transaction(async t=>{
+   const lead=await db.Lead.findByPk(payload.leadId,{transaction:t,lock:t.LOCK.UPDATE,include:[{model:db.Contact,as:'contact',attributes:['id','phone']}]});if(!lead)throw fail('LEAD_NOT_FOUND','Lead not found.',404);
+   if(!own(actor,lead.ownerId))throw fail('CALL_LEAD_FORBIDDEN','You cannot call this lead.',403);
+   if(!validPhone(lead.contact?.phone))throw fail('CALL_PHONE_INVALID','This lead does not have a valid phone number.',422);
+   if(payload.idempotencyKey){const duplicate=await db.CallActivity.findOne({where:{idempotencyKey:payload.idempotencyKey},transaction:t});if(duplicate)return duplicate;}
+   const row=await db.CallActivity.create({leadId:lead.id,contactId:lead.contactId,agentUserId:actor.id,whatsappAccountId:lead.whatsappAccountId,direction:'outbound',method:'mobile_manual',verificationSource:'agent_reported',startedAt:new Date(),previousStatusId:lead.statusId,idempotencyKey:payload.idempotencyKey||null,attributionKey:`call:${crypto.randomUUID()}`},{transaction:t});
+   return this.complete(row.id,payload,actor,t);
   });
  }
- async log(payload,actor){const row=await this.start(payload,actor);return this.complete(row.id,payload,actor);}
  async dashboard(query,actor){
   const where={endedAt:{[Op.ne]:null}},range=periodRange(query.period);where.startedAt=query.from||query.to?{...(query.from?{[Op.gte]:new Date(`${query.from}T00:00:00+05:30`)}:{}),...(query.to?{[Op.lt]:new Date(new Date(`${query.to}T00:00:00+05:30`).getTime()+86400000)}:{})}:{[Op.gte]:range.start,[Op.lt]:range.end};if(!actor.isSystemAdmin&&!actor.permissions?.includes('calls.view.team'))where.agentUserId=actor.id;
   const calls=await db.CallActivity.findAll({where,attributes:['id','leadId','agentUserId','disposition','durationSeconds','talkTimeSeconds','startedAt'],order:[['started_at','DESC']],limit:500});

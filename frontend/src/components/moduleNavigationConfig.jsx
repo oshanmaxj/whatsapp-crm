@@ -111,6 +111,7 @@ export const modules = [
       { label: 'System Info', path: '/settings?tab=system', icon: <StorageIcon />, permission: 'settings.view', tab: 'system' },
       { label: 'Zoom Integration', path: '/settings/integrations/zoom', icon: <VideoLibraryIcon />, permission: 'settings.view' },
       { label: 'AI Providers', path: '/settings/ai-providers', icon: <SmartToyIcon />, permission: 'ai_providers.view' },
+      { label: 'Lead Statuses', path: '/settings/lead-statuses', icon: <TrendingUpIcon />, permission: 'lead_statuses.view' },
       { label: 'User Manager', path: '/users', icon: <ManageAccountsIcon />, permission: 'user-manager.view' },
       { label: 'Departments & Permissions', path: '/permissions', icon: <AdminPanelSettingsIcon />, permission: 'user-manager.edit' },
       { label: 'Message Templates', path: '/settings/message-templates', icon: <ChatBubbleOutlineIcon />, permission: 'settings.view' },

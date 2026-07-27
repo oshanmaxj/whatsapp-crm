@@ -5,4 +5,10 @@ export const completeCall=(id,payload)=>api.post(`/call-center/calls/${id}/compl
 export const logCall=(payload)=>api.post('/call-center/calls/log',payload);
 export const getCallCenterOptions=(params={})=>api.get('/call-center/options',{params});
 export const getCallQueue=()=>api.get('/call-center/queue');
+export const searchCallCenterLeads=params=>api.get('/call-center/leads/search',{params});
+export const addCallQueueEntries=payload=>api.post('/call-center/queue/entries',payload);
+export const bulkAddCallQueueEntries=payload=>api.post('/call-center/queue/entries/bulk',payload);
+export const updateCallQueueEntry=(id,payload)=>api.patch(`/call-center/queue/entries/${id}`,payload);
+export const claimNextCall=()=>api.post('/call-center/queue/next/claim');
+export const claimCallQueueEntry=id=>api.post(`/call-center/queue/entries/${id}/claim`);
 export const getActiveCall=()=>api.get('/call-center/calls/active');

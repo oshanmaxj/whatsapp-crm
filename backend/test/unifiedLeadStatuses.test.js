@@ -5,6 +5,7 @@ const leadService = require('../src/services/lead.service');
 const pipelineService = require('../src/services/pipeline.service');
 const leadController = require('../src/controllers/lead.controller');
 const { Lead, LeadStatus } = require('../src/models');
+const { LEAD_STATUSES } = require('../src/constants/leadStatuses');
 
 function fakeEnvironment(initialRows = []) {
   let nextId = Math.max(0, ...initialRows.map((row) => Number(row.id))) + 1;
@@ -43,11 +44,11 @@ function fakeEnvironment(initialRows = []) {
   return { rows, events, ensure: createUnifiedLeadStatusEnsurer({ sequelize, LeadStatus: LeadStatusModel, logger }) };
 }
 
-test('empty database creates all seven unified statuses', async () => {
+test('empty database creates every canonical unified status', async () => {
   const env = fakeEnvironment();
   const result = await env.ensure();
-  assert.equal(result.length, 7);
-  assert.deepEqual(env.rows.map((row) => row.code), ['new', 'contacted', 'interested', 'ignore', 'agreed', 'registered', 'lost']);
+  assert.equal(result.length, LEAD_STATUSES.length);
+  assert.deepEqual(env.rows.map((row) => row.code), LEAD_STATUSES.map((row) => row.code));
 });
 
 test('running the initializer twice creates no duplicates', async () => {
@@ -55,7 +56,7 @@ test('running the initializer twice creates no duplicates', async () => {
   await env.ensure();
   const ids = env.rows.map((row) => row.id);
   await env.ensure();
-  assert.equal(env.rows.length, 7);
+  assert.equal(env.rows.length, LEAD_STATUSES.length);
   assert.deepEqual(env.rows.map((row) => row.id), ids);
 });
 
@@ -86,8 +87,8 @@ test('existing lead foreign-key references remain on the reused row', async () =
 test('concurrent initializer calls create only one row per status', async () => {
   const env = fakeEnvironment();
   await Promise.all([env.ensure(), env.ensure(), env.ensure()]);
-  assert.equal(env.rows.length, 7);
-  assert.equal(new Set(env.rows.map((row) => row.code)).size, 7);
+  assert.equal(env.rows.length, LEAD_STATUSES.length);
+  assert.equal(new Set(env.rows.map((row) => row.code)).size, LEAD_STATUSES.length);
 });
 
 test('conflicting code and normalized-name rows fail without choosing one silently', async () => {

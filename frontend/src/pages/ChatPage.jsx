@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Box, Drawer, Snackbar, useMediaQuery } from '@mui/material';
+import { Alert, Box, Button, Drawer, Snackbar, Typography, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import {
@@ -24,6 +24,7 @@ import {
   updateConversation,
   uploadMedia
 } from '../services/chat.service';
+import { getActiveCall } from '../services/callCenter.service';
 import { getRoles } from '../services/userManagement.service';
 import { updateContact } from '../services/contact.service';
 import { updateLeadStatus } from '../services/lead.service';
@@ -97,6 +98,8 @@ function ChatPage() {
   const unreadRefreshRef = useRef({ lastRun: 0, timer: null });
 
   const [conversations, setConversations] = useState([]);
+  const [activeCall, setActiveCall] = useState(null);
+  const [callTick, setCallTick] = useState(Date.now());
   const [agents, setAgents] = useState([]);
   const [roles, setRoles] = useState([]);
   const [selected, setSelected] = useState(() => searchParams.get('conversationId') || null);
@@ -108,6 +111,7 @@ function ChatPage() {
   const [labels, setLabels] = useState([]);
   const [whatsappTemplates, setWhatsAppTemplates] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
+  useEffect(()=>{getActiveCall().then(({data})=>setActiveCall(data.data)).catch(()=>null);const timer=setInterval(()=>setCallTick(Date.now()),1000);return()=>clearInterval(timer);},[]);
   const [templateDiagnostics, setTemplateDiagnostics] = useState(null);
   const [replyToMessage, setReplyToMessage] = useState(null);
   const [windowNow, setWindowNow] = useState(() => Date.now());
@@ -820,6 +824,8 @@ function ChatPage() {
 
   return (
     <Box sx={{ mx: { xs: -2, md: -1 }, mt: { xs: -2, md: -1 } }}>
+      {activeCall&&<Box sx={{p:1,position:'sticky',top:0,zIndex:10,bgcolor:'warning.light',display:'flex',gap:2,alignItems:'center'}}><Typography fontWeight={800}>Active call · {Math.max(0,Math.floor((callTick-new Date(activeCall.startedAt).getTime())/1000))}s</Typography><Button color="error" variant="contained" onClick={()=>navigate(searchParams.get('returnTo')?.startsWith('/call-center')?searchParams.get('returnTo'):'/call-center')}>END CALL</Button></Box>}
+      {searchParams.get('returnTo')?.startsWith('/call-center')&&<Box sx={{p:1}}><Button variant="outlined" onClick={()=>navigate(searchParams.get('returnTo'))}>BACK TO CALL QUEUE</Button></Box>}
       <input ref={fileInputRef} type="file" hidden onChange={handleFileUpload} accept={MEDIA_ACCEPT} />
       <ChatLayout
         showConversationList={!compactLayout || !selected}

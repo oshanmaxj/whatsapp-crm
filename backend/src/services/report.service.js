@@ -194,7 +194,7 @@ class ReportService {
           required: false,
           include: filters.leadSource ? [{ model: LeadSource, as: 'source', where: { name: filters.leadSource }, attributes: [] }] : []
         }],
-        attributes: ['name', [fn('count', col('leads.id')), 'count']],
+        attributes: ['code','name','color', [fn('count', col('leads.id')), 'count']],
         group: ['LeadStatus.id'],
         raw: true
       }),

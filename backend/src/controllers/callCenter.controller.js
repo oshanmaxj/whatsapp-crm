@@ -1,4 +1,5 @@
 const service=require('../services/callCenter.service'),crypto=require('crypto');const ok=(r,d,s=200)=>r.status(s).json({success:true,data:d});
+const queue=require('../services/callQueue.service');
 const context=q=>{const requestId=q.requestId||q.get('x-request-id')||crypto.randomUUID();q.requestId=requestId;return{requestId};};
 exports.start=(q,r,n)=>service.start(q.body,q.user,context(q)).then(x=>ok(r,x,201)).catch(n);
 exports.complete=(q,r,n)=>service.complete(q.params.id,q.body,q.user,null,context(q)).then(x=>ok(r,x,201)).catch(n);
@@ -8,3 +9,10 @@ exports.timeline=(q,r,n)=>service.timeline(q.params.id,q.user).then(x=>ok(r,x)).
 exports.options=(q,r,n)=>service.options(q.query,q.user).then(x=>ok(r,x)).catch(n);
 exports.active=(q,r,n)=>service.active(q.user).then(x=>ok(r,x)).catch(n);
 exports.queue=(q,r,n)=>service.queue(q.user).then(x=>ok(r,x)).catch(n);
+exports.searchLeads=(q,r,n)=>queue.search(q.query,q.user).then(x=>ok(r,x)).catch(n);
+exports.personalQueue=(q,r,n)=>queue.list(q.user).then(x=>ok(r,x)).catch(n);
+exports.addQueueEntries=(q,r,n)=>queue.add(q.body.leadIds,q.user,{source:q.body.source,sourceFilter:q.body.sourceFilter}).then(x=>ok(r,x,201)).catch(n);
+exports.bulkAddQueueEntries=(q,r,n)=>queue.addMatching(q.body.filters||{},q.user).then(x=>ok(r,x,201)).catch(n);
+exports.updateQueueEntry=(q,r,n)=>queue.update(q.params.id,q.body,q.user).then(x=>ok(r,x)).catch(n);
+exports.claimNext=(q,r,n)=>queue.claimNext(q.user,context(q)).then(x=>ok(r,x,201)).catch(n);
+exports.claimQueueEntry=(q,r,n)=>queue.claimNext(q.user,context(q),q.params.id).then(x=>ok(r,x,201)).catch(n);

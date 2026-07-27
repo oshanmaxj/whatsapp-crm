@@ -224,16 +224,27 @@ class LeadService {
     return where;
   }
 
-  async listLeads({ page = 1, limit = 20, search, phone, email, status, source, assignedAgentId, courseInterested, whatsappAccountId, labelIds, labelMode = 'any', hasNoLabels, dateType, dateFrom, dateTo } = {}, actor = null) {
+  async listLeads({ page = 1, limit = 20, search, phone, email, status, source, assignedAgentId, courseInterested, whatsappAccountId, labelIds, labelMode = 'any', hasNoLabels, dateType, dateFrom, dateTo, neverContacted, overdueFollowup, noAnswerPreviously, unassigned, conversionState, minCallAttempts, maxCallAttempts, sortBy = 'createdAt', sortDirection = 'DESC' } = {}, actor = null) {
     const safePage = Math.max(Number(page) || 1, 1);
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
-    const where = this.buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo });
+    const resolvedAgentId=assignedAgentId==='me'?actor?.id:assignedAgentId;
+    const where = this.buildLeadWhere({ assignedAgentId:resolvedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo });
     const ids = String(labelIds || '').split(',').filter((id) => /^\d+$/.test(id)).map(Number);
     if (ids.length || hasNoLabels === 'true') {
       const predicate = buildLabelPredicate({ ids, labelMode, hasNoLabels: hasNoLabels === 'true' });
       where[Op.and] = [...(where[Op.and] || []), sequelize.literal(predicate)];
     }
     if(actor&&!actor.isSystemAdmin&&!actor.permissions?.includes('lead.view_all')&&!actor.permissions?.includes('lead.view_team'))where[Op.or]=[{ownerId:actor.id},{ownerId:null}];
+    const predicates=[];
+    if(neverContacted==='true')predicates.push(sequelize.literal('NOT EXISTS (SELECT 1 FROM call_activities ca WHERE ca.lead_id = "Lead".id AND ca.ended_at IS NOT NULL)'));
+    if(overdueFollowup==='true')predicates.push(sequelize.literal('"Lead"."next_followup_at" < NOW()'));
+    if(noAnswerPreviously==='true')predicates.push(sequelize.literal("EXISTS (SELECT 1 FROM call_activities ca WHERE ca.lead_id = \"Lead\".id AND ca.disposition = 'no_answer')"));
+    if(unassigned==='true')where.ownerId=null;
+    if(conversionState==='converted')where.convertedAt={[Op.ne]:null};else if(conversionState==='not_converted')where.convertedAt=null;
+    const minimum=Number(minCallAttempts),maximum=Number(maxCallAttempts);
+    if(Number.isInteger(minimum)&&minimum>=0)predicates.push(sequelize.literal(`(SELECT COUNT(*) FROM call_activities ca WHERE ca.lead_id = "Lead".id) >= ${minimum}`));
+    if(Number.isInteger(maximum)&&maximum>=0)predicates.push(sequelize.literal(`(SELECT COUNT(*) FROM call_activities ca WHERE ca.lead_id = "Lead".id) <= ${maximum}`));
+    if(predicates.length)where[Op.and]=[...(where[Op.and]||[]),...predicates];
     const registeredDateFilter = (dateFrom || dateTo) && dateType === 'convertedAt';
     const include = this.buildLeadIncludes({ search, phone, email, status: status || (registeredDateFilter ? 'registered' : status), source });
 
@@ -241,7 +252,7 @@ class LeadService {
       where,
       include,
       distinct: true,
-      order: [['created_at', 'DESC']],
+      order: [[({createdAt:'created_at',updatedAt:'updated_at',nextFollowupAt:'next_followup_at'})[sortBy]||'created_at',String(sortDirection).toUpperCase()==='ASC'?'ASC':'DESC']],
       limit: safeLimit,
       offset: (safePage - 1) * safeLimit
     });

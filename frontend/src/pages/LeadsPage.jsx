@@ -18,11 +18,12 @@ import { getLabels } from '../services/chat.service';
 import LabelMultiSelect from '../components/LabelMultiSelect';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 import { LEAD_STATUSES } from '../constants/leadStatuses';
+import { LEAD_COURSES, LEAD_SOURCES } from '../constants/leadFilterOptions';
 
 const statuses = LEAD_STATUSES.map((status) => status.name);
-const sources = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
+const sources = LEAD_SOURCES;
 const priorities = ['low', 'medium', 'high'];
-const courses = ['Forex', 'Crypto', 'Stock Market', 'Home Decoration', 'Other'];
+const courses = LEAD_COURSES;
 const studentTypes = ['New Student', 'Existing Student', 'Returning Student'];
 
 const initialForm = {

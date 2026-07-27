@@ -30,3 +30,23 @@ test('Phase 1 queue workflow and URL restoration are present', () => {
   expect(source).toContain('returnTo=');
   expect(source).toContain('SELECT CHAT');
 });
+
+test('Find Leads reuses canonical label and WhatsApp selectors and persists IDs', () => {
+  const source = require('fs').readFileSync(require('path').join(__dirname, 'CallCenterPage.jsx'), 'utf8');
+  expect(source).toContain('LabelMultiSelect');
+  expect(source).toContain('WhatsAppAccountSelect');
+  expect(source).toContain("labelMode:'any'");
+  expect(source).toContain("labelIds:[]");
+  expect(source).toContain("Array.isArray(value)?value.join(',')");
+  expect(source).not.toContain('WhatsApp account ID');
+  expect(source).not.toContain('Agent ID');
+});
+
+test('canonical Leads and Call Center share source and course options', () => {
+  const leadsSource = require('fs').readFileSync(require('path').join(__dirname, 'LeadsPage.jsx'), 'utf8');
+  const callCenterSource = require('fs').readFileSync(require('path').join(__dirname, 'CallCenterPage.jsx'), 'utf8');
+  expect(leadsSource).toContain('LEAD_COURSES');
+  expect(leadsSource).toContain('LEAD_SOURCES');
+  expect(callCenterSource).toContain('LEAD_COURSES');
+  expect(callCenterSource).toContain('LEAD_SOURCES');
+});

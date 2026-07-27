@@ -40,7 +40,7 @@ module.exports = (err, req, res, next) => {
     'INVALID_PIPELINE_STAGE','DUPLICATE_PIPELINE_STAGE','LEAD_ACCESS_FORBIDDEN','LEAD_OWNED_BY_ANOTHER_AGENT',
     'LEAD_REASSIGN_FORBIDDEN','STALE_LEAD_UPDATE','LOST_REASON_REQUIRED','FOLLOWUP_PERMISSION_REQUIRED',
     'FOLLOWUP_OUTCOME_REQUIRED','FOLLOWUP_IMMUTABLE','FOLLOWUP_DUE_REQUIRED',
-    'LEAD_NOT_FOUND','INVALID_LEAD_STATUS','LEAD_STATUS_NOT_INITIALIZED','LEAD_STATUS_UPDATE_FORBIDDEN','STALE_LEAD_STATUS_UPDATE',
+    'LEAD_NOT_FOUND','INVALID_LEAD_STATUS','INVALID_LABEL_FILTER','LEAD_STATUS_NOT_INITIALIZED','LEAD_STATUS_UPDATE_FORBIDDEN','STALE_LEAD_STATUS_UPDATE',
     'LEAD_STATUS_ACTIVITY_FAILED','LEAD_STATUS_AUDIT_FAILED','INVALID_DATE_RANGE','UNIFIED_LEAD_STATUS_CONFLICT',
     'SLIP_MEDIA_MISSING','SLIP_FILE_TOO_LARGE','SLIP_UNSUPPORTED_FILE','SLIP_MESSAGE_NOT_FOUND','SLIP_FILE_ACCESS_DENIED',
     'PAYMENT_SLIP_NOT_FOUND','PAYMENT_SLIP_ALREADY_PROCESSED','PAYMENT_SLIP_DUPLICATE','INSTALLMENT_REQUIRED',
@@ -75,6 +75,8 @@ module.exports = (err, req, res, next) => {
     message: err.message,
     errorName: err.name,
     databaseCode: err.parent?.code || err.original?.code || null,
+    table: err.parent?.table || err.original?.table || null,
+    column: err.parent?.column || err.original?.column || null,
     constraint: err.parent?.constraint || err.original?.constraint || null,
     validationFields: err.errors ? Object.keys(err.errors) : undefined
   });

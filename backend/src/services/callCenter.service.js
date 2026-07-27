@@ -4,6 +4,7 @@ const leadStatusService=require('./leadStatus.service');
 const audit=require('./audit.service');
 const crypto=require('crypto');
 const logger=require('../config/logger');
+const {conversionAttributionKey}=require('../utils/conversionAttributionKey');
 const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,message,status,exposeMessage:true});
 const own=(actor,id)=>actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||String(actor?.id)===String(id);
 const clean=v=>String(v??'').trim();
@@ -22,10 +23,8 @@ function periodRange(period='today'){const local=new Date(Date.now()+19800000),y
 class CallCenterService{
  leadScope(actor){return actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||actor?.permissions?.includes('callcenter.team.view')?{}:{ownerId:actor.id};}
  async options(query,actor){
-  const contactWhere={};if(query.search){const term=`%${String(query.search).trim()}%`;contactWhere[Op.or]=[{name:{[Op.iLike]:term}},{phone:{[Op.iLike]:term}},{email:{[Op.iLike]:term}}];}
-  const leads=await db.Lead.findAll({where:this.leadScope(actor),include:[{model:db.Contact,as:'contact',where:contactWhere,required:Boolean(query.search)},{model:db.LeadStatus,as:'status'},{model:db.User,as:'owner',attributes:['id','firstName','lastName','email']}],order:[['updated_at','DESC']],limit:30});
   const statuses=await db.LeadStatus.findAll({where:{active:true},order:[['display_order','ASC']]});
-  return{leads:leads.map(l=>({id:l.id,name:l.contact?.name,phone:l.contact?.phone,email:l.contact?.email,status:l.status?{id:l.status.id,name:l.status.name,color:l.status.color,allowedNextStatusIds:l.status.allowedNextStatusIds}:null,assignedAgent:l.owner,course:l.courseInterested})),statuses:statuses.map(s=>({id:s.id,code:s.code,name:s.name,color:s.color,reasonRequired:s.reasonRequired,followupRequired:s.followupRequired,allowedNextStatusIds:s.allowedNextStatusIds}))};
+  return{leads:[],statuses:statuses.map(s=>({id:s.id,code:s.code,name:s.name,color:s.color,reasonRequired:s.reasonRequired,followupRequired:s.followupRequired,allowedNextStatusIds:s.allowedNextStatusIds}))};
  }
  async active(actor){return db.CallActivity.findOne({where:{agentUserId:actor.id,endedAt:null},include:[{model:db.Lead,as:'lead',include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'}]}],order:[['started_at','DESC']]});}
  async queue(actor){
@@ -66,7 +65,7 @@ class CallCenterService{
    await operation(context,'change_canonical_lead_status',()=>leadStatusService.changeStatus({leadId:call.leadId,statusId:status.id,actor,source:'call_result',transaction:t,auditData:{callActivityId:call.id,reason:payload.reason||null}}));
    await operation(context,'create_immutable_status_history',()=>db.LeadStatusHistory.create({leadId:call.leadId,fromStatusId:call.previousStatusId,toStatusId:status.id,changedByUserId:actor.id,changedAt:now,durationInPreviousStatusSeconds:previous?Math.max(0,Math.floor((now-new Date(previous.changedAt))/1000)):null,reason:payload.reason||null,source:'call_result',callActivityId:call.id},{transaction:t}));
    if(payload.nextFollowUpAt)await operation(context,'create_call_followup',()=>db.Followup.create({leadId:call.leadId,contactId:call.contactId,assignedTo:actor.id,createdByUserId:actor.id,dueDate:payload.nextFollowUpAt,status:'pending',priority:'normal',followupType:'call',note:payload.notes||null},{transaction:t}));
-   if(status.countsAsConversion||status.code==='registered'){const attributionKey=`${call.leadId}:${call.courseId||'unspecified'}`;await operation(context,'upsert_conversion_attribution',()=>db.ConversionAttribution.findOrCreate({where:{attributionKey},defaults:{leadId:call.leadId,courseId:call.courseId||null,originalOwnerUserId:actor.id,convertingUserId:actor.id,convertedAt:now,attributionMethod:'call_result',callActivityId:call.id},transaction:t}));}
+   if(status.countsAsConversion||status.code==='registered'){const attributionKey=conversionAttributionKey(call.leadId,call.courseId);await operation(context,'upsert_conversion_attribution',()=>db.ConversionAttribution.findOrCreate({where:{attributionKey},defaults:{leadId:call.leadId,courseId:call.courseId||null,originalOwnerUserId:actor.id,convertingUserId:actor.id,convertedAt:now,attributionMethod:'call_result',callActivityId:call.id},transaction:t}));}
    await operation(context,'create_call_completion_audit',()=>audit.record({userId:actor.id,action:'CALL_COMPLETED',entityType:'call_activity',entityId:call.id,changes:{disposition:resultCode,newStatusId:status.id},transaction:t,required:true}));
    await operation(context,'complete_queue_entry',()=>db.CallQueueEntry.update({status:'completed',completedAt:now},{where:{lastCallActivityId:call.id,status:'calling'},transaction:t}));return call;
   };

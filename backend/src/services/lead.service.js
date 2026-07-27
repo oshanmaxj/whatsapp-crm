@@ -5,6 +5,7 @@ const leadAssignmentService = require('./leadAssignment.service');
 const leadStatusService = require('./leadStatus.service');
 const { LEAD_STATUSES, normalizeLeadStatusCode } = require('../constants/leadStatuses');
 const { requireNormalizedPhone } = require('../utils/phone');
+const whatsappAccountAccess = require('./whatsappAccountAccess.service');
 
 const DEFAULT_SOURCES = ['Facebook Ads', 'WhatsApp Ads', 'Website', 'Instagram', 'TikTok', 'Google Search', 'Referral', 'Organic', 'Manual Entry'];
 
@@ -229,7 +230,15 @@ class LeadService {
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const resolvedAgentId=assignedAgentId==='me'?actor?.id:assignedAgentId;
     const where = this.buildLeadWhere({ assignedAgentId:resolvedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo });
-    const ids = String(labelIds || '').split(',').filter((id) => /^\d+$/.test(id)).map(Number);
+    if(actor?.id&&!actor.isSystemAdmin){
+      if(whatsappAccountId)await whatsappAccountAccess.assertAccess(whatsappAccountId,actor.id);
+      Object.assign(where,await whatsappAccountAccess.whereForUser(actor.id,'whatsappAccountId'));
+      if(whatsappAccountId)where.whatsappAccountId=whatsappAccountId;
+    }
+    const rawLabelIds=Array.isArray(labelIds)?labelIds:String(labelIds||'').split(',').filter(Boolean);
+    if(rawLabelIds.some(id=>!/^\d+$/.test(String(id))))throw Object.assign(new Error('One or more selected labels are invalid.'),{status:422,code:'INVALID_LABEL_FILTER',exposeMessage:true});
+    const ids=[...new Set(rawLabelIds.map(Number))];
+    if(ids.length&&await Label.count({where:{id:{[Op.in]:ids}}})!==ids.length)throw Object.assign(new Error('One or more selected labels no longer exist.'),{status:422,code:'INVALID_LABEL_FILTER',exposeMessage:true});
     if (ids.length || hasNoLabels === 'true') {
       const predicate = buildLabelPredicate({ ids, labelMode, hasNoLabels: hasNoLabels === 'true' });
       where[Op.and] = [...(where[Op.and] || []), sequelize.literal(predicate)];

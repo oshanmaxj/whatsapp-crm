@@ -1,4 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),S=require('sequelize');
+const fs=require('node:fs'),path=require('node:path');
 const migration=require('../migrations/048_call_center_phase1');
 const {conversionAttributionKey}=require('../src/utils/conversionAttributionKey');
 
@@ -8,12 +9,23 @@ function environment({productionStyle=false,rows=[]}={}){
   indexes:{conversion_attributions:productionStyle?[{name:'conversion_attributions_pkey'}]:[]},
   rows:rows.map(row=>({...row}))
  };
+ let activeTransaction=null;
+ const requireTransaction=options=>assert.equal(options?.transaction,activeTransaction,'migration operation escaped its transaction');
  const q={
   sequelize:{
    getDialect:()=> 'postgres',
-   async transaction(callback){const snapshot={tables:Object.fromEntries(Object.entries(state.tables).map(([name,columns])=>[name,{...columns}])),indexes:Object.fromEntries(Object.entries(state.indexes).map(([name,indexes])=>[name,indexes.map(index=>({...index}))])),rows:state.rows.map(row=>({...row}))};try{return await callback({id:'tx'});}catch(error){state=snapshot;throw error;}},
-   async query(sql){
+   options:{pool:{max:2}},
+   async transaction(callback){const snapshot={tables:Object.fromEntries(Object.entries(state.tables).map(([name,columns])=>[name,{...columns}])),indexes:Object.fromEntries(Object.entries(state.indexes).map(([name,indexes])=>[name,indexes.map(index=>({...index}))])),rows:state.rows.map(row=>({...row}))};activeTransaction={id:'tx'};try{return await callback(activeTransaction);}catch(error){state=snapshot;throw error;}finally{activeTransaction=null;}},
+   async query(sql,options){
+    requireTransaction(options);
+    if(/^SET LOCAL/.test(sql))return[[],{}];
     if(/pg_advisory_xact_lock/.test(sql))return[[],{}];
+    if(/information_schema\.tables/.test(sql))return[[{exists:Boolean(state.tables[options.replacements.table])}]];
+    if(/information_schema\.columns/.test(sql)){
+     const definition=state.tables[options.replacements.table]?.[options.replacements.column];
+     return[definition?[{column_name:options.replacements.column,is_nullable:definition.allowNull===false?'NO':'YES',data_type:'character varying',udt_name:'varchar',column_default:null}]:[]];
+    }
+    if(/FROM pg_indexes/.test(sql))return[[(state.indexes[options.replacements.table]||[]).find(index=>index.name===options.replacements.index)?{indexname:options.replacements.index}:null].filter(Boolean)];
     if(/COUNT\(\*\)::int AS total_rows/.test(sql))return[[{total_rows:state.rows.length,unique_leads:new Set(state.rows.map(row=>row.lead_id)).size,rows_without_course:state.rows.filter(row=>row.course_id==null).length,rows_without_call:state.rows.filter(row=>row.call_activity_id==null).length}]];
     if(/UPDATE conversion_attributions/.test(sql)){state.rows.forEach(row=>{if(!row.attribution_key)row.attribution_key=conversionAttributionKey(row.lead_id,row.course_id);});return[[],{}];}
     if(/GROUP BY attribution_key/.test(sql)){const counts=new Map();state.rows.forEach(row=>counts.set(row.attribution_key,(counts.get(row.attribution_key)||0)+1));return[[...counts].filter(([,count])=>count>1).map(([attribution_key,row_count])=>({attribution_key,row_count}))];}
@@ -21,13 +33,10 @@ function environment({productionStyle=false,rows=[]}={}){
     throw new Error(`Unexpected SQL: ${sql}`);
    }
   },
-  async showAllTables(){return Object.keys(state.tables);},
-  async describeTable(table){return state.tables[table]||{};},
-  async addColumn(table,column,definition){state.tables[table][column]={...definition};},
-  async createTable(table,columns){state.tables[table]={...columns};state.indexes[table]=state.indexes[table]||[];},
-  async showIndex(table){return state.indexes[table]||[];},
-  async addIndex(table,fields,options){state.indexes[table]=state.indexes[table]||[];state.indexes[table].push({name:options.name,fields,unique:options.unique});},
-  async changeColumn(table,column,definition){state.tables[table][column]={...definition};}
+  async addColumn(table,column,definition,options){requireTransaction(options);state.tables[table][column]={...definition};},
+  async createTable(table,columns,options){requireTransaction(options);state.tables[table]={...columns};state.indexes[table]=state.indexes[table]||[];},
+  async addIndex(table,fields,options){requireTransaction(options);state.indexes[table]=state.indexes[table]||[];state.indexes[table].push({name:options.name,fields,unique:options.unique});},
+  async changeColumn(table,column,definition,options){requireTransaction(options);state.tables[table][column]={...definition};}
  };
  return{q,get state(){return state;}};
 }
@@ -40,6 +49,16 @@ test('migration 048 creates a fresh schema and is safely rerunnable',async()=>{
  assert.ok(env.state.tables.lead_status_history);
  assert.equal(env.state.tables.conversion_attributions.attribution_key.allowNull,false);
  assert.equal(env.state.indexes.conversion_attributions.filter(index=>index.name==='conversion_attribution_key_uq').length,1);
+});
+
+test('migration 048 completes with a two-connection pool without acquiring a second connection',async()=>{
+ const env=environment({productionStyle:true});
+ assert.equal(env.q.sequelize.options.pool.max,2);
+ await Promise.race([
+  migration.up(env.q,S),
+  new Promise((_,reject)=>setTimeout(()=>reject(new Error('migration waited on itself')),1000))
+ ]);
+ assert.ok(env.state.indexes.conversion_attributions.some(index=>index.name==='conversion_attribution_key_uq'));
 });
 
 test('migration 048 repairs the observed production-style table before indexing',async()=>{
@@ -68,6 +87,16 @@ test('conversion attribution model and service share deterministic nullable-cour
  assert.equal(conversionAttributionKey(1209,44),'lead:1209:course:44');
  const {ConversionAttribution}=require('../src/models');
  assert.equal(ConversionAttribution.rawAttributes.attributionKey.field,'attribution_key');
+});
+
+test('migration 048 uses transaction-bound catalogs and no model schema helpers',()=>{
+ const source=fs.readFileSync(path.join(__dirname,'../migrations/048_call_center_phase1.js'),'utf8');
+ assert.doesNotMatch(source,/showAllTables|describeTable|showIndex|Model\.sync|\.sync\(/);
+ assert.match(source,/information_schema\.columns/);
+ assert.match(source,/information_schema\.tables/);
+ assert.match(source,/FROM pg_indexes/);
+ assert.match(source,/SET LOCAL lock_timeout/);
+ assert.match(source,/SET LOCAL statement_timeout/);
 });
 
 test('call model distinguishes reported calls from provider-confirmed calls',()=>{

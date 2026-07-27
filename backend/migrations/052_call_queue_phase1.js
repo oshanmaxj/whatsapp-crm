@@ -21,9 +21,9 @@ function tableNames(values) {
   return values.map(value => String(value?.tableName || value).toLowerCase());
 }
 
-async function describeIfPresent(queryInterface, name) {
-  const names = tableNames(await queryInterface.showAllTables());
-  return names.includes(name.toLowerCase()) ? queryInterface.describeTable(name) : null;
+async function describeIfPresent(queryInterface, name, transaction = null) {
+  const names = tableNames(await queryInterface.showAllTables({ transaction }));
+  return names.includes(name.toLowerCase()) ? queryInterface.describeTable(name, { transaction }) : null;
 }
 
 function resolveRoles(rows) {
@@ -46,12 +46,12 @@ function resolveRoles(rows) {
 async function preflight(queryInterface, transaction = null) {
   if (queryInterface.sequelize.getDialect() !== 'postgres') throw new Error('Migration 052 requires PostgreSQL.');
   const allowedNextStatus = await inspectAllowedNextStatusType(queryInterface, transaction);
-  const rolePermissionColumns = await describeIfPresent(queryInterface, 'role_permissions');
+  const rolePermissionColumns = await describeIfPresent(queryInterface, 'role_permissions', transaction);
   if (!rolePermissionColumns) throw new Error('Preflight failed: role_permissions table is missing.');
   for (const required of ['role_id', 'permission_id']) {
     if (!rolePermissionColumns[required]) throw new Error(`Preflight failed: role_permissions.${required} is missing.`);
   }
-  const roleColumns = await describeIfPresent(queryInterface, 'roles');
+  const roleColumns = await describeIfPresent(queryInterface, 'roles', transaction);
   if (!roleColumns) throw new Error('Preflight failed: roles table is missing.');
   const deletedPredicate = roleColumns.deleted_at ? 'WHERE deleted_at IS NULL' : '';
   const [roleRows] = await queryInterface.sequelize.query(
@@ -63,8 +63,8 @@ async function preflight(queryInterface, transaction = null) {
     'SELECT code FROM permissions WHERE code LIKE :prefix ORDER BY code',
     { replacements: { prefix: 'call_queue.%' }, transaction }
   );
-  const queues = await describeIfPresent(queryInterface, 'call_queues');
-  const entries = await describeIfPresent(queryInterface, 'call_queue_entries');
+  const queues = await describeIfPresent(queryInterface, 'call_queues', transaction);
+  const entries = await describeIfPresent(queryInterface, 'call_queue_entries', transaction);
   const queueIndexes = queues ? await queryInterface.showIndex('call_queues', { transaction }) : [];
   const entryIndexes = entries ? await queryInterface.showIndex('call_queue_entries', { transaction }) : [];
   const [constraints] = await queryInterface.sequelize.query(
@@ -176,7 +176,7 @@ module.exports = {
         ));
       }
 
-      const permissionColumns = await queryInterface.describeTable('permissions');
+      const permissionColumns = await queryInterface.describeTable('permissions', { transaction });
       const permissionTimestampColumns = ['created_at', 'updated_at'].filter(column => permissionColumns[column]);
       for (const [code, name] of permissions) {
         const columns = ['code', 'name', 'description', ...permissionTimestampColumns];

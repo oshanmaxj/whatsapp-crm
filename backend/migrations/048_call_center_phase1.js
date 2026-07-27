@@ -17,20 +17,45 @@ async function operation(name, callback) {
   }
 }
 
-async function tableNames(queryInterface) {
-  return (await queryInterface.showAllTables()).map(value => String(value?.tableName || value).toLowerCase());
+async function tableExists(queryInterface, table, transaction) {
+  const [rows] = await queryInterface.sequelize.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables
+        WHERE table_schema=current_schema() AND table_name=:table
+     ) AS exists`,
+    { replacements: { table }, transaction }
+  );
+  return Boolean(rows[0]?.exists);
+}
+
+async function columnMetadata(queryInterface, table, column, transaction) {
+  const [rows] = await queryInterface.sequelize.query(
+    `SELECT column_name,is_nullable,data_type,udt_name,column_default
+       FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name=:table AND column_name=:column`,
+    { replacements: { table, column }, transaction }
+  );
+  return rows[0] || null;
 }
 
 async function addColumnIfMissing(queryInterface, table, column, definition, transaction) {
-  const description = await queryInterface.describeTable(table);
-  if (!description[column]) await operation(`add ${table}.${column}`, () =>
+  const metadata = await operation(`inspect ${table}.${column}`, () =>
+    columnMetadata(queryInterface, table, column, transaction)
+  );
+  if (!metadata) await operation(`add ${table}.${column}`, () =>
     queryInterface.addColumn(table, column, definition, { transaction })
   );
 }
 
 async function addIndexIfMissing(queryInterface, table, fields, options, transaction) {
-  const indexes = await queryInterface.showIndex(table, { transaction });
-  if (!indexes.some(index => index.name === options.name)) {
+  const [indexes] = await operation(`inspect index ${options.name}`, () =>
+    queryInterface.sequelize.query(
+      `SELECT indexname FROM pg_indexes
+        WHERE schemaname=current_schema() AND tablename=:table AND indexname=:index`,
+      { replacements: { table, index: options.name }, transaction }
+    )
+  );
+  if (!indexes.length) {
     await operation(`create ${options.name}`, () =>
       queryInterface.addIndex(table, fields, { ...options, transaction })
     );
@@ -41,6 +66,12 @@ module.exports = {
   async up(queryInterface, Sequelize) {
     if (queryInterface.sequelize.getDialect() !== 'postgres') throw new Error('Migration 048 requires PostgreSQL.');
     return queryInterface.sequelize.transaction(async transaction => {
+      await operation('set local lock timeout', () =>
+        queryInterface.sequelize.query("SET LOCAL lock_timeout = '15s'", { transaction })
+      );
+      await operation('set local statement timeout', () =>
+        queryInterface.sequelize.query("SET LOCAL statement_timeout = '120s'", { transaction })
+      );
       await operation('acquire advisory migration lock', () =>
         queryInterface.sequelize.query("SELECT pg_advisory_xact_lock(hashtext('migration:048_call_center_phase1'))", { transaction })
       );
@@ -55,8 +86,8 @@ module.exports = {
         ['allowed_next_status_ids', { type: Sequelize.JSON, allowNull: false, defaultValue: [] }]
       ]) await addColumnIfMissing(queryInterface, 'lead_status', column, definition, transaction);
 
-      const tables = await tableNames(queryInterface);
-      if (!tables.includes('call_activities')) await operation('create call_activities', () => queryInterface.createTable('call_activities', {
+      const callActivitiesExists = await operation('inspect table call_activities', () => tableExists(queryInterface, 'call_activities', transaction));
+      if (!callActivitiesExists) await operation('create call_activities', () => queryInterface.createTable('call_activities', {
         id:{type:Sequelize.BIGINT,autoIncrement:true,primaryKey:true},lead_id:{type:Sequelize.BIGINT,allowNull:false},contact_id:{type:Sequelize.BIGINT},agent_user_id:{type:Sequelize.BIGINT,allowNull:false},
         whatsapp_account_id:{type:Sequelize.BIGINT},course_id:{type:Sequelize.BIGINT},direction:{type:Sequelize.STRING(20),allowNull:false,defaultValue:'outbound'},
         method:{type:Sequelize.STRING(30),allowNull:false,defaultValue:'mobile_manual'},verification_source:{type:Sequelize.STRING(30),allowNull:false,defaultValue:'agent_reported'},
@@ -66,13 +97,15 @@ module.exports = {
         attribution_key:{type:Sequelize.STRING(180),allowNull:false,unique:true},created_at:{type:Sequelize.DATE,allowNull:false,defaultValue:Sequelize.fn('NOW')},updated_at:{type:Sequelize.DATE,allowNull:false,defaultValue:Sequelize.fn('NOW')}
       }, { transaction }));
 
-      if (!tables.includes('lead_status_history')) await operation('create lead_status_history', () => queryInterface.createTable('lead_status_history', {
+      const statusHistoryExists = await operation('inspect table lead_status_history', () => tableExists(queryInterface, 'lead_status_history', transaction));
+      if (!statusHistoryExists) await operation('create lead_status_history', () => queryInterface.createTable('lead_status_history', {
         id:{type:Sequelize.BIGINT,autoIncrement:true,primaryKey:true},lead_id:{type:Sequelize.BIGINT,allowNull:false},from_status_id:{type:Sequelize.INTEGER},to_status_id:{type:Sequelize.INTEGER,allowNull:false},
         changed_by_user_id:{type:Sequelize.BIGINT},changed_at:{type:Sequelize.DATE,allowNull:false},duration_in_previous_status_seconds:{type:Sequelize.INTEGER},reason:{type:Sequelize.TEXT},source:{type:Sequelize.STRING(40),allowNull:false},
         call_activity_id:{type:Sequelize.BIGINT},created_at:{type:Sequelize.DATE,allowNull:false,defaultValue:Sequelize.fn('NOW')}
       }, { transaction }));
 
-      if (!tables.includes('conversion_attributions')) await operation('create conversion_attributions', () => queryInterface.createTable('conversion_attributions', {
+      const conversionAttributionsExists = await operation('inspect table conversion_attributions', () => tableExists(queryInterface, 'conversion_attributions', transaction));
+      if (!conversionAttributionsExists) await operation('create conversion_attributions', () => queryInterface.createTable('conversion_attributions', {
         id:{type:Sequelize.BIGINT,autoIncrement:true,primaryKey:true},lead_id:{type:Sequelize.BIGINT,allowNull:false},course_id:{type:Sequelize.BIGINT},original_owner_user_id:{type:Sequelize.BIGINT},
         converting_user_id:{type:Sequelize.BIGINT},converted_at:{type:Sequelize.DATE,allowNull:false},attribution_method:{type:Sequelize.STRING(40),allowNull:false},call_activity_id:{type:Sequelize.BIGINT},
         attribution_key:{type:Sequelize.STRING(180),allowNull:false},created_at:{type:Sequelize.DATE,allowNull:false,defaultValue:Sequelize.fn('NOW')},updated_at:{type:Sequelize.DATE,allowNull:false,defaultValue:Sequelize.fn('NOW')}
@@ -114,14 +147,18 @@ module.exports = {
         error.migrationCollisions = collisions;
         throw error;
       }
-      const [missing] = await queryInterface.sequelize.query(
-        `SELECT COUNT(*)::int AS count FROM conversion_attributions WHERE attribution_key IS NULL OR btrim(attribution_key)=''`,
-        { transaction }
+      const [missing] = await operation('check blank conversion attribution keys', () =>
+        queryInterface.sequelize.query(
+          `SELECT COUNT(*)::int AS count FROM conversion_attributions WHERE attribution_key IS NULL OR btrim(attribution_key)=''`,
+          { transaction }
+        )
       );
       if (Number(missing[0].count)) throw new Error('Conversion attribution backfill left rows without attribution_key.');
 
-      const conversionDescription = await queryInterface.describeTable('conversion_attributions');
-      if (conversionDescription.attribution_key.allowNull !== false) await operation('make conversion_attributions.attribution_key not null', () =>
+      const attributionKeyMetadata = await operation('inspect conversion_attributions.attribution_key nullability', () =>
+        columnMetadata(queryInterface, 'conversion_attributions', 'attribution_key', transaction)
+      );
+      if (attributionKeyMetadata?.is_nullable !== 'NO') await operation('make conversion_attributions.attribution_key not null', () =>
         queryInterface.changeColumn('conversion_attributions', 'attribution_key', {
           type: Sequelize.STRING(180), allowNull: false
         }, { transaction })

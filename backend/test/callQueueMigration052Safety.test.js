@@ -69,7 +69,8 @@ test('role mapping is stable by name and never by a hardcoded ID', () => {
 
 test('migration 052 inspects role_permissions and conditionally uses its real timestamp', () => {
   const source = fs.readFileSync(path.join(__dirname, '../migrations/052_call_queue_phase1.js'), 'utf8');
-  assert.match(source, /describeIfPresent\(queryInterface, 'role_permissions'\)/);
+  assert.match(source, /describeIfPresent\(queryInterface, 'role_permissions', transaction\)/);
+  assert.match(source, /describeTable\('permissions', \{ transaction \}\)/);
   assert.match(source, /includes\('granted_at'\)/);
   assert.match(source, /includes\('created_at'\)/);
   assert.doesNotMatch(source, /role_id\s*=\s*2/);

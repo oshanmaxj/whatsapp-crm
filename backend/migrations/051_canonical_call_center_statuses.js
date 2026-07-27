@@ -18,17 +18,19 @@ const definitions = [
 ];
 const permissions=['view','create','update','disable','delete'].map(action=>[`lead_statuses.${action}`,`Lead statuses: ${action}`]);
 const normalized=value=>String(value||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+const { inspectAllowedNextStatusType, allowedNextStatusParameter, allowedNextStatusSql } = require('./helpers/call_center_schema');
 
 module.exports={definitions,async up(q,S){
  return q.sequelize.transaction(async transaction=>{
   if(q.sequelize.getDialect()==='postgres')await q.sequelize.query("SELECT pg_advisory_xact_lock(hashtext('migration:051_canonical_call_center_statuses'))",{transaction});
   const [before]=await q.sequelize.query('SELECT id,name,code,active FROM lead_status ORDER BY display_order,id',{transaction});
+  const allowedType=await inspectAllowedNextStatusType(q,transaction);
   console.log('[051] lead statuses before',before.map(row=>({id:row.id,name:row.name,code:row.code,active:row.active})));
   for(const [name,code,color,category,displayOrder,reasonRequired,followupRequired,successfulContact,countsAsConversion,terminal] of definitions){
    const [matches]=await q.sequelize.query(`SELECT id,name,code FROM lead_status WHERE lower(trim(code))=:code OR (lower(trim(name))=lower(:name) AND (code IS NULL OR trim(code)='')) ORDER BY CASE WHEN lower(trim(code))=:code THEN 0 ELSE 1 END,id FOR UPDATE`,{replacements:{code,name},transaction});
    if(matches.length>1)throw Object.assign(new Error(`Multiple lead statuses match canonical key ${code}; administrator review is required.`),{code:'LEAD_STATUS_CANONICAL_CONFLICT'});
    if(!matches[0]){
-    await q.sequelize.query(`INSERT INTO lead_status(name,code,color,category,display_order,active,reason_required,followup_required,successful_contact,counts_as_conversion,terminal,is_closed,is_won,is_lost,allowed_next_status_ids,created_at,updated_at) VALUES(:name,:code,:color,:category,:displayOrder,true,:reasonRequired,:followupRequired,:successfulContact,:countsAsConversion,:terminal,:terminal,:countsAsConversion,:isLost,'[]'::json,NOW(),NOW())`,{replacements:{name,code,color,category,displayOrder,reasonRequired,followupRequired,successfulContact,countsAsConversion,terminal,isLost:code==='lost'},transaction});
+    await q.sequelize.query(`INSERT INTO lead_status(name,code,color,category,display_order,active,reason_required,followup_required,successful_contact,counts_as_conversion,terminal,is_closed,is_won,is_lost,allowed_next_status_ids,created_at,updated_at) VALUES(:name,:code,:color,:category,:displayOrder,true,:reasonRequired,:followupRequired,:successfulContact,:countsAsConversion,:terminal,:terminal,:countsAsConversion,:isLost,${allowedNextStatusSql(allowedType)},NOW(),NOW())`,{replacements:{name,code,color,category,displayOrder,reasonRequired,followupRequired,successfulContact,countsAsConversion,terminal,isLost:code==='lost',allowedNextStatusIds:allowedNextStatusParameter([],allowedType)},transaction});
    }
   }
   const indexes=await q.showIndex('lead_status',{transaction});

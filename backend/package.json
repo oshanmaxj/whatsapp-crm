@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "migrate": "node src/scripts/run_migrations.js",
+    "migrate:052:preflight": "node src/scripts/preflight_migration_052.js",
     "migrate:046:inspect": "node src/scripts/inspect_migration_046.js",
     "migrate:whatsapp-connection": "node src/scripts/migrate_whatsapp_connection.js",
     "db:test": "node src/scripts/test_db_connection.js",

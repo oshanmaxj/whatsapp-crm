@@ -4,7 +4,22 @@ const leadStatusService=require('./leadStatus.service');
 const audit=require('./audit.service');
 const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,message,status,exposeMessage:true});
 const own=(actor,id)=>actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||String(actor?.id)===String(id);
+function periodRange(period='today'){const local=new Date(Date.now()+19800000),y=local.getUTCFullYear(),m=local.getUTCMonth(),d=local.getUTCDate();let start=new Date(Date.UTC(y,m,d)-19800000),end=new Date(start.getTime()+86400000);if(period==='yesterday'){end=start;start=new Date(start-86400000);}if(period==='week'){const day=(local.getUTCDay()+6)%7;start=new Date(start-day*86400000);}if(period==='month')start=new Date(Date.UTC(y,m,1)-19800000);return{start,end};}
 class CallCenterService{
+ leadScope(actor){return actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||actor?.permissions?.includes('callcenter.team.view')?{}:{ownerId:actor.id};}
+ async options(query,actor){
+  const contactWhere={};if(query.search){const term=`%${String(query.search).trim()}%`;contactWhere[Op.or]=[{name:{[Op.iLike]:term}},{phone:{[Op.iLike]:term}},{email:{[Op.iLike]:term}}];}
+  const leads=await db.Lead.findAll({where:this.leadScope(actor),include:[{model:db.Contact,as:'contact',where:contactWhere,required:Boolean(query.search)},{model:db.LeadStatus,as:'status'},{model:db.User,as:'owner',attributes:['id','firstName','lastName','email']}],order:[['updated_at','DESC']],limit:30});
+  const statuses=await db.LeadStatus.findAll({where:{active:true},order:[['display_order','ASC']]});
+  return{leads:leads.map(l=>({id:l.id,name:l.contact?.name,phone:l.contact?.phone,email:l.contact?.email,status:l.status?{id:l.status.id,name:l.status.name,color:l.status.color,allowedNextStatusIds:l.status.allowedNextStatusIds}:null,assignedAgent:l.owner,course:l.courseInterested})),statuses:statuses.map(s=>({id:s.id,code:s.code,name:s.name,color:s.color,reasonRequired:s.reasonRequired,followupRequired:s.followupRequired,allowedNextStatusIds:s.allowedNextStatusIds}))};
+ }
+ async active(actor){return db.CallActivity.findOne({where:{agentUserId:actor.id,endedAt:null},include:[{model:db.Lead,as:'lead',include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'}]}],order:[['started_at','DESC']]});}
+ async queue(actor){
+  const leads=await db.Lead.findAll({where:this.leadScope(actor),include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'}],limit:200});
+  const ids=leads.map(l=>l.id),calls=ids.length?await db.CallActivity.findAll({where:{leadId:{[Op.in]:ids},endedAt:{[Op.ne]:null}},order:[['started_at','DESC']]}):[];
+  const byLead=new Map();for(const c of calls){const k=String(c.leadId),v=byLead.get(k)||{count:0,last:null};v.count++;if(!v.last)v.last=c;byLead.set(k,v);}
+  const now=new Date();return leads.map(l=>{const c=byLead.get(String(l.id))||{};const follow=l.nextFollowupAt?new Date(l.nextFollowupAt):null;const priority=follow&&follow<now?1:follow&&follow-now<=15*60000?2:l.status?.code==='new'?3:c.last?.disposition==='no_answer'?4:5;return{id:l.id,name:l.contact?.name,phone:l.contact?.phone,course:l.courseInterested,status:l.status,lastCallResult:c.last?.disposition||null,lastContactedAt:c.last?.endedAt||null,nextFollowupAt:l.nextFollowupAt,callAttemptCount:c.count||0,priority};}).sort((a,b)=>a.priority-b.priority||new Date(a.nextFollowupAt||8640000000000000)-new Date(b.nextFollowupAt||8640000000000000));
+ }
  async start(payload,actor){
   if(!actor?.isSystemAdmin&&!actor?.permissions?.includes('calls.create'))throw fail('CALL_CREATE_FORBIDDEN','You cannot create calls.',403);
   return db.sequelize.transaction(async t=>{
@@ -36,7 +51,7 @@ class CallCenterService{
  }
  async log(payload,actor){const row=await this.start(payload,actor);return this.complete(row.id,payload,actor);}
  async dashboard(query,actor){
-  const where={endedAt:{[Op.ne]:null}};if(query.from||query.to)where.startedAt={...(query.from?{[Op.gte]:new Date(query.from)}:{}),...(query.to?{[Op.lte]:new Date(query.to)}:{})};if(!actor.isSystemAdmin&&!actor.permissions?.includes('calls.view.team'))where.agentUserId=actor.id;
+  const where={endedAt:{[Op.ne]:null}},range=periodRange(query.period);where.startedAt=query.from||query.to?{...(query.from?{[Op.gte]:new Date(`${query.from}T00:00:00+05:30`)}:{}),...(query.to?{[Op.lt]:new Date(new Date(`${query.to}T00:00:00+05:30`).getTime()+86400000)}:{})}:{[Op.gte]:range.start,[Op.lt]:range.end};if(!actor.isSystemAdmin&&!actor.permissions?.includes('calls.view.team'))where.agentUserId=actor.id;
   const calls=await db.CallActivity.findAll({where,attributes:['id','leadId','agentUserId','disposition','durationSeconds','talkTimeSeconds','startedAt'],order:[['started_at','DESC']],limit:500});
   const attempted=new Set(calls.map(x=>String(x.leadId))),answered=calls.filter(x=>['answered','interested','registered','call_back_later'].includes(String(x.disposition).toLowerCase()));
   const conversions=await db.ConversionAttribution.count({where:{leadId:{[Op.in]:[...attempted]}}});return{totals:{callAttempts:calls.length,uniqueLeadsContacted:attempted.size,answeredCalls:answered.length,conversions,contactRate:attempted.size?Math.round(new Set(answered.map(x=>String(x.leadId))).size/attempted.size*100):0,averageTalkTime:answered.length?Math.round(answered.reduce((s,x)=>s+Number(x.talkTimeSeconds||0),0)/answered.length):0},recentCalls:calls.slice(0,20),definitions:{contactRate:'Unique answered leads / unique attempted leads',conversionRate:'Converted unique leads / eligible assigned leads'}};}

@@ -304,6 +304,12 @@ function LeadsPage() {
                   <TableCell>{lead.createdAt ? new Date(lead.createdAt).toLocaleDateString() : '-'}</TableCell>
                   <TableCell><Tooltip title={lead.conversationId ? 'Open linked conversation' : 'No chat conversation found'}><span><Button size="small" startIcon={<ChatBubbleOutlineIcon />} disabled={!lead.conversationId} onClick={() => navigate(`/chat?conversationId=${lead.conversationId}`)}>Open Chat</Button></span></Tooltip></TableCell>
                   <TableCell align="right">
+                    <Stack direction="row" justifyContent="flex-end" flexWrap="wrap">
+                      <Button size="small" onClick={() => navigate(`/call-center?leadId=${lead.id}&action=start`)}>Start Call</Button>
+                      <Button size="small" onClick={() => navigate(`/call-center?leadId=${lead.id}&action=log`)}>Log Call</Button>
+                      <Button size="small" onClick={() => navigate(`/call-center?leadId=${lead.id}&action=log`)}>Schedule Follow-up</Button>
+                      <Button size="small" onClick={() => setProfile(lead)}>View Timeline</Button>
+                    </Stack>
                     <IconButton onClick={() => setProfile(lead)}><VisibilityIcon /></IconButton>
                     <IconButton onClick={() => openEdit(lead)}><EditIcon /></IconButton>
                     <IconButton color="error" onClick={() => removeLead(lead)}><DeleteOutlineIcon /></IconButton>

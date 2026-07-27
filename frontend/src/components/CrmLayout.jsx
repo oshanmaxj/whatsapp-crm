@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import ActiveCallBanner from './ActiveCallBanner';
 import {
   AppBar,
   Avatar,
@@ -401,6 +402,7 @@ function CrmLayout({ darkMode, onToggleDarkMode }) {
         <Toolbar sx={{ minHeight: appBarHeight }} />
         <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: '100%', overflowX: 'hidden' }}>
           <ModuleTabs />
+          <ActiveCallBanner />
           <Outlet context={{ socket, connected }} />
         </Box>
       </Box>

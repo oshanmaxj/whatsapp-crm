@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('../config/loadEnv');
 
 const { QueryTypes } = require('sequelize');
 const { sequelize } = require('../models');

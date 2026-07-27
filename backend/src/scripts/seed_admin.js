@@ -1,5 +1,4 @@
-const dotenv = require('dotenv');
-dotenv.config();
+require('../config/loadEnv');
 
 const validateEnv = require('../config/validateEnv');
 const { sequelize, User, Role, UserRole } = require('../models');

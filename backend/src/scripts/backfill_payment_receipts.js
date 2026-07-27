@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('../config/loadEnv');
 const { AccountingTransaction, FeeInstallment, PaymentReceipt, sequelize } = require('../models');
 const receiptService = require('../services/paymentReceipt.service');
 const pdfService = require('../services/paymentReceiptPdf.service');

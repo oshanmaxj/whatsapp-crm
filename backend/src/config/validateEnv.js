@@ -1,7 +1,7 @@
 const logger = require('./logger');
+const { resolveDatabaseConfig } = require('./databaseConfig');
 
 const requiredEnvKeys = [
-  'DB_DIALECT',
   'FRONTEND_URL',
   'NODE_ENV'
 ];
@@ -22,13 +22,10 @@ function validateEnv() {
     );
   }
 
-  const dialect = process.env.DB_DIALECT.trim().toLowerCase();
-  if (!['postgres', 'mysql', 'sqlite'].includes(dialect)) {
-    throw new Error(`Unsupported DB_DIALECT '${process.env.DB_DIALECT}'. Use 'postgres' for local PostgreSQL.`);
-  }
+  const { dialect } = resolveDatabaseConfig(process.env);
 
   const hasDatabaseUrl = Boolean(process.env.DATABASE_URL?.trim());
-  const discreteDatabaseKeys = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
+  const discreteDatabaseKeys = ['DB_NAME', 'DB_USER', 'DB_PASSWORD'];
   const missingDatabaseKeys = discreteDatabaseKeys.filter(
     (key) => !process.env[key] || String(process.env[key]).trim() === ''
   );
@@ -37,10 +34,6 @@ function validateEnv() {
     throw new Error(
       `PostgreSQL requires DATABASE_URL or these database variables: ${missingDatabaseKeys.join(', ')}.`
     );
-  }
-
-  if (dialect === 'postgres' && hasDatabaseUrl && !/^postgres(?:ql)?:\/\//i.test(process.env.DATABASE_URL)) {
-    throw new Error(`DATABASE_URL must be a valid PostgreSQL URI starting with 'postgres://' or 'postgresql://'.`);
   }
 
   const disabledFeatures = optionalFeatureKeys.filter((key) => !process.env[key] || String(process.env[key]).trim() === '');

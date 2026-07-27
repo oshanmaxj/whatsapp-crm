@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('../config/loadEnv');
 const { Op }=require('sequelize');
 const { sequelize,FeeInstallment,StudentFee,CommissionLedger,LecturerAgreement }=require('../models');
 const ledger=require('../services/commissionLedger.service');

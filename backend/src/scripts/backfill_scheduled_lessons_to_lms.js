@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('../config/loadEnv');
 
 const { sequelize, CourseSchedule, LmsLesson, ScheduledLesson } = require('../models');
 const { syncScheduledLessonToLms } = require('../services/scheduledLessonLmsSync.service');

@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('../config/loadEnv');
 const { sequelize }=require('../models');
 (async()=>{const checks={
  confirmedPaymentsWithoutLedger:`SELECT fi.id FROM fee_installments fi LEFT JOIN commission_ledger cl ON cl.source_payment_id=fi.id AND cl.reversal_of_id IS NULL WHERE fi.status IN ('confirmed','paid') AND cl.id IS NULL`,

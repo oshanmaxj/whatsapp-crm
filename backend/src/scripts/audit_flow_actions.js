@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('../config/loadEnv');
 const { Flow, FlowNode, FlowConnection, sequelize } = require('../models');
 const flowService = require('../services/flow.service');
 

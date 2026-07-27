@@ -46,6 +46,7 @@ const crmLabelsVoiceDashboardMigration = require('../../migrations/042_crm_label
 const whatsappNumberRoutingMigration = require('../../migrations/043_whatsapp_number_routing');
 const callCenterPhase1Migration = require('../../migrations/048_call_center_phase1');
 const callCenterStatusesMigration = require('../../migrations/049_call_center_statuses');
+const assignmentHistoryActorMigration = require('../../migrations/050_assignment_history_actor');
 const commissionFinanceUpgradeMigration = require('../../migrations/044_commission_finance_upgrade');
 const whatsappAiAgentsMigration = require('../../migrations/045_whatsapp_ai_agents');
 const reminderSequencesAiProvidersMigration = require('../../migrations/046_reminder_sequences_ai_providers');
@@ -255,6 +256,7 @@ async function run() {
     await runMigration('048_call_center_phase1.js', callCenterPhase1Migration, queryInterface);
     console.log('Applied: call center phase 1');
     await runMigration('049_call_center_statuses.js', callCenterStatusesMigration, queryInterface);
+    await runMigration('050_assignment_history_actor.js', assignmentHistoryActorMigration, queryInterface);
     console.log('Applied: call center workflow statuses');
     console.log('Applied: canonical payment WhatsApp conversation context');
 

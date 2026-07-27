@@ -32,6 +32,15 @@ function displayName(user) {
   return user ? ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || 'Unknown') : 'Unassigned';
 }
 
+const automatedSources = new Set(['automation', 'workflow', 'incoming_whatsapp', 'migration']);
+function actorTypeFor(source, actorId) {
+  if (actorId) return 'user';
+  if (source === 'incoming_whatsapp') return 'webhook';
+  if (source === 'workflow' || source === 'automation') return 'automation';
+  if (source === 'migration') return 'migration';
+  return null;
+}
+
 function createLeadAssignmentService(dependencies = {}) {
   const sequelize = dependencies.sequelize || models.sequelize;
   const Lead = dependencies.Lead || models.Lead;
@@ -54,6 +63,14 @@ function createLeadAssignmentService(dependencies = {}) {
         if (!assignee) throw fail('ASSIGNEE_INVALID', 'Assigned agent not found or inactive.', 422);
       }
       const effectiveActorId = actor?.id || actorUserId || null;
+      const actorType = actorTypeFor(source, effectiveActorId);
+      if (!effectiveActorId && !automatedSources.has(source)) {
+        throw fail('ASSIGNMENT_ACTOR_REQUIRED', 'An authenticated assignment actor is required.', 401);
+      }
+      if (effectiveActorId) {
+        const validActor = await User.findOne({ where: { id: effectiveActorId, status: 'active' }, attributes: ['id'] });
+        if (!validActor) throw fail('ASSIGNMENT_ACTOR_INVALID', 'Assignment actor not found or inactive.', 422);
+      }
 
       const run = async (t) => {
         let selectedConversation = null;
@@ -118,7 +135,7 @@ function createLeadAssignmentService(dependencies = {}) {
           await ConversationAssignmentHistory.create({
             conversationId: conversation.id, previousUserId: oldConversationOwnerId,
             newUserId: normalizedOwnerId, changedByUserId: effectiveActorId,
-            reason: String(reason || '').trim() || null, action
+            actorType, source, reason: String(reason || '').trim() || null, action
           }, { transaction: t });
           await Message.create({
             conversationId: conversation.id, contactId: conversation.contactId,

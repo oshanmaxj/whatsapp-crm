@@ -7,6 +7,8 @@ const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,mes
 const own=(actor,id)=>actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||String(actor?.id)===String(id);
 const clean=v=>String(v??'').trim();
 const validPhone=v=>/^\+?[0-9][0-9 ()-]{5,24}$/.test(clean(v));
+const dispositionCode=v=>clean(v).toLowerCase().replace(/[\s-]+/g,'_');
+const dispositionStatuses={answered:'contacted',no_answer:'no_answer',busy:'busy',switched_off:'switched_off',call_back_later:'follow_up_required',interested:'interested',not_interested:'not_interested',registered:'registered',wrong_number:'wrong_number'};
 function periodRange(period='today'){const local=new Date(Date.now()+19800000),y=local.getUTCFullYear(),m=local.getUTCMonth(),d=local.getUTCDate();let start=new Date(Date.UTC(y,m,d)-19800000),end=new Date(start.getTime()+86400000);if(period==='yesterday'){end=start;start=new Date(start-86400000);}if(period==='week'){const day=(local.getUTCDay()+6)%7;start=new Date(start-day*86400000);}if(period==='month')start=new Date(Date.UTC(y,m,1)-19800000);return{start,end};}
 class CallCenterService{
  leadScope(actor){return actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||actor?.permissions?.includes('callcenter.team.view')?{}:{ownerId:actor.id};}
@@ -41,18 +43,20 @@ class CallCenterService{
   const run=async t=>{
    const call=await db.CallActivity.findByPk(id,{transaction:t,lock:t.LOCK.UPDATE});if(!call)throw fail('CALL_NOT_FOUND','Call not found.',404);if(!own(actor,call.agentUserId))throw fail('CALL_UPDATE_FORBIDDEN','You cannot complete this call.',403);if(call.endedAt)return call;
    const status=await db.LeadStatus.findOne({where:{id:payload.newStatusId,active:true},transaction:t});if(!status)throw fail('INVALID_LEAD_STATUS','Select a valid lead status.');
+   const resultCode=dispositionCode(payload.disposition),expectedStatus=dispositionStatuses[resultCode];if(!expectedStatus)throw fail('CALL_DISPOSITION_REQUIRED','Select a valid call result.',422);
+   if(String(status.code)!==expectedStatus)throw fail('CALL_STATUS_MISMATCH',`${clean(payload.disposition)} must use the ${expectedStatus.replace(/_/g,' ')} status.`,422);
    const currentStatus=await db.LeadStatus.findByPk(call.previousStatusId,{transaction:t});const allowed=Array.isArray(currentStatus?.allowedNextStatusIds)?currentStatus.allowedNextStatusIds:[];if(allowed.length&&!allowed.map(String).includes(String(payload.newStatusId)))throw fail('LEAD_STATUS_TRANSITION_INVALID','This status transition is not allowed.');
    if(status.reasonRequired&&!String(payload.reason||'').trim())throw fail('CALL_REASON_REQUIRED','Reason is required.');
    if(status.followupRequired&&!payload.nextFollowUpAt)throw fail('FOLLOWUP_DUE_REQUIRED','Follow-up date and time are required.');
    if(!payload.disposition)throw fail('CALL_DISPOSITION_REQUIRED','Call result is required.');
    const now=new Date(),duration=Math.max(0,Math.floor((now-new Date(call.startedAt))/1000));
-   await call.update({endedAt:now,durationSeconds:duration,talkTimeSeconds:Math.min(duration,Math.max(0,Number(payload.talkTimeSeconds||0))),disposition:payload.disposition,newStatusId:status.id,notes:payload.notes||null,nextFollowupAt:payload.nextFollowUpAt||null},{transaction:t});
+   await call.update({endedAt:now,durationSeconds:duration,talkTimeSeconds:Math.min(duration,Math.max(0,Number(payload.talkTimeSeconds||0))),disposition:resultCode,newStatusId:status.id,notes:payload.notes||null,nextFollowupAt:payload.nextFollowUpAt||null},{transaction:t});
    const previous=await db.LeadStatusHistory.findOne({where:{leadId:call.leadId},order:[['changed_at','DESC']],transaction:t});
    await leadStatusService.changeStatus({leadId:call.leadId,statusId:status.id,actor,source:'call_result',transaction:t,auditData:{callActivityId:call.id,reason:payload.reason||null}});
    await db.LeadStatusHistory.create({leadId:call.leadId,fromStatusId:call.previousStatusId,toStatusId:status.id,changedByUserId:actor.id,changedAt:now,durationInPreviousStatusSeconds:previous?Math.max(0,Math.floor((now-new Date(previous.changedAt))/1000)):null,reason:payload.reason||null,source:'call_result',callActivityId:call.id},{transaction:t});
    if(payload.nextFollowUpAt)await db.Followup.create({leadId:call.leadId,contactId:call.contactId,assignedTo:actor.id,createdByUserId:actor.id,dueDate:payload.nextFollowUpAt,status:'pending',priority:'normal',followupType:'call',note:payload.notes||null},{transaction:t});
    if(status.countsAsConversion||status.code==='registered'){const attributionKey=`${call.leadId}:${call.courseId||'unspecified'}`;await db.ConversionAttribution.findOrCreate({where:{attributionKey},defaults:{leadId:call.leadId,courseId:call.courseId||null,originalOwnerUserId:actor.id,convertingUserId:actor.id,convertedAt:now,attributionMethod:'call_result',callActivityId:call.id},transaction:t});}
-   await audit.record({userId:actor.id,action:'CALL_COMPLETED',entityType:'call_activity',entityId:call.id,changes:{disposition:payload.disposition,newStatusId:status.id},transaction:t,required:true});return call;
+   await audit.record({userId:actor.id,action:'CALL_COMPLETED',entityType:'call_activity',entityId:call.id,changes:{disposition:resultCode,newStatusId:status.id},transaction:t,required:true});return call;
   };
   return transaction?run(transaction):db.sequelize.transaction(run);
  }

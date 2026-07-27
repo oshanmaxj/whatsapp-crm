@@ -65,3 +65,28 @@ test('repeating the same assignment creates no duplicate records or events', asy
   assert.deepEqual(env.writes, { leadAssignments: [], activities: [], histories: [], messages: [], audits: [] });
   assert.equal(env.events.length, 0);
 });
+
+test('automated WhatsApp assignment records an explicit webhook actor without a fake user', async () => {
+  const env = environment();
+  await env.service.assignAgent({ leadId: 55, ownerId: 20, source: 'incoming_whatsapp', reason: 'Routing rule' });
+  assert.equal(env.writes.histories.length, 2);
+  assert.ok(env.writes.histories.every((row) => row.changedByUserId === null));
+  assert.ok(env.writes.histories.every((row) => row.actorType === 'webhook'));
+  assert.ok(env.writes.histories.every((row) => row.source === 'incoming_whatsapp'));
+});
+
+test('a human assignment without an authenticated actor fails before any transaction writes', async () => {
+  const env = environment();
+  await assert.rejects(
+    env.service.assignAgent({ leadId: 55, ownerId: 20, source: 'leads_page' }),
+    (error) => error.code === 'ASSIGNMENT_ACTOR_REQUIRED'
+  );
+  assert.deepEqual(env.writes, { leadAssignments: [], activities: [], histories: [], messages: [], audits: [] });
+});
+
+test('assignment history uses the authenticated Users-table ID', async () => {
+  const env = environment();
+  await env.service.assignAgent({ leadId: 55, ownerId: 20, actor: leadActor, source: 'leads_page' });
+  assert.ok(env.writes.histories.every((row) => row.changedByUserId === leadActor.id));
+  assert.ok(env.writes.histories.every((row) => row.actorType === 'user'));
+});

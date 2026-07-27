@@ -3,7 +3,7 @@ const logger = require('../config/logger');
 module.exports = (err, req, res, next) => {
   const status = err.status || err.statusCode || (err.type === 'entity.too.large' ? 413 : 500);
   const uploadCode = err.code || (status === 413 ? 'REQUEST_TOO_LARGE' : null);
-  const requestId = req.headers['x-request-id'] || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const requestId = req.requestId || req.headers['x-request-id'] || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const response = {
     success: false,
     message: status === 413 && !err.uploadError

@@ -44,9 +44,9 @@ export async function refreshAccessToken() {
   return refreshPromise;
 }
 
-export async function restoreAuthentication() {
+export async function restoreAuthentication({ forceRefresh = false } = {}) {
   const token = localStorage.getItem('accessToken');
-  if (tokenIsUsable(token)) return token;
+  if (!forceRefresh && tokenIsUsable(token)) return token;
   return refreshAccessToken();
 }
 

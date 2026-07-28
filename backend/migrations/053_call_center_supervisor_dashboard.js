@@ -161,8 +161,10 @@ module.exports = {
          SELECT DISTINCT existing.role_id,target.id${roleGrantTimestamp.values}
            FROM role_permissions existing
            JOIN permissions legacy ON legacy.id=existing.permission_id
+           JOIN roles existing_role ON existing_role.id=existing.role_id
            CROSS JOIN permissions target
           WHERE legacy.code IN (:legacySupervisorCodes)
+            AND LOWER(existing_role.name) NOT IN ('agent','call center agent','call-center agent')
             AND target.code IN (:supervisorPermissionCodes)
          ON CONFLICT(role_id,permission_id) DO NOTHING`,
         transaction,

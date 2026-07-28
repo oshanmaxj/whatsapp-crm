@@ -17,13 +17,16 @@ const defaultFilters={search:'',phone:'',email:'',status:'',source:'',assignedAg
 const seconds=value=>`${String(Math.floor(value/60)).padStart(2,'0')}:${String(value%60).padStart(2,'0')}`;
 const message=error=>{const text=Object.values(error.response?.data?.errors||{})[0]||error.response?.data?.message||error.message||'Request failed.',requestId=error.response?.data?.requestId;return requestId?`${text} (Request ${requestId})`:text;};
 const agentName=agent=>agent?.name||[agent?.firstName,agent?.lastName].filter(Boolean).join(' ')||agent?.email||'Unknown agent';
+export const normalizeAgentTab=tab=>['queue','find','followups','history','performance'].includes(tab)?tab:'queue';
+export const resolveCallCenterMode=access=>(access.isSystemAdmin||access.permissions?.includes('call_center.supervisor_dashboard'))?'supervisor':'agent';
 
 function AgentWorkspace(){
  const navigate=useNavigate(),location=useLocation(),[params,setParams]=useSearchParams();
- const initialTab=params.get('tab')||'queue',stored=(()=>{try{return JSON.parse(sessionStorage.getItem('callCenterFilters')||'null')}catch{return null}})(),urlFilters=Object.fromEntries([...params].filter(([key])=>key.startsWith('f_')).map(([key,value])=>[key.slice(2),value]));
+ const agentTabs=['queue','find','followups','history','performance'],requestedTab=params.get('tab'),initialTab=normalizeAgentTab(requestedTab),stored=(()=>{try{return JSON.parse(sessionStorage.getItem('callCenterFilters')||'null')}catch{return null}})(),urlFilters=Object.fromEntries([...params].filter(([key])=>key.startsWith('f_')).map(([key,value])=>[key.slice(2),value]));
  const initialFilters={...defaultFilters,...stored,...urlFilters,labelIds:String(urlFilters.labelIds??stored?.labelIds??'').split(',').filter(Boolean).map(Number)};
  const[tab,setTab]=useState(initialTab),[filters,setFilters]=useState(initialFilters);
  const[options,setOptions]=useState({leads:[],statuses:[]}),[agents,setAgents]=useState([]),[labels,setLabels]=useState([]),[queue,setQueue]=useState({queue:null,entries:[]}),[results,setResults]=useState({leads:[],pagination:{page:1,pages:0,total:0}}),[selected,setSelected]=useState([]),[active,setActive]=useState(null),[data,setData]=useState(null),[outcome,setOutcome]=useState(blankOutcome),[outcomeErrors,setOutcomeErrors]=useState({}),[outcomeOpen,setOutcomeOpen]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[tick,setTick]=useState(Date.now()),[chatChoices,setChatChoices]=useState(null);
+ useEffect(()=>{if(requestedTab&&!agentTabs.includes(requestedTab)){const next=new URLSearchParams(params);next.set('tab','queue');setParams(next,{replace:true});setNotice('You do not have permission to view that Call Center dashboard.');}},[]);
  const loadQueue=useCallback(()=>getCallQueue().then(({data})=>setQueue(data.data)),[]);
  const loadBase=useCallback(()=>Promise.all([getCallCenterOptions(),getActiveCall(),getCallCenterDashboard()]).then(([optionsResponse,activeResponse,dashboardResponse])=>{setOptions(optionsResponse.data.data);setActive(activeResponse.data.data);setData(dashboardResponse.data.data);}),[]);
  useEffect(()=>{loadBase().catch(requestError=>setError(message(requestError)));loadQueue().catch(requestError=>setError(message(requestError)));},[loadBase,loadQueue]);
@@ -81,7 +84,7 @@ function AgentWorkspace(){
  </Stack>;
 }
 export default function CallCenterPage(){
- const access=getAccessPayload(),supervisor=access.isSystemAdmin||access.permissions?.includes('call_center.supervisor_dashboard'),agent=access.permissions?.includes('call_center.agent_workspace');
+ const access=getAccessPayload(),supervisor=resolveCallCenterMode(access)==='supervisor',agent=access.permissions?.includes('call_center.agent_workspace');
  const[workspace,setWorkspace]=useState(false);
  if(supervisor&&!workspace)return <SupervisorDashboard showAgentWorkspace={agent} onAgentWorkspace={()=>setWorkspace(true)}/>;
  return <AgentWorkspace/>;

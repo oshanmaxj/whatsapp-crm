@@ -39,6 +39,16 @@ test('persistent login restoration keeps a usable access token without refreshin
   expect(mockRefreshClient.post).not.toHaveBeenCalled();
 });
 
+test('forced restoration refreshes a usable token to replace stale permissions', async () => {
+  const cached = jwtWithExpiry(Math.floor(Date.now() / 1000) + 300);
+  const refreshed = jwtWithExpiry(Math.floor(Date.now() / 1000) + 600);
+  localStorage.setItem('accessToken', cached);
+  mockRefreshClient.post.mockResolvedValueOnce({ data: { data: { tokens: { accessToken: refreshed } } } });
+  await expect(restoreAuthentication({ forceRefresh: true })).resolves.toBe(refreshed);
+  expect(mockRefreshClient.post).toHaveBeenCalledTimes(1);
+  expect(localStorage.getItem('accessToken')).toBe(refreshed);
+});
+
 test('simultaneous expired requests share one refresh and retry independently', async () => {
   const token = jwtWithExpiry(Math.floor(Date.now() / 1000) + 300);
   let resolveRefresh;

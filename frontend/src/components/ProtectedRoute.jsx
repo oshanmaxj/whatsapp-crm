@@ -8,7 +8,9 @@ function ProtectedRoute() {
   const [state, setState] = useState('loading');
   useEffect(() => {
     let active = true;
-    restoreAuthentication().then(() => { if (active) setState('authenticated'); }).catch(() => {
+    // Refresh on app restoration even when the cached JWT has not expired, so
+    // role/permission repairs take effect without retaining stale local access.
+    restoreAuthentication({ forceRefresh: true }).then(() => { if (active) setState('authenticated'); }).catch(() => {
       clearAuthState();
       if (active) setState('anonymous');
     });

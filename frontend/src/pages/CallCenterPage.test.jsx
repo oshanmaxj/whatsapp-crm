@@ -1,4 +1,4 @@
-import CallCenterPage from './CallCenterPage';
+import CallCenterPage,{normalizeAgentTab,resolveCallCenterMode} from './CallCenterPage';
 import * as service from '../services/callCenter.service';
 
 test('call center page and API surface load', () => {
@@ -10,6 +10,15 @@ test('call center page and API surface load', () => {
   expect(service.searchCallCenterLeads).toBeDefined();
   expect(service.addCallQueueEntries).toBeDefined();
   expect(service.claimNextCall).toBeDefined();
+});
+
+test('effective permissions select a secure Call Center mode',()=>{
+  expect(resolveCallCenterMode({isSystemAdmin:false,permissions:['call_center.agent_workspace']})).toBe('agent');
+  expect(resolveCallCenterMode({isSystemAdmin:false,permissions:['call_center.supervisor_dashboard']})).toBe('supervisor');
+  expect(resolveCallCenterMode({isSystemAdmin:true,permissions:[]})).toBe('supervisor');
+  expect(normalizeAgentTab('supervisor')).toBe('queue');
+  expect(normalizeAgentTab('live')).toBe('queue');
+  expect(normalizeAgentTab('history')).toBe('history');
 });
 
 test('canonical outcomes auto-map and missing statuses block save', () => {

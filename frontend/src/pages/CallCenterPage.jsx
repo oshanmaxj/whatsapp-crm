@@ -7,6 +7,8 @@ import{getLabels}from'../services/chat.service';
 import LabelMultiSelect from'../components/LabelMultiSelect';
 import WhatsAppAccountSelect from'../components/WhatsAppAccountSelect';
 import{LEAD_COURSES,LEAD_DATE_TYPES,LEAD_SOURCES}from'../constants/leadFilterOptions';
+import SupervisorDashboard from'./CallCenterSupervisorDashboard';
+import{getAccessPayload}from'../utils/access';
 
 const dispositions=['Answered','No Answer','Busy','Switched Off','Call Rejected','Wrong Number','Call Back Later','Interested','Not Interested','Agreed','Registered','Lost','Technical Failure'];
 const statusMap={'Answered':'contacted','No Answer':'no_answer','Busy':'busy','Switched Off':'switched_off','Call Rejected':'call_rejected','Wrong Number':'wrong_number','Call Back Later':'follow_up_required','Interested':'interested','Not Interested':'not_interested','Agreed':'agreed','Registered':'registered','Lost':'lost','Technical Failure':'call_pending'};
@@ -16,7 +18,7 @@ const seconds=value=>`${String(Math.floor(value/60)).padStart(2,'0')}:${String(v
 const message=error=>{const text=Object.values(error.response?.data?.errors||{})[0]||error.response?.data?.message||error.message||'Request failed.',requestId=error.response?.data?.requestId;return requestId?`${text} (Request ${requestId})`:text;};
 const agentName=agent=>agent?.name||[agent?.firstName,agent?.lastName].filter(Boolean).join(' ')||agent?.email||'Unknown agent';
 
-export default function CallCenterPage(){
+function AgentWorkspace(){
  const navigate=useNavigate(),location=useLocation(),[params,setParams]=useSearchParams();
  const initialTab=params.get('tab')||'queue',stored=(()=>{try{return JSON.parse(sessionStorage.getItem('callCenterFilters')||'null')}catch{return null}})(),urlFilters=Object.fromEntries([...params].filter(([key])=>key.startsWith('f_')).map(([key,value])=>[key.slice(2),value]));
  const initialFilters={...defaultFilters,...stored,...urlFilters,labelIds:String(urlFilters.labelIds??stored?.labelIds??'').split(',').filter(Boolean).map(Number)};
@@ -77,4 +79,10 @@ export default function CallCenterPage(){
   <Dialog open={outcomeOpen} onClose={()=>!busy&&setOutcomeOpen(false)} fullWidth><DialogTitle>After-call outcome</DialogTitle><DialogContent><Stack spacing={2} sx={{pt:1}}>{mappedMissing&&<Alert severity="error">The {outcome.disposition} lead status is not configured. Ask an administrator to enable it.</Alert>}<FormControl required error={!!outcomeErrors.disposition}><InputLabel>Result *</InputLabel><Select label="Result *" value={outcome.disposition} onChange={event=>chooseResult(event.target.value)}>{dispositions.map(value=><MenuItem key={value} value={value}>{value}</MenuItem>)}</Select></FormControl><FormControl required error={!!outcomeErrors.newStatusId}><InputLabel>New status *</InputLabel><Select label="New status *" value={outcome.newStatusId} onChange={event=>setOutcome({...outcome,newStatusId:event.target.value})}>{options.statuses.map(status=><MenuItem key={status.id} value={status.id}><Chip size="small" label={status.name} sx={{bgcolor:status.color,color:'#fff'}}/></MenuItem>)}</Select></FormControl>{mappedStatus&&<Typography variant="caption">{mappedStatus.name} selected automatically.</Typography>}<TextField type="datetime-local" label="Next follow-up" InputLabelProps={{shrink:true}} value={outcome.nextFollowUpAt} error={!!outcomeErrors.nextFollowUpAt} helperText={outcomeErrors.nextFollowUpAt} onChange={event=>setOutcome({...outcome,nextFollowUpAt:event.target.value})}/><TextField multiline minRows={3} label="Reason / notes" value={outcome.notes} error={!!outcomeErrors.notes} helperText={outcomeErrors.notes} onChange={event=>setOutcome({...outcome,notes:event.target.value})}/></Stack></DialogContent><DialogActions><Button disabled={busy} onClick={()=>setOutcomeOpen(false)}>Cancel</Button><Button variant="contained" disabled={busy||mappedMissing} onClick={saveOutcome}>{busy?'Saving…':'Save Outcome'}</Button></DialogActions></Dialog>
   <Dialog open={!!chatChoices} onClose={()=>setChatChoices(null)} fullWidth><DialogTitle>Select WhatsApp conversation</DialogTitle><DialogContent><Stack spacing={1}>{chatChoices?.conversations.map(conversation=><Button key={conversation.id} variant="outlined" onClick={()=>goChat(conversation)}>{conversation.whatsappAccount?.name||`Account ${conversation.whatsappAccountId}`} · {conversation.status} · {conversation.lastMessageAt?new Date(conversation.lastMessageAt).toLocaleString():'No messages'}</Button>)}</Stack></DialogContent></Dialog>
  </Stack>;
+}
+export default function CallCenterPage(){
+ const access=getAccessPayload(),supervisor=access.isSystemAdmin||access.permissions?.includes('call_center.supervisor_dashboard'),agent=access.permissions?.includes('call_center.agent_workspace');
+ const[workspace,setWorkspace]=useState(false);
+ if(supervisor&&!workspace)return <SupervisorDashboard showAgentWorkspace={agent} onAgentWorkspace={()=>setWorkspace(true)}/>;
+ return <AgentWorkspace/>;
 }

@@ -1,5 +1,6 @@
 const service=require('../services/callCenter.service'),crypto=require('crypto');const ok=(r,d,s=200)=>r.status(s).json({success:true,data:d});
 const queue=require('../services/callQueue.service');
+const supervisor=require('../services/callCenterSupervisor.service');
 const context=q=>{const requestId=q.requestId||q.get('x-request-id')||crypto.randomUUID();q.requestId=requestId;return{requestId};};
 exports.start=(q,r,n)=>service.start(q.body,q.user,context(q)).then(x=>ok(r,x,201)).catch(n);
 exports.complete=(q,r,n)=>service.complete(q.params.id,q.body,q.user,null,context(q)).then(x=>ok(r,x,201)).catch(n);
@@ -16,3 +17,10 @@ exports.bulkAddQueueEntries=(q,r,n)=>queue.addMatching(q.body.filters||{},q.user
 exports.updateQueueEntry=(q,r,n)=>queue.update(q.params.id,q.body,q.user).then(x=>ok(r,x)).catch(n);
 exports.claimNext=(q,r,n)=>queue.claimNext(q.user,context(q)).then(x=>ok(r,x,201)).catch(n);
 exports.claimQueueEntry=(q,r,n)=>queue.claimNext(q.user,context(q),q.params.id).then(x=>ok(r,x,201)).catch(n);
+exports.supervisorSummary=(q,r,n)=>supervisor.summary(q.query,q.user).then(x=>ok(r,x)).catch(n);
+exports.supervisorLiveCalls=(q,r,n)=>supervisor.liveCalls(q.query,q.user).then(x=>ok(r,x)).catch(n);
+exports.supervisorAgents=(q,r,n)=>supervisor.agents(q.query,q.user).then(x=>ok(r,x)).catch(n);
+exports.supervisorOutcomes=(q,r,n)=>supervisor.outcomes(q.query,q.user).then(x=>ok(r,x)).catch(n);
+exports.supervisorHistory=(q,r,n)=>supervisor.history(q.query,q.user).then(x=>ok(r,x)).catch(n);
+exports.supervisorAgent=(q,r,n)=>supervisor.agent(q.params.agentId,q.query,q.user).then(x=>ok(r,x)).catch(n);
+exports.presenceHeartbeat=(q,r,n)=>supervisor.heartbeat(q.body,q.user).then(x=>ok(r,x)).catch(n);

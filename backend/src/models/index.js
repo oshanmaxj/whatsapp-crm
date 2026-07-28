@@ -119,6 +119,7 @@ const LeadStatusHistory = require('./leadStatusHistory.model');
 const ConversionAttribution = require('./conversionAttribution.model');
 const CallQueue = require('./callQueue.model');
 const CallQueueEntry = require('./callQueueEntry.model');
+const CallCenterPresenceSession = require('./callCenterPresenceSession.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -229,7 +230,7 @@ const models = {
   CommissionAccountingLink: CommissionAccountingLink(sequelize, Sequelize.DataTypes),
   AiAgent: AiAgent(sequelize, Sequelize.DataTypes), AiConversationState: AiConversationState(sequelize, Sequelize.DataTypes),
   AiKnowledgeSource: AiKnowledgeSource(sequelize, Sequelize.DataTypes), AiDecisionLog: AiDecisionLog(sequelize, Sequelize.DataTypes)
-  ,CallActivity:CallActivity(sequelize,Sequelize.DataTypes),LeadStatusHistory:LeadStatusHistory(sequelize,Sequelize.DataTypes),ConversionAttribution:ConversionAttribution(sequelize,Sequelize.DataTypes),CallQueue:CallQueue(sequelize,Sequelize.DataTypes),CallQueueEntry:CallQueueEntry(sequelize,Sequelize.DataTypes)
+  ,CallActivity:CallActivity(sequelize,Sequelize.DataTypes),LeadStatusHistory:LeadStatusHistory(sequelize,Sequelize.DataTypes),ConversionAttribution:ConversionAttribution(sequelize,Sequelize.DataTypes),CallQueue:CallQueue(sequelize,Sequelize.DataTypes),CallQueueEntry:CallQueueEntry(sequelize,Sequelize.DataTypes),CallCenterPresenceSession:CallCenterPresenceSession(sequelize,Sequelize.DataTypes)
 };
 
 models.User.belongsToMany(models.Role, {
@@ -287,6 +288,7 @@ models.LeadStatus.hasMany(models.Lead, { foreignKey: 'status_id', as: 'leads' })
 models.LeadSource.hasMany(models.Lead, { foreignKey: 'source_id', as: 'leads' });
 models.Lead.hasMany(models.CallActivity,{foreignKey:'lead_id',as:'calls'});models.CallActivity.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.CallActivity.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'});models.Lead.hasMany(models.LeadStatusHistory,{foreignKey:'lead_id',as:'statusHistory'});models.Lead.hasMany(models.ConversionAttribution,{foreignKey:'lead_id',as:'conversionAttributions'});
 models.CallQueue.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'});models.CallQueue.hasMany(models.CallQueueEntry,{foreignKey:'queue_id',as:'entries'});models.CallQueueEntry.belongsTo(models.CallQueue,{foreignKey:'queue_id',as:'queue'});models.CallQueueEntry.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.CallQueueEntry.belongsTo(models.CallActivity,{foreignKey:'last_call_activity_id',as:'lastCall'});
+models.User.hasMany(models.CallCenterPresenceSession,{foreignKey:'user_id',as:'callCenterPresenceSessions'});models.CallCenterPresenceSession.belongsTo(models.User,{foreignKey:'user_id',as:'user'});
 
 models.Lead.hasMany(models.LeadAssignment, { foreignKey: 'lead_id', as: 'assignments' });
 models.Lead.hasMany(models.LeadActivity,{foreignKey:'leadId',as:'activities'});models.LeadActivity.belongsTo(models.Lead,{foreignKey:'leadId',as:'lead'});models.LeadActivity.belongsTo(models.User,{foreignKey:'actorUserId',as:'actor'});models.Lead.belongsTo(models.LostReason,{foreignKey:'lost_reason_id',as:'lostReason'});

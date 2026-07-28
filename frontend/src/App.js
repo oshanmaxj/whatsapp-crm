@@ -151,7 +151,7 @@ function App() {
             <Route path="/notifications" element={permit('settings.view', <NotificationsPage />)} />
             <Route path="/reports" element={permit('reports.view', <ReportsPage />)} />
             <Route path="/leads" element={permit('leads.view', <LeadsPage />)} />
-            <Route path="/call-center" element={permit(['callcenter.dashboard.view','calls.view.own','calls.view.team'], <CallCenterPage />)} />
+            <Route path="/call-center" element={permit(['call_center.supervisor_dashboard','call_center.agent_workspace'], <CallCenterPage />)} />
             <Route path="/lead-pipeline" element={<Navigate to="/leads" replace />} />
             <Route path="/followups" element={<Navigate to="/leads" replace />} />
             <Route path="/agents" element={permit('agents.view', <AgentsPage />)} />

@@ -12,3 +12,10 @@ export const updateCallQueueEntry=(id,payload)=>api.patch(`/call-center/queue/en
 export const claimNextCall=()=>api.post('/call-center/queue/next/claim');
 export const claimCallQueueEntry=id=>api.post(`/call-center/queue/entries/${id}/claim`);
 export const getActiveCall=()=>api.get('/call-center/calls/active');
+export const getSupervisorSummary=params=>api.get('/call-center/supervisor/summary',{params});
+export const getSupervisorLiveCalls=params=>api.get('/call-center/supervisor/live-calls',{params});
+export const getSupervisorAgents=params=>api.get('/call-center/supervisor/agents',{params});
+export const getSupervisorOutcomes=params=>api.get('/call-center/supervisor/outcomes',{params});
+export const getSupervisorHistory=params=>api.get('/call-center/supervisor/history',{params});
+export const getSupervisorAgent=(id,params)=>api.get(`/call-center/supervisor/agents/${id}`,{params});
+export const sendCallCenterHeartbeat=payload=>api.post('/call-center/presence/heartbeat',payload);

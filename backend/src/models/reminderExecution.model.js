@@ -7,4 +7,8 @@ module.exports = (sequelize, D) => sequelize.define('ReminderExecution', {
   messageId: D.BIGINT, queueId: D.BIGINT, whatsappMessageId: D.STRING(255),
   errorCode: D.STRING(80), errorMessage: D.TEXT, attemptCount: { type: D.INTEGER, allowNull: false, defaultValue: 0 },
   nextRetryAt: D.DATE, metadata: { type: D.JSONB, allowNull: false, defaultValue: {} }
+  , sequenceId: D.BIGINT, messageType: D.STRING(30), mediaRecordId: D.BIGINT,
+  metaMediaId: D.STRING(255), templateId: D.BIGINT, serviceWindowDecision: D.STRING(40),
+  buttonConfigurationSnapshot: { type: D.JSONB, allowNull: false, defaultValue: {} },
+  deliveredAt: D.DATE, readAt: D.DATE, failedAt: D.DATE
 }, { tableName: 'reminder_executions', timestamps: true, underscored: true });

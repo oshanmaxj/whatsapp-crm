@@ -1089,7 +1089,7 @@ class WhatsappService {
         });
       }
 
-      const input = {
+      let input = {
         text,
         contact: enriched.contact || null,
         lead: enriched.lead || null,
@@ -1103,6 +1103,10 @@ class WhatsappService {
         rawPayload: message,
         whatsappAccountId
       };
+      if (isInteractiveReply) input = await require('./reminderInteraction.service').resolve(input).catch((error) => {
+        logger.warn('reminder_button_route_failed', { whatsappMessageId: message.id || null, code: error.code || 'REMINDER_BUTTON_ROUTE_FAILED', message: error.message });
+        return input;
+      });
       const runAi=()=>aiAgentService.handleInbound(input).catch(async(error)=>{logger.warn('ai_agent_execution_failed',{conversationId,messageId:messageRecord.id,message:error.message});await aiAgentService.audit({agentId:assignedAiAgent?.id,conversationId,inboundMessageId:messageRecord.id,action:'failed_reply',stateBefore:null,stateAfter:null,reason:error.message,status:'failed'}).catch(()=>null);return null;});
       const runFlow=()=>require('./flow.service').handleInboundMessage(input).catch((error)=>{
         logger.warn('flow_builder_execution_failed',{

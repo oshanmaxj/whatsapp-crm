@@ -6,9 +6,12 @@ module.exports = (sequelize, D) => sequelize.define('ReminderSequenceStep', {
   delayUnit: { type: D.STRING(15), allowNull: false, defaultValue: 'minutes' },
   messageMode: { type: D.STRING(30), allowNull: false, defaultValue: 'automatic' },
   sessionMessageType: { type: D.STRING(30), allowNull: false, defaultValue: 'text' },
-  body: D.TEXT, mediaId: D.BIGINT, flowId: D.BIGINT, templateId: D.BIGINT,
+  body: D.TEXT, footer: D.TEXT, mediaId: D.BIGINT, flowId: D.BIGINT, templateId: D.BIGINT,
+  mediaConfig: { type: D.JSONB, allowNull: false, defaultValue: {} },
+  interactiveConfig: { type: D.JSONB, allowNull: false, defaultValue: {} },
   templateLanguage: D.STRING(20), templateParameterMappings: { type: D.JSONB, allowNull: false, defaultValue: {} },
   buttonConfiguration: { type: D.JSONB, allowNull: false, defaultValue: {} },
+  fallbackVariableMapping: { type: D.JSONB, allowNull: false, defaultValue: {} },
   continueOnFailure: { type: D.BOOLEAN, allowNull: false, defaultValue: false },
   enabled: { type: D.BOOLEAN, allowNull: false, defaultValue: true }
 }, { tableName: 'reminder_sequence_steps', timestamps: true, underscored: true,

@@ -4,6 +4,8 @@ const compliance = require('./whatsappCompliance.service');
 const whatsapp = require('./whatsapp.service');
 const logger = require('../config/logger');
 const whatsappAccountAccess = require('./whatsappAccountAccess.service');
+const interactiveMedia = require('./interactiveMedia.service');
+const buttonConfig = require('./whatsappButtonConfig.service');
 const { REMINDER_SEQUENCE_STATUS, REMINDER_SEQUENCE_STATUSES, REMINDER_SEQUENCE_TRANSITIONS } = require('../constants/reminderSequenceStatus');
 
 const ACTIVE = ['active', 'paused'];
@@ -21,6 +23,10 @@ function normalizeSequence(payload = {}) {
     delayValue: Number(step.delayValue ?? step.sendAfter),
     delayUnit: String(step.delayUnit ?? step.unit ?? '').trim().toLowerCase(),
     body: optional(step.body ?? step.message),
+    footer: optional(step.footer),
+    sessionMessageType: String(step.sessionMessageType || step.messageType || 'text').toLowerCase(),
+    mediaConfig: step.mediaConfig || {},
+    interactiveConfig: step.interactiveConfig || { buttons: step.buttons || [] },
     templateId: optional(step.templateId ?? step.fallbackTemplateId),
     mediaId: optional(step.mediaId),
     flowId: optional(step.flowId),
@@ -45,6 +51,9 @@ function validateSequence(values) {
     if (!Number.isInteger(step.delayValue) || step.delayValue < 0) errors[`${prefix}.delayValue`] = 'Send after must be a whole number of zero or more.';
     if (!DELAY_UNITS.has(step.delayUnit)) errors[`${prefix}.delayUnit`] = 'Unit must be minutes, hours, or days.';
     if (step.enabled !== false && step.sessionMessageType === 'text' && !step.body) errors[`${prefix}.body`] = 'Message is required.';
+    if (step.enabled !== false && ['image', 'buttons', 'image_buttons'].includes(step.sessionMessageType) && !step.body) errors[`${prefix}.body`] = 'Message body/caption is required.';
+    if (['image', 'image_buttons'].includes(step.sessionMessageType) && !Object.keys(step.mediaConfig || {}).length) errors[`${prefix}.mediaConfig`] = 'Select an image before saving this reminder.';
+    if (['buttons', 'image_buttons'].includes(step.sessionMessageType)) Object.assign(errors, buttonConfig.validateButtons(step.interactiveConfig, `${prefix}.interactiveConfig.buttons`).errors);
     if (step.templateId !== null && !/^\d+$/.test(String(step.templateId))) errors[`${prefix}.templateId`] = 'Fallback template is invalid.';
   });
   if (Object.keys(errors).length) throw validationError(errors);
@@ -60,6 +69,8 @@ function validateForActivation(sequence) {
     if (!Number.isInteger(Number(step.delayValue)) || Number(step.delayValue) <= 0) errors[`${prefix}.delayValue`] = 'Send after must be a positive whole number.';
     if (!DELAY_UNITS.has(step.delayUnit)) errors[`${prefix}.delayUnit`] = 'Unit must be minutes, hours, or days.';
     if (!String(step.body || '').trim()) errors[`${prefix}.body`] = 'Message is required.';
+    if (['image', 'image_buttons'].includes(step.sessionMessageType) && (!step.mediaConfig?.mediaId || step.mediaConfig?.uploadStatus === 'processing' || step.mediaConfig?.uploadStatus === 'failed')) errors[`${prefix}.mediaConfig`] = 'Required image is missing, inaccessible, or still processing.';
+    if (['buttons', 'image_buttons'].includes(step.sessionMessageType)) Object.assign(errors, buttonConfig.validateButtons(step.interactiveConfig, `${prefix}.interactiveConfig.buttons`).errors);
     if (Number(step.stepNumber) !== index + 1) errors[`${prefix}.stepNumber`] = 'Step ordering is invalid.';
   });
   if (Object.keys(errors).length) throw validationError(errors);
@@ -243,10 +254,24 @@ class ReminderSequenceService {
         if (!step.templateId) return this.block(execution, subscription, step, 'OUTSIDE_WINDOW_TEMPLATE_REQUIRED', 'Outside the 24-hour window; an approved account template is required.');
         const template = await models.WhatsAppTemplate.findOne({ where: { id: step.templateId, whatsappAccountId: subscription.whatsappAccountId, status: 'APPROVED' } });
         if (!template || (step.templateLanguage && template.language && step.templateLanguage !== template.language)) return this.block(execution, subscription, step, 'INVALID_FALLBACK_TEMPLATE', 'Configured fallback template is not approved for this WhatsApp account and language.');
-        response = await whatsapp.sendTemplateMessage({ to: subscription.phone, templateName: template.name, languageCode: step.templateLanguage || template.language, components: step.templateParameterMappings, whatsappAccountId: subscription.whatsappAccountId, log: false });
+        const components = step.fallbackVariableMapping && Object.keys(step.fallbackVariableMapping).length ? step.fallbackVariableMapping : step.templateParameterMappings;
+        if (template.headerType === 'IMAGE' && !components?.header) return this.block(execution, subscription, step, 'TEMPLATE_IMAGE_HEADER_REQUIRED', 'Outside-24-hour template requires an image header parameter.');
+        response = await whatsapp.sendTemplateMessage({ to: subscription.phone, templateName: template.name, languageCode: step.templateLanguage || template.language, components, whatsappAccountId: subscription.whatsappAccountId, log: false });
+        await execution.update({ sequenceId: sequence.id, messageType: 'template', templateId: template.id, serviceWindowDecision: 'outside_24h_template', buttonConfigurationSnapshot: step.interactiveConfig || {} });
       } else {
-        if (step.sessionMessageType !== 'text') throw Object.assign(new Error('This session message type requires media/flow dispatch configuration.'), { permanent: true, code: 'UNSUPPORTED_SESSION_TYPE' });
-        response = await whatsapp.sendTextMessage({ to: subscription.phone, text: step.body || '', whatsappAccountId: subscription.whatsappAccountId, log: false });
+        if (step.sessionMessageType === 'text') response = await whatsapp.sendTextMessage({ to: subscription.phone, text: step.body || '', whatsappAccountId: subscription.whatsappAccountId, log: false });
+        else {
+          const withImage = ['image', 'image_buttons'].includes(step.sessionMessageType);
+          const withButtons = ['buttons', 'image_buttons'].includes(step.sessionMessageType);
+          const resolved = withImage ? await interactiveMedia.resolveHeader({ type: 'image', ...(step.mediaConfig || {}) }, { whatsappAccountId: subscription.whatsappAccountId, interactiveType: 'button' }) : { header: null, binding: null };
+          if (withButtons) {
+            response = await whatsapp.sendInteractiveMessage({ to: subscription.phone, body: step.body, footer: step.footer, header: resolved.header, buttons: buttonConfig.metaReplyButtons(step.interactiveConfig), whatsappAccountId: subscription.whatsappAccountId, log: false });
+          } else {
+            response = await whatsapp.sendMediaMessage({ to: subscription.phone, mediaType: 'image', mediaId: resolved.binding.mediaId, caption: step.body, whatsappAccountId: subscription.whatsappAccountId, log: false });
+          }
+          await execution.update({ metaMediaId: resolved.binding?.mediaId || null });
+        }
+        await execution.update({ sequenceId: sequence.id, messageType: step.sessionMessageType, mediaRecordId: step.mediaId, serviceWindowDecision: 'inside_24h', buttonConfigurationSnapshot: step.interactiveConfig || {} });
       }
       await execution.update({ status: 'sent', sentAt: new Date(), whatsappMessageId: response?.messages?.[0]?.id || response?.id || null, errorCode: null, errorMessage: null });
       await this.scheduleNext(subscription, sequence, step);
@@ -261,7 +286,7 @@ class ReminderSequenceService {
     return execution.reload();
   }
   async block(execution, subscription, step, code, message) {
-    await execution.update({ status: 'skipped', errorCode: code, errorMessage: message });
+    await execution.update({ status: 'blocked_outside_service_window', serviceWindowDecision: 'blocked_outside_service_window', errorCode: code, errorMessage: message, failedAt: new Date() });
     if (step.continueOnFailure) await this.scheduleNext(subscription, await models.ReminderSequence.findByPk(subscription.sequenceId), step);
     else await subscription.update({ status: 'failed', nextRunAt: null });
     return execution;

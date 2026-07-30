@@ -55,6 +55,7 @@ const callCenterBulkOperationsMigration = require('../../migrations/055_call_cen
 const commissionFinanceUpgradeMigration = require('../../migrations/044_commission_finance_upgrade');
 const whatsappAiAgentsMigration = require('../../migrations/045_whatsapp_ai_agents');
 const reminderSequencesAiProvidersMigration = require('../../migrations/046_reminder_sequences_ai_providers');
+const reminderInteractiveMessagesMigration = require('../../migrations/056_reminder_interactive_messages');
 const campaignTemplateHeadersMigration = require('../../migrations/047_campaign_template_headers');
 
 function originalDatabaseError(error) {
@@ -256,6 +257,8 @@ async function run() {
     console.log('Applied: WhatsApp AI agents, knowledge, conversation state, and audit decisions');
     await runMigration('046_reminder_sequences_ai_providers.js', reminderSequencesAiProvidersMigration, queryInterface);
     console.log('Applied: reminder sequences and AI provider configuration');
+    await runMigration('056_reminder_interactive_messages.js', reminderInteractiveMessagesMigration, queryInterface);
+    console.log('Applied: reminder interactive messages');
     await runMigration('047_campaign_template_headers.js', campaignTemplateHeadersMigration, queryInterface);
     console.log('Applied: approved template header media for campaigns');
     await runMigration('048_call_center_phase1.js', callCenterPhase1Migration, queryInterface);

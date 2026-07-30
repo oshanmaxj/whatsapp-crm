@@ -148,15 +148,29 @@ function LeadsPage() {
       setLeads((rows) => rows.map(patchLead));
       setProfile((current) => current ? patchLead(current) : current);
     };
+    const applyLabelEvent = (payload = {}) => {
+      if (payload.leadId == null || !Array.isArray(payload.labelIds)) return;
+      const ids = new Set(payload.labelIds.map(String));
+      const nextLabels = labels.filter((label) => ids.has(String(label.id)));
+      const patchLead = (lead) => String(lead.id) === String(payload.leadId)
+        ? { ...lead, labels: nextLabels }
+        : lead;
+      setLeads((rows) => rows.map(patchLead));
+      setProfile((current) => current ? patchLead(current) : current);
+      // Re-run server-side label filters so additions/removals change membership too.
+      loadLeads();
+    };
     socket.on('lead.updated', applyLeadEvent);
     socket.on('lead.status.changed', applyLeadEvent);
     socket.on('lead.agent.changed', applyLeadEvent);
+    socket.on('crm.labels.changed', applyLabelEvent);
     return () => {
       socket.off('lead.updated', applyLeadEvent);
       socket.off('lead.status.changed', applyLeadEvent);
       socket.off('lead.agent.changed', applyLeadEvent);
+      socket.off('crm.labels.changed', applyLabelEvent);
     };
-  }, [socket, agents]);
+  }, [socket, agents, labels, query]);
 
   const setFilter = (field) => (event) => {
     setFilters((current) => ({ ...current, [field]: event.target.value }));

@@ -4,6 +4,7 @@ const leadStatusService=require('./leadStatus.service');
 const audit=require('./audit.service');
 const crypto=require('crypto');
 const logger=require('../config/logger');
+const leadLabels=require('./leadLabel.service');
 const {conversionAttributionKey}=require('../utils/conversionAttributionKey');
 const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,message,status,exposeMessage:true});
 const own=(actor,id)=>actor?.isSystemAdmin||actor?.permissions?.includes('calls.view.team')||String(actor?.id)===String(id);
@@ -26,7 +27,7 @@ class CallCenterService{
   const statuses=await db.LeadStatus.findAll({where:{active:true},order:[['display_order','ASC']]});
   return{leads:[],statuses:statuses.map(s=>({id:s.id,code:s.code,name:s.name,color:s.color,reasonRequired:s.reasonRequired,followupRequired:s.followupRequired,allowedNextStatusIds:s.allowedNextStatusIds}))};
  }
- async active(actor){return db.CallActivity.findOne({where:{agentUserId:actor.id,endedAt:null},include:[{model:db.Lead,as:'lead',include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'}]}],order:[['started_at','DESC']]});}
+ async active(actor){const call=await db.CallActivity.findOne({where:{agentUserId:actor.id,endedAt:null},include:[{model:db.Lead,as:'lead',include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'}]}],order:[['started_at','DESC']]});if(call?.lead)call.lead.setDataValue('labels',await leadLabels.getForLead(call.lead.id));return call;}
  async queue(actor){
   const leads=await db.Lead.findAll({where:this.leadScope(actor),include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'}],limit:200});
   const ids=leads.map(l=>l.id),calls=ids.length?await db.CallActivity.findAll({where:{leadId:{[Op.in]:ids},endedAt:{[Op.ne]:null}},order:[['started_at','DESC']]}):[];
@@ -64,10 +65,11 @@ class CallCenterService{
    const previous=await operation(context,'load_latest_status_history',()=>db.LeadStatusHistory.findOne({where:{leadId:call.leadId},order:[['changed_at','DESC']],transaction:t}));
    await operation(context,'change_canonical_lead_status',()=>leadStatusService.changeStatus({leadId:call.leadId,statusId:status.id,actor,source:'call_result',transaction:t,auditData:{callActivityId:call.id,reason:payload.reason||null}}));
    await operation(context,'create_immutable_status_history',()=>db.LeadStatusHistory.create({leadId:call.leadId,fromStatusId:call.previousStatusId,toStatusId:status.id,changedByUserId:actor.id,changedAt:now,durationInPreviousStatusSeconds:previous?Math.max(0,Math.floor((now-new Date(previous.changedAt))/1000)):null,reason:payload.reason||null,source:'call_result',callActivityId:call.id},{transaction:t}));
+   const labelChange=await operation(context,'synchronize_canonical_labels',()=>leadLabels.patchAfterCall({leadId:call.leadId,callActivityId:call.id,actor,addLabelIds:payload.addLabelIds,removeLabelIds:payload.removeLabelIds,requestId:context.requestId,transaction:t}));
    if(payload.nextFollowUpAt)await operation(context,'create_call_followup',()=>db.Followup.create({leadId:call.leadId,contactId:call.contactId,assignedTo:actor.id,createdByUserId:actor.id,dueDate:payload.nextFollowUpAt,status:'pending',priority:'normal',followupType:'call',note:payload.notes||null},{transaction:t}));
    if(status.countsAsConversion||status.code==='registered'){const attributionKey=conversionAttributionKey(call.leadId,call.courseId);await operation(context,'upsert_conversion_attribution',()=>db.ConversionAttribution.findOrCreate({where:{attributionKey},defaults:{leadId:call.leadId,courseId:call.courseId||null,originalOwnerUserId:actor.id,convertingUserId:actor.id,convertedAt:now,attributionMethod:'call_result',callActivityId:call.id},transaction:t}));}
    await operation(context,'create_call_completion_audit',()=>audit.record({userId:actor.id,action:'CALL_COMPLETED',entityType:'call_activity',entityId:call.id,changes:{disposition:resultCode,newStatusId:status.id},transaction:t,required:true}));
-   await operation(context,'complete_queue_entry',()=>db.CallQueueEntry.update({status:'completed',completedAt:now},{where:{lastCallActivityId:call.id,status:'calling'},transaction:t}));return call;
+   await operation(context,'complete_queue_entry',()=>db.CallQueueEntry.update({status:'completed',completedAt:now},{where:{lastCallActivityId:call.id,status:'calling'},transaction:t}));if(labelChange)call.setDataValue('labelChange',labelChange);return call;
   };
   return transaction?run(transaction):db.sequelize.transaction(run);
  }

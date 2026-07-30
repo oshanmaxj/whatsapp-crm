@@ -430,6 +430,12 @@ function ChatPage() {
       }
       loadConversations({ silent: true });
     };
+    const handleLabelsChanged = (payload = {}) => {
+      loadConversations({ silent: true });
+      if (payload.conversationId != null && String(payload.conversationId) === String(selectedRef.current)) {
+        loadDetails(payload.conversationId, { silent: true });
+      }
+    };
     socket.on('chat:message', handleNewMessage);
     socket.on('whatsapp.message.received', handleNewMessage);
     socket.on('message_status_updated', handleStatusUpdate);
@@ -439,6 +445,7 @@ function ChatPage() {
     socket.on('lead.status.changed', applyLeadUpdate);
     socket.on('lead.agent.changed', applyLeadUpdate);
     socket.on('conversation.merged', handleConversationMerged);
+    socket.on('crm.labels.changed', handleLabelsChanged);
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('whatsapp.message.received', handleNewMessage);
@@ -449,8 +456,9 @@ function ChatPage() {
       socket.off('lead.status.changed', applyLeadUpdate);
       socket.off('lead.agent.changed', applyLeadUpdate);
       socket.off('conversation.merged', handleConversationMerged);
+      socket.off('crm.labels.changed', handleLabelsChanged);
     };
-  }, [socket, loadConversations, refreshUnread, applyInteractionMessage]);
+  }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage]);
 
   useEffect(() => {
     if (!socket || !connected || !selected) return;

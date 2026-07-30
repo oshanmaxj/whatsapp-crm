@@ -28,10 +28,14 @@ class LabelService {
     const name = normalizedName(payload.name);
     if (!name) throw Object.assign(new Error('Label name is required.'), { status: 422, code: 'LABEL_NAME_REQUIRED' });
     if (name.length > 100) throw Object.assign(new Error('Label name may contain at most 100 characters.'), { status: 422, code: 'LABEL_NAME_TOO_LONG' });
+    const color = String(payload.color || '').trim();
+    if (!/^#[0-9a-f]{6}$/i.test(color)) {
+      throw Object.assign(new Error('Label color must be a six-digit hex color.'), { status: 422, code: 'LABEL_COLOR_REQUIRED' });
+    }
     const existing = await Label.findOne({ where: where(fn('lower', col('name')), name.toLowerCase()) });
     if (existing) throw Object.assign(new Error('A label with this name already exists.'), { status: 409, code: 'LABEL_DUPLICATE', existingLabel: existing });
     try {
-      return await Label.create({ name, color: /^#[0-9a-f]{6}$/i.test(payload.color || '') ? payload.color : '#25d366' });
+      return await Label.create({ name, color });
     } catch (error) {
       if (error.name !== 'SequelizeUniqueConstraintError') throw error;
       throw Object.assign(new Error('A label with this name already exists.'), { status: 409, code: 'LABEL_DUPLICATE' });

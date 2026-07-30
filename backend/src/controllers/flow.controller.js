@@ -91,7 +91,7 @@ class FlowController {
   }
 
   async publish(req, res, next) {
-    try { await assertFlowAccess(req); return res.json({ success: true, data: await flowService.publish(req.params.id) }); } catch (err) { next(err); }
+    try { await assertFlowAccess(req); return res.json({ success: true, data: await flowService.publish(req.params.id, req.user?.id) }); } catch (err) { next(err); }
   }
   async unpublish(req, res, next) {
     try { await assertFlowAccess(req); return res.json({ success: true, data: await flowService.unpublish(req.params.id) }); } catch (err) { next(err); }
@@ -133,7 +133,7 @@ class FlowController {
     try { await assertFlowAccess(req); return res.json({ success: true, data: await flowService.runs(req.params.id) }); } catch (err) { next(err); }
   }
   async validate(req, res, next) {
-    try { await assertFlowAccess(req); return res.json({ success: true, data: await flowService.validateForPublication(req.params.id) }); } catch (err) { next(err); }
+    try { await assertFlowAccess(req); return res.json({ success: true, data: await flowService.validateForPublication(req.params.id, req.user?.id) }); } catch (err) { next(err); }
   }
   async simulateTrigger(req, res, next) {
     try {

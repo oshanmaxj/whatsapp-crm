@@ -6,7 +6,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
-  Alert, Box, Button, Chip, Divider, IconButton, MenuItem, Paper, Stack, TextField,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, Divider, IconButton, MenuItem, Paper, Stack, TextField,
   Tooltip, Typography
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -102,13 +102,14 @@ const FlowCard = memo(({ data, selected }) => {
   const stats = { sent: 0, delivered: 0, subscribers: 0, errors: 0, ...(data.stats || {}) };
   const handles = outputs(data);
   const incomplete = Object.keys(nodeConfigErrors(data.nodeType, data.config)).length > 0;
+  const invalid = Boolean(data.validationErrors?.length);
   return (
-    <Paper elevation={selected ? 6 : 1} sx={{ width: 230, border: '2px solid', borderColor: selected ? '#128c7e' : '#dce5e1', borderRadius: 2, overflow: 'visible', bgcolor: '#fff' }}>
+    <Paper elevation={selected ? 6 : 1} sx={{ width: 230, border: '2px solid', borderColor: invalid ? 'error.main' : selected ? '#128c7e' : '#dce5e1', borderRadius: 2, overflow: 'visible', bgcolor: '#fff' }}>
       {data.nodeType !== 'start' && <Handle type="target" position={Position.Left} id="input" style={{ width: 10, height: 10, background: '#128c7e' }} />}
       <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.25, py: 1, bgcolor: data.nodeType === 'start' ? '#e9fff7' : '#f8fbfa', borderRadius: '7px 7px 0 0' }}>
         <Typography fontSize={18}>{META[data.nodeType]?.icon || '🔧'}</Typography>
         <Box minWidth={0} flex={1}><Typography fontSize={12} fontWeight={900} noWrap>{data.label}</Typography><Typography fontSize={9} color="text.secondary">{META[data.nodeType]?.label || data.nodeType}</Typography></Box>
-        {incomplete && <Tooltip title="Required settings are missing"><WarningAmberRoundedIcon color="warning" sx={{ fontSize: 17 }} /></Tooltip>}
+        {(invalid || incomplete) && <Tooltip title={invalid ? data.validationErrors[0].message : 'Required settings are missing'}><WarningAmberRoundedIcon color={invalid ? 'error' : 'warning'} sx={{ fontSize: 17 }} /></Tooltip>}
         <Tooltip title="Edit block"><IconButton className="nodrag" size="small" onClick={(event) => { event.stopPropagation(); data.openEditor(); }} aria-label={`Edit ${data.label}`}><EditOutlinedIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>
         <Tooltip title="Delete block"><IconButton className="nodrag" size="small" color="error" onClick={(event) => { event.stopPropagation(); data.deleteNode(); }} aria-label={`Delete ${data.label}`}><DeleteOutlineIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>
       </Stack>
@@ -118,7 +119,7 @@ const FlowCard = memo(({ data, selected }) => {
       </Stack>
       {handles.map((handle, index) => (
         <Tooltip key={handle.id} title={handle.label} placement="right">
-          <Handle type="source" position={Position.Right} id={String(handle.id)} style={{ top: `${((index + 1) / (handles.length + 1)) * 100}%`, width: 10, height: 10, background: '#25d366' }} />
+          <Handle type="source" position={Position.Right} id={String(handle.id)} style={{ top: `${((index + 1) / (handles.length + 1)) * 100}%`, width: 10, height: 10, background: data.invalidHandles?.includes(String(handle.id)) ? '#d32f2f' : '#25d366', boxShadow: data.invalidHandles?.includes(String(handle.id)) ? '0 0 0 3px #ffcdd2' : 'none' }} />
         </Tooltip>
       ))}
     </Paper>
@@ -182,6 +183,7 @@ function Editor() {
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [validationIssues, setValidationIssues] = useState({ errors: [], warnings: [], requestId: null });
   const selected = useMemo(() => nodes.find((node) => node.id === selectedId), [nodes, selectedId]);
 
   const deleteNode = useCallback((nodeId) => {
@@ -240,11 +242,13 @@ function Editor() {
   const decoratedNodes = useMemo(() => nodes.map((node) => ({
     ...node, data: {
       ...node.data,
+      validationErrors: validationIssues.errors.filter((issue) => String(issue.nodeId) === String(node.id)),
+      invalidHandles: validationIssues.errors.filter((issue) => String(issue.nodeId) === String(node.id) && issue.sourceHandle).map((issue) => String(issue.sourceHandle)),
       setLabel: (label) => setNodes((rows) => rows.map((row) => row.id === node.id ? { ...row, data: { ...row.data, label } } : row)),
       openEditor: () => { setSelectedId(node.id); setEditorOpen(true); },
       deleteNode: () => deleteNode(node.id)
     }
-  })), [deleteNode, nodes, setNodes]);
+  })), [deleteNode, nodes, setNodes, validationIssues.errors]);
   useEffect(() => {
     const handleDeleteKey = (event) => {
       if (!selectedId || editorOpen || !['Delete', 'Backspace'].includes(event.key)) return;
@@ -276,22 +280,6 @@ function Editor() {
     setNodes((rows) => [...rows, makeNode(type, instance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top }))]);
     setIsDirty(true);
   };
-  const validationErrors = () => {
-    const problems = [];
-    if (!nodes.some((node) => node.data.nodeType === 'start')) problems.push('A Flow Start node is required.');
-    const ids = new Set(nodes.map((node) => node.id));
-    if (edges.some((edge) => !ids.has(edge.source) || !ids.has(edge.target))) problems.push('Remove broken connections.');
-    nodes.forEach((node) => {
-      const configProblems = Object.values(nodeConfigErrors(node.data.nodeType, node.data.config));
-      if (configProblems.length) problems.push(`${node.data.label}: ${configProblems[0]}`);
-    });
-    nodes.filter((node) => ['interactive_message', 'button_message', 'list_message'].includes(node.data.nodeType)).forEach((node) => {
-      outputs(node.data).filter((output) => output.id !== 'fallback').forEach((output) => {
-        if (!edges.some((edge) => edge.source === node.id && (edge.sourceHandle === output.id || ['next', 'fallback'].includes(edge.sourceHandle)))) problems.push(`${node.data.label}: connect "${output.label}" or add a fallback.`);
-      });
-    });
-    return [...new Set(problems)];
-  };
   const save = async () => {
     const start = nodes.find((node) => node.data.nodeType === 'start');
     const startConfig = start?.data.config || {};
@@ -312,6 +300,14 @@ function Editor() {
     setIsDirty(false);
     setNotice('Flow saved.');
   };
+  const goToIssue = (issue) => {
+    if (!issue.nodeId) return;
+    const node = nodes.find((item) => String(item.id) === String(issue.nodeId));
+    if (!node) return;
+    setSelectedId(node.id);
+    setEditorOpen(true);
+    instance?.fitView({ nodes: [node], padding: 0.8, duration: 500, maxZoom: 1.4 });
+  };
   const publish = async () => {
     if (flow.status === 'published') {
       const response = await unpublishFlow(id);
@@ -319,12 +315,20 @@ function Editor() {
       setNotice('Flow unpublished.');
       return;
     }
-    const problems = validationErrors();
-    if (problems.length) return setError(problems.join(' '));
     await save();
-    const response = await publishFlow(id);
-    setFlow(response.data.data);
-    setNotice('Flow published.');
+    try {
+      const response = await publishFlow(id);
+      setFlow(response.data.data);
+      setValidationIssues({ errors: [], warnings: [], requestId: null });
+      setError(''); setNotice('Flow published.');
+    } catch (requestError) {
+      const body = requestError.response?.data || {};
+      const errors = Array.isArray(body.errors) ? body.errors : Array.isArray(body.details) ? body.details : [];
+      const warnings = Array.isArray(body.warnings) ? body.warnings : [];
+      setValidationIssues({ errors, warnings, requestId: body.requestId || null });
+      setNotice('');
+      setError(`Draft saved, but the flow cannot be published. Fix ${errors.length || 1} validation error${errors.length === 1 ? '' : 's'}.${body.requestId ? ` Request ${body.requestId}.` : ''}`);
+    }
   };
   const test = async () => {
     await save();
@@ -335,6 +339,17 @@ function Editor() {
   return <Stack spacing={1} sx={{ height: 'calc(100vh - 92px)', minHeight: 650 }}>
     {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
     {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+    {(validationIssues.errors.length > 0 || validationIssues.warnings.length > 0) && <Accordion defaultExpanded>
+      <AccordionSummary><Typography fontWeight={900}>Validation issues — {validationIssues.errors.length} error(s), {validationIssues.warnings.length} warning(s)</Typography></AccordionSummary>
+      <AccordionDetails><Stack spacing={1}>
+        {[...validationIssues.errors, ...validationIssues.warnings].map((issue, index) => <Paper key={`${issue.code}-${issue.nodeId || 'flow'}-${index}`} variant="outlined" sx={{ p: 1.25, borderColor: issue.severity === 'warning' ? 'warning.main' : 'error.main' }}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+            <Box flex={1}><Typography fontWeight={800}>{issue.nodeLabel || 'Flow'}{issue.nodeType ? ` · ${META[issue.nodeType]?.label || issue.nodeType}` : ''}</Typography><Typography variant="body2">{issue.message}</Typography>{issue.field && <Typography variant="caption" color="text.secondary">{issue.code} · {issue.field}</Typography>}</Box>
+            {issue.nodeId && <Button size="small" onClick={() => goToIssue(issue)}>Go to node</Button>}
+          </Stack>
+        </Paper>)}
+      </Stack></AccordionDetails>
+    </Accordion>}
     <Paper elevation={0} sx={{ p: 1, border: '1px solid', borderColor: 'divider' }}><Stack direction="row" spacing={1} alignItems="center">
       <IconButton onClick={() => navigate('/flow-builder')}><ArrowBackIcon /></IconButton>
       <TextField size="small" value={flow?.name || ''} onChange={(e) => setFlow({ ...flow, name: e.target.value })} sx={{ width: 260 }} />

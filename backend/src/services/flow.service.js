@@ -13,6 +13,7 @@ const {
   Message,
   Role,
   User,
+  WhatsAppAccount,
   sequelize
 } = require('../models');
 const assignmentService = require('./assignment.service');
@@ -31,6 +32,29 @@ const logger = require('../config/logger');
 const conversationAccessService = require('./conversationAccess.service');
 
 const MAX_NESTED_FLOW_DEPTH = Number(process.env.MAX_NESTED_FLOW_DEPTH || 5);
+const SUPPORTED_NODE_TYPES = new Set([
+  'start', 'text_message', 'image_message', 'video_message', 'audio_message', 'file_document',
+  'location', 'interactive_message', 'button_message', 'list_message', 'whatsapp_flow',
+  'appointment_booking', 'ai_reply', 'ai_assistant', 'user_input', 'assign', 'add_label',
+  'remove_label', 'update_lead', 'delay_wait', 'end_flow'
+]);
+
+function validationCode(message = '') {
+  if (/Start node is required/i.test(message)) return 'START_NODE_MISSING';
+  if (/Exactly one Start/i.test(message)) return 'MULTIPLE_START_NODES';
+  if (/missing node/i.test(message)) return 'EDGE_TARGET_MISSING';
+  if (/not reachable/i.test(message)) return 'NODE_UNREACHABLE';
+  if (/branch or fallback/i.test(message)) return 'INTERACTIVE_BUTTON_TARGET_MISSING';
+  if (/media|required.*image|document is required|Upload the image/i.test(message)) return 'MEDIA_REFERENCE_MISSING';
+  if (/WhatsApp account.*required|Select a WhatsApp account/i.test(message)) return 'WHATSAPP_ACCOUNT_MISSING';
+  if (/WhatsApp account.*active/i.test(message)) return 'WHATSAPP_ACCOUNT_NOT_PERMITTED';
+  if (/department/i.test(message)) return 'DEPARTMENT_MAPPING_INVALID';
+  if (/Circular|cycle/i.test(message)) return 'CYCLE_NOT_ALLOWED';
+  if (/unsupported node/i.test(message)) return 'UNSUPPORTED_NODE_TYPE';
+  if (/target flow/i.test(message)) return 'INVALID_BRANCH_MAPPING';
+  if (/required|needs a label|at least|must be/i.test(message)) return 'REQUIRED_FIELD_MISSING';
+  return 'NODE_CONFIG_INVALID';
+}
 
 const MESSAGE_TYPES = new Set([
   'text_message', 'image_message', 'video_message', 'audio_message', 'file_document', 'location',
@@ -261,10 +285,11 @@ class FlowService {
     };
   }
 
-  async validateForPublication(id) {
-    const flow = await this.get(id);
-    const details = [...this.validateFlow(flow), ...await this.validateFlowReferences(flow)];
-    return { valid: !details.some((item) => item.severity !== 'warning'), details };
+  async validateForPublication(id, userId = null) {
+    const flow = await this.get(id, userId);
+    const details = [...this.validateFlow(flow), ...await this.validateFlowReferences(flow, userId)];
+    const normalized = this.normalizeValidation(flow, details);
+    return { valid: normalized.errors.length === 0, ...normalized };
   }
 
   async simulateTrigger(id, event = {}, { allowRegex = false } = {}) {
@@ -339,38 +364,56 @@ class FlowService {
   }
 
   async saveBuilder(id, payload) {
-    await this.update(id, payload.flow || payload);
-    await FlowNode.destroy({ where: { flowId: id } });
-    await FlowConnection.destroy({ where: { flowId: id } });
-    const nodes = payload.nodes || [];
-    const connections = payload.connections || payload.edges || [];
-    await FlowNode.bulkCreate(nodes.map((node) => ({
-      flowId: id,
-      nodeKey: node.nodeKey || node.id,
-      nodeType: node.nodeType || node.type || node.data?.nodeType || 'text_message',
-      label: node.label || node.data?.label || 'Flow Node',
-      positionX: node.positionX ?? node.position?.x ?? 0,
-      positionY: node.positionY ?? node.position?.y ?? 0,
-      configJson: node.configJson || node.data?.config || {},
-      stats: node.stats || node.data?.stats || {}
-    })));
-    await FlowConnection.bulkCreate(connections.map((edge) => ({
-      flowId: id,
-      sourceNodeKey: edge.sourceNodeKey || edge.source,
-      sourceHandle: edge.sourceHandle || null,
-      targetNodeKey: edge.targetNodeKey || edge.target,
-      targetHandle: edge.targetHandle || null,
-      conditionLabel: edge.conditionLabel || edge.label || null,
-      condition: edge.condition || edge.data?.condition || {}
-    })).filter((edge) => edge.sourceNodeKey && edge.targetNodeKey));
+    const flowPayload = payload.flow || payload;
+    await sequelize.transaction(async (transaction) => {
+      const flow = await Flow.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!flow) throw Object.assign(new Error('Flow not found'), { status: 404 });
+      await flow.update({
+        name: flowPayload.name ?? flow.name,
+        description: flowPayload.description ?? flow.description,
+        status: flowPayload.status ?? flow.status,
+        triggerType: flowPayload.triggerType ?? flow.triggerType,
+        triggerKeywords: flowPayload.triggerKeywords !== undefined ? normalizeKeywords(flowPayload.triggerKeywords) : flow.triggerKeywords,
+        triggerConfig: flowPayload.triggerConfig ?? flow.triggerConfig,
+        whatsappPhoneNumberId: flowPayload.whatsappPhoneNumberId ?? flow.whatsappPhoneNumberId,
+        whatsappAccountId: flowPayload.whatsappAccountId ?? flow.whatsappAccountId,
+        departmentId: flowPayload.departmentId !== undefined ? (flowPayload.departmentId || null) : flow.departmentId
+      }, { transaction });
+      await FlowConnection.destroy({ where: { flowId: id }, transaction });
+      await FlowNode.destroy({ where: { flowId: id }, transaction });
+      const nodes = payload.nodes || [];
+      const connections = payload.connections || payload.edges || [];
+      await FlowNode.bulkCreate(nodes.map((node) => ({
+        flowId: id,
+        nodeKey: node.nodeKey || node.id,
+        nodeType: node.nodeType || node.type || node.data?.nodeType || 'text_message',
+        label: node.label || node.data?.label || 'Flow Node',
+        positionX: node.positionX ?? node.position?.x ?? 0,
+        positionY: node.positionY ?? node.position?.y ?? 0,
+        configJson: node.configJson || node.data?.config || {},
+        stats: node.stats || node.data?.stats || {}
+      })), { transaction });
+      await FlowConnection.bulkCreate(connections.map((edge) => ({
+        flowId: id,
+        sourceNodeKey: edge.sourceNodeKey || edge.source,
+        sourceHandle: edge.sourceHandle || null,
+        targetNodeKey: edge.targetNodeKey || edge.target,
+        targetHandle: edge.targetHandle || null,
+        conditionLabel: edge.conditionLabel || edge.label || null,
+        condition: edge.condition || edge.data?.condition || {}
+      })).filter((edge) => edge.sourceNodeKey && edge.targetNodeKey), { transaction });
+    });
     return this.get(id);
   }
 
-  async publish(id) {
-    const flow = await this.get(id);
+  async publish(id, userId = null) {
+    const flow = await this.get(id, userId);
     const errors = this.validateFlow(flow);
-    errors.push(...await this.validateFlowReferences(flow));
-    if (errors.some((item) => item.severity !== 'warning')) throw Object.assign(new Error('Flow validation failed'), { status: 422, details: errors });
+    errors.push(...await this.validateFlowReferences(flow, userId));
+    const validation = this.normalizeValidation(flow, errors);
+    if (validation.errors.length) throw Object.assign(new Error('Flow validation failed.'), {
+      code: 'FLOW_VALIDATION_FAILED', status: 422, errors: validation.errors, warnings: validation.warnings, exposeMessage: true
+    });
     await flow.update({ status: 'published' });
     return this.get(id);
   }
@@ -386,7 +429,9 @@ class FlowService {
     const edges = flow.connections || [];
     const errors = [];
     const keys = new Set(nodes.map((node) => node.nodeKey));
-    if (!nodes.some((node) => node.nodeType === 'start')) errors.push({ field: 'nodes', message: 'A Start node is required.' });
+    const starts = nodes.filter((node) => node.nodeType === 'start');
+    if (!starts.length) errors.push({ field: 'nodes', message: 'A Start node is required.' });
+    if (starts.length > 1) errors.push({ field: 'nodes', message: 'Exactly one Start node is allowed.' });
     edges.forEach((edge) => {
       if (!keys.has(edge.sourceNodeKey) || !keys.has(edge.targetNodeKey)) {
         errors.push({ field: 'connections', message: `Connection ${edge.id || ''} points to a missing node.` });
@@ -398,6 +443,7 @@ class FlowService {
       const addRequired = (condition, message) => {
         if (condition) errors.push({ nodeKey: node.nodeKey, message });
       };
+      addRequired(!SUPPORTED_NODE_TYPES.has(node.nodeType), `Node type "${node.nodeType}" is unsupported.`);
       if (['text_message', 'interactive_message', 'button_message', 'list_message'].includes(node.nodeType)) {
         addRequired(missing(config.message), 'Message body is required.');
       }
@@ -418,7 +464,7 @@ class FlowService {
             try { requireHttpsUrl(config.imageUrl || config.mediaUrl, 'Image URL'); } catch (error) { errors.push({ nodeKey: node.nodeKey, message: error.message }); }
           }
         } else {
-          addRequired(missing(config.mediaUrl), 'Media is required.');
+          addRequired(missing(config.whatsappMediaId || config.mediaUrl), 'Media is required.');
         }
       }
       if (node.nodeType === 'file_document') {
@@ -447,7 +493,7 @@ class FlowService {
         addRequired(!normalized.length, 'At least one button or option is required.');
         addRequired(['interactive_message', 'button_message'].includes(node.nodeType) && normalized.length > 3, 'WhatsApp reply messages support at most 3 buttons.');
         addRequired(node.nodeType === 'list_message' && normalized.length > 10, 'A WhatsApp list section supports at most 10 rows.');
-        for (const option of normalized) {
+        for (const [optionIndex, option] of normalized.entries()) {
           const handle = typeof option === 'string' ? option.trim() : option.id || option.payload || option.title;
           addRequired(typeof option !== 'string' && missing(option.title || option.label), 'Every button or option needs a label.');
           addRequired(typeof option !== 'string' && String(option.title || option.label || '').length > (node.nodeType === 'list_message' ? 24 : 20), `Option titles may contain at most ${node.nodeType === 'list_message' ? 24 : 20} characters.`);
@@ -465,11 +511,30 @@ class FlowService {
           }
           if (handle && !edges.some((edge) => edge.sourceNodeKey === node.nodeKey && edge.sourceHandle === handle)
             && !edges.some((edge) => edge.sourceNodeKey === node.nodeKey && ['next', 'fallback'].includes(edge.sourceHandle))) {
-            errors.push({ nodeKey: node.nodeKey, message: `Option "${handle}" needs a branch or fallback.` });
+            errors.push({
+              code: 'INTERACTIVE_BUTTON_TARGET_MISSING',
+              nodeKey: node.nodeKey,
+              field: `${node.nodeType === 'list_message' ? 'rows' : 'buttons'}[${optionIndex}].targetNodeId`,
+              sourceHandle: String(handle),
+              message: `Option "${handle}" needs a branch or fallback.`
+            });
           }
         }
       }
       if (node.nodeType === 'start') for (const issue of flowActionService.validateActions(config.automationActions || [])) errors.push({ nodeKey: node.nodeKey, message: `Trigger action ${issue.index + 1}: ${issue.message}` });
+    }
+    if (starts.length === 1) {
+      const reachable = new Set([starts[0].nodeKey]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const edge of edges) {
+          if (reachable.has(edge.sourceNodeKey) && keys.has(edge.targetNodeKey) && !reachable.has(edge.targetNodeKey)) {
+            reachable.add(edge.targetNodeKey); changed = true;
+          }
+        }
+      }
+      for (const node of nodes) if (!reachable.has(node.nodeKey)) errors.push({ nodeKey: node.nodeKey, message: 'Node is not reachable from Flow Start.' });
     }
     const titles = new Map();
     for (const node of nodes.filter((item) => ['interactive_message', 'button_message'].includes(item.nodeType))) {
@@ -484,8 +549,63 @@ class FlowService {
     return errors;
   }
 
-  async validateFlowReferences(flow) {
+  normalizeValidation(flow, issues) {
+    const nodes = new Map((flow.nodes || []).map((node) => [String(node.nodeKey), node]));
+    const start = (flow.nodes || []).find((node) => node.nodeType === 'start');
+    const parent = new Map();
+    if (start) {
+      const queue = [String(start.nodeKey)];
+      parent.set(String(start.nodeKey), null);
+      while (queue.length) {
+        const current = queue.shift();
+        for (const edge of (flow.connections || []).filter((item) => String(item.sourceNodeKey) === current)) {
+          const target = String(edge.targetNodeKey);
+          if (!nodes.has(target) || parent.has(target)) continue;
+          parent.set(target, current); queue.push(target);
+        }
+      }
+    }
+    const nodePath = (nodeKey) => {
+      if (!parent.has(String(nodeKey))) return null;
+      const labels = [];
+      for (let current = String(nodeKey); current != null; current = parent.get(current)) labels.unshift(nodes.get(current)?.label || current);
+      return labels.join(' → ');
+    };
+    const normalized = issues.map((issue) => {
+      const node = issue.nodeKey == null ? null : nodes.get(String(issue.nodeKey));
+      return {
+        code: issue.code || validationCode(issue.message),
+        nodeId: node?.nodeKey || issue.nodeKey || null,
+        nodeType: node?.nodeType || null,
+        nodeLabel: node?.label || null,
+        field: issue.field || null,
+        sourceHandle: issue.sourceHandle || null,
+        path: issue.path || (node ? nodePath(node.nodeKey) : null),
+        message: issue.message,
+        severity: issue.severity || 'error'
+      };
+    });
+    return {
+      errors: normalized.filter((issue) => issue.severity !== 'warning'),
+      warnings: normalized.filter((issue) => issue.severity === 'warning')
+    };
+  }
+
+  async validateFlowReferences(flow, userId = null) {
     const errors = [];
+    if (!flow.whatsappAccountId) {
+      errors.push({ field: 'whatsappAccountId', message: 'A WhatsApp account is required before publishing.' });
+    } else {
+      const account = await WhatsAppAccount.findByPk(flow.whatsappAccountId, { attributes: ['id', 'status'] });
+      if (!account || account.status !== 'active') errors.push({ field: 'whatsappAccountId', message: 'The selected WhatsApp account does not exist or is not active.' });
+      if (userId) {
+        try { await whatsappAccountAccessService.assertAccess(flow.whatsappAccountId, userId); }
+        catch (error) { errors.push({ field: 'whatsappAccountId', message: 'The selected WhatsApp account is not permitted for this user.' }); }
+      }
+    }
+    if (flow.departmentId && !await Role.findByPk(flow.departmentId, { attributes: ['id'] })) {
+      errors.push({ field: 'departmentId', message: 'The selected department mapping does not exist.' });
+    }
     const refs = (flow.nodes || []).flatMap((node) => (node.configJson?.buttons || []).map((button) => ({ node, target: button.primaryActionConfig?.targetFlowId || button.targetFlowId })).filter((item) => item.target));
     for (const ref of refs) {
       if (String(ref.target) === String(flow.id)) { errors.push({ nodeKey: ref.node.nodeKey, message: 'A flow cannot start itself.' }); continue; }

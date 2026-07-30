@@ -51,6 +51,7 @@ const canonicalCallCenterStatusesMigration = require('../../migrations/051_canon
 const callQueuePhase1Migration = require('../../migrations/052_call_queue_phase1');
 const callCenterSupervisorMigration = require('../../migrations/053_call_center_supervisor_dashboard');
 const repairCallCenterAgentPermissionsMigration = require('../../migrations/054_repair_call_center_agent_permissions');
+const callCenterBulkOperationsMigration = require('../../migrations/055_call_center_bulk_operations');
 const commissionFinanceUpgradeMigration = require('../../migrations/044_commission_finance_upgrade');
 const whatsappAiAgentsMigration = require('../../migrations/045_whatsapp_ai_agents');
 const reminderSequencesAiProvidersMigration = require('../../migrations/046_reminder_sequences_ai_providers');
@@ -265,6 +266,7 @@ async function run() {
     await runMigration('052_call_queue_phase1.js', callQueuePhase1Migration, queryInterface);
     await runMigration('053_call_center_supervisor_dashboard.js', callCenterSupervisorMigration, queryInterface);
     await runMigration('054_repair_call_center_agent_permissions.js', repairCallCenterAgentPermissionsMigration, queryInterface);
+    await runMigration('055_call_center_bulk_operations.js', callCenterBulkOperationsMigration, queryInterface);
     console.log('Applied: call center workflow statuses');
     console.log('Applied: canonical payment WhatsApp conversation context');
 

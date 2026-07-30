@@ -13,6 +13,7 @@ const LeadStatus = require('./leadStatus.model');
 const LeadSource = require('./leadSource.model');
 const Lead = require('./lead.model');
 const LeadAssignment = require('./leadAssignment.model');
+const LeadAssignmentHistory = require('./leadAssignmentHistory.model');
 const LostReason = require('./lostReason.model'); const LeadActivity = require('./leadActivity.model');
 const Conversation = require('./conversation.model');
 const ConversationAssignmentHistory = require('./conversationAssignmentHistory.model');
@@ -134,6 +135,7 @@ const models = {
   LeadSource: LeadSource(sequelize, Sequelize.DataTypes),
   Lead: Lead(sequelize, Sequelize.DataTypes),
   LeadAssignment: LeadAssignment(sequelize, Sequelize.DataTypes),
+  LeadAssignmentHistory: LeadAssignmentHistory(sequelize, Sequelize.DataTypes),
   LostReason: LostReason(sequelize, Sequelize.DataTypes), LeadActivity: LeadActivity(sequelize, Sequelize.DataTypes),
   Conversation: Conversation(sequelize, Sequelize.DataTypes),
   ConversationAssignmentHistory: ConversationAssignmentHistory(sequelize, Sequelize.DataTypes),
@@ -288,6 +290,7 @@ models.LeadStatus.hasMany(models.Lead, { foreignKey: 'status_id', as: 'leads' })
 models.LeadSource.hasMany(models.Lead, { foreignKey: 'source_id', as: 'leads' });
 models.Lead.hasMany(models.CallActivity,{foreignKey:'lead_id',as:'calls'});models.CallActivity.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.CallActivity.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'});models.Lead.hasMany(models.LeadStatusHistory,{foreignKey:'lead_id',as:'statusHistory'});models.Lead.hasMany(models.ConversionAttribution,{foreignKey:'lead_id',as:'conversionAttributions'});
 models.CallQueue.belongsTo(models.User,{foreignKey:'agent_user_id',as:'agent'});models.CallQueue.hasMany(models.CallQueueEntry,{foreignKey:'queue_id',as:'entries'});models.CallQueueEntry.belongsTo(models.CallQueue,{foreignKey:'queue_id',as:'queue'});models.CallQueueEntry.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.CallQueueEntry.belongsTo(models.CallActivity,{foreignKey:'last_call_activity_id',as:'lastCall'});
+models.LeadAssignmentHistory.belongsTo(models.Lead,{foreignKey:'lead_id',as:'lead'});models.LeadAssignmentHistory.belongsTo(models.User,{foreignKey:'previous_agent_user_id',as:'previousAgent'});models.LeadAssignmentHistory.belongsTo(models.User,{foreignKey:'new_agent_user_id',as:'newAgent'});models.LeadAssignmentHistory.belongsTo(models.User,{foreignKey:'changed_by_user_id',as:'changedBy'});
 models.User.hasMany(models.CallCenterPresenceSession,{foreignKey:'user_id',as:'callCenterPresenceSessions'});models.CallCenterPresenceSession.belongsTo(models.User,{foreignKey:'user_id',as:'user'});
 
 models.Lead.hasMany(models.LeadAssignment, { foreignKey: 'lead_id', as: 'assignments' });

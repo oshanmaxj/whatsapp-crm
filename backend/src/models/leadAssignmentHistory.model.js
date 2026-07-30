@@ -1,0 +1,12 @@
+module.exports=(s,D)=>s.define('LeadAssignmentHistory',{
+ id:{type:D.BIGINT,autoIncrement:true,primaryKey:true},
+ leadId:{type:D.BIGINT,allowNull:false},
+ previousAgentUserId:D.BIGINT,
+ newAgentUserId:D.BIGINT,
+ changedByUserId:{type:D.BIGINT,allowNull:false},
+ source:{type:D.STRING(60),allowNull:false},
+ reason:D.STRING(1000),
+ bulkOperationId:{type:D.UUID,allowNull:false},
+ sourceMetadata:D.JSON,
+ changedAt:{type:D.DATE,allowNull:false,defaultValue:D.NOW}
+},{tableName:'lead_assignment_history',timestamps:false,underscored:true});

@@ -12,6 +12,8 @@ r.get('/queue',p('call_center.agent_workspace'),p('call_queue.view_own'),c.perso
 r.get('/leads/search',p('call_center.agent_workspace'),p('call_queue.view_own'),c.searchLeads);
 r.post('/queue/entries',p('call_center.agent_workspace'),p('call_queue.manage_own'),c.addQueueEntries);
 r.post('/queue/entries/bulk',p('call_center.agent_workspace'),p('call_queue.bulk_add'),c.bulkAddQueueEntries);
+r.post('/leads/bulk-assign',p('call_center.agent_workspace'),p('leads.bulk_assign'),c.bulkAssign);
+r.post('/leads/bulk-assign/matching',p('call_center.agent_workspace'),p('leads.bulk_assign'),c.bulkAssignMatching);
 r.patch('/queue/entries/:id',p('call_center.agent_workspace'),p('call_queue.manage_own'),c.updateQueueEntry);
 r.post('/queue/entries/:id/claim',p('call_center.agent_workspace'),p('call_queue.manage_own'),c.claimQueueEntry);
 r.post('/queue/next/claim',p('call_center.agent_workspace'),p('call_queue.manage_own'),c.claimNext);

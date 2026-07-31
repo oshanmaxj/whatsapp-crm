@@ -80,8 +80,10 @@ function createInboundWhatsappMessageService(dependencies = {}) {
       }
 
       if (typeof transaction.afterCommit === 'function') {
-        transaction.afterCommit(() => require('./reminderSequence.service')
-          .stopForConversation(conversationId, 'reply').catch(() => null));
+        transaction.afterCommit(() => require('./reminderSequence.service').applyRecipientReply({
+          conversationId, whatsappMessageId, receivedAt: values.createdAt || new Date(),
+          replyToWhatsappMessageId, buttonPayload: values.buttonPayload || null
+        }).catch(() => null));
       }
       return { messageRecord, replyToMessage, created: true };
     }

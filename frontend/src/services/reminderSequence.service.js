@@ -8,6 +8,7 @@ export const deleteSequence=id=>api.delete(`/reminder-sequences/${id}`);
 export const listSubscriptions=params=>api.get('/reminder-sequences/subscriptions',{params});
 export const listExecutions=params=>api.get('/reminder-sequences/executions',{params});
 export const changeSubscription=(id,action)=>api.post(`/reminder-sequences/subscriptions/${id}/${action}`);
+export const resumeStoppedByReply=payload=>api.post('/reminder-sequences/subscriptions/resume-stopped-by-reply',payload);
 export const retryExecution=id=>api.post(`/reminder-sequences/executions/${id}/retry`);
 export const getSettings=()=>api.get('/reminder-sequences/settings');
 export const saveSettings=payload=>api.put('/reminder-sequences/settings',payload);

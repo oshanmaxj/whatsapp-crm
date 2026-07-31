@@ -10,7 +10,9 @@ const { REMINDER_SEQUENCE_STATUS, REMINDER_SEQUENCE_STATUSES, REMINDER_SEQUENCE_
 
 const ACTIVE = ['active', 'paused'];
 const DELAY_UNITS = new Set(['minutes', 'hours', 'days']);
+const REPLY_POLICIES = new Set(['postpone', 'continue', 'pause', 'stop', 'complete', 'flow_decides']);
 const delayMs = (step) => Number(step.delayValue) * ({ minutes: 60000, hours: 3600000, days: 86400000 }[step.delayUnit] || 60000);
+const replySchedule = ({ receivedAt, existingNextRunAt, value = 4, unit = 'hours' }) => { const resumeAt = new Date(new Date(receivedAt).getTime() + Number(value) * ({ minutes: 60000, hours: 3600000, days: 86400000 }[unit] || 3600000)); return { resumeAt, nextRunAt: new Date(Math.max(existingNextRunAt ? new Date(existingNextRunAt).getTime() : 0, resumeAt.getTime())) }; };
 const safeError = (error) => String(error?.message || 'Delivery failed').replace(/(bearer|api[_ -]?key|token)\s*[:=]?\s*\S+/ig, '$1 [redacted]').slice(0, 1000);
 const optional = value => value === undefined || value === null || String(value).trim() === '' ? null : value;
 const validationError = errors => Object.assign(new Error('Validation failed'), {
@@ -38,6 +40,9 @@ function normalizeSequence(payload = {}) {
     description: optional(payload.description),
     whatsappAccountId: optional(payload.whatsappAccountId),
     stopOnLabelAdded: optional(payload.stopOnLabelAdded),
+    replyPolicy: optional(payload.replyPolicy),
+    replyCooldownValue: Number(payload.replyCooldownValue ?? 4),
+    replyCooldownUnit: String(payload.replyCooldownUnit || 'hours').toLowerCase(),
     steps
   };
 }
@@ -46,6 +51,9 @@ function validateSequence(values) {
   const errors = {};
   if (!values.name) errors.name = 'Sequence name is required.';
   if (!values.steps.length) errors.steps = 'Add at least one reminder step.';
+  if (values.replyPolicy && !REPLY_POLICIES.has(values.replyPolicy)) errors.replyPolicy = 'Choose a valid recipient reply policy.';
+  if (values.replyPolicy === 'postpone' && (!Number.isInteger(values.replyCooldownValue) || values.replyCooldownValue < 1)) errors.replyCooldownValue = 'Reply cooldown must be a positive whole number.';
+  if (values.replyPolicy === 'postpone' && !DELAY_UNITS.has(values.replyCooldownUnit)) errors.replyCooldownUnit = 'Choose minutes, hours, or days.';
   values.steps.forEach((step, index) => {
     const prefix = `steps.${index}`;
     if (!Number.isInteger(step.delayValue) || step.delayValue < 0) errors[`${prefix}.delayValue`] = 'Send after must be a whole number of zero or more.';
@@ -228,7 +236,17 @@ class ReminderSequenceService {
     const row = await models.ReminderSubscription.findByPk(id);
     if (!row) throw Object.assign(new Error('Subscription not found.'), { status: 404 });
     if (action === 'pause' && row.status === 'active') await row.update({ status: 'paused' });
-    else if (action === 'resume' && row.status === 'paused') await row.update({ status: 'active' });
+    else if (action === 'resume' && ['paused','stopped_by_reply'].includes(row.status)) {
+      const sequence = await models.ReminderSequence.findByPk(row.sequenceId);
+      const cooldown = Number(sequence?.replyCooldownValue || 4) * ({ minutes: 60000, hours: 3600000, days: 86400000 }[sequence?.replyCooldownUnit] || 3600000);
+      const nextRunAt = row.status === 'stopped_by_reply' ? new Date(Date.now() + cooldown) : (row.metadata?.previousNextRunAt || row.nextRunAt || new Date());
+      await row.update({ status: 'active', nextRunAt, ...(row.status === 'stopped_by_reply' ? { replyResumeAt: nextRunAt } : {}) });
+      const next = await models.ReminderSequenceStep.findOne({ where: { sequenceId: row.sequenceId, enabled: true, stepNumber: { [Op.gt]: row.currentStep } }, order: [['step_number','ASC']] });
+      if (next) {
+        const [execution] = await models.ReminderExecution.findOrCreate({ where: { subscriptionId: row.id, sequenceStepId: next.id }, defaults: { conversationId: row.conversationId, whatsappAccountId: row.whatsappAccountId, scheduledAt: nextRunAt } });
+        if (!['sent','delivered','read'].includes(execution.status)) await execution.update({ status: 'scheduled', scheduledAt: nextRunAt, errorCode: null, errorMessage: null });
+      }
+    }
     else if (['cancel', 'unsubscribe'].includes(action) && ACTIVE.includes(row.status)) {
       await row.update({ status: 'cancelled', cancelledAt: new Date(), nextRunAt: null });
       await models.ReminderExecution.update({ status: 'cancelled' }, { where: { subscriptionId: row.id, status: 'scheduled' } });
@@ -257,6 +275,16 @@ class ReminderSequenceService {
       await execution.update({ status: 'failed', errorCode: 'IDENTITY_MISMATCH', errorMessage: 'Stored reminder identity no longer matches the conversation.' }); await subscription.update({ status: 'failed', nextRunAt: null }); return execution;
     }
     try {
+      const safeToSend = await models.sequelize.transaction(async transaction => {
+        const locked = await models.ReminderSubscription.findByPk(subscription.id, { transaction, lock: transaction.LOCK.UPDATE });
+        const now = new Date();
+        const alreadySent = await models.ReminderExecution.findOne({ where: { subscriptionId: locked.id, sequenceStepId: step.id, status: { [Op.in]: ['sent','delivered','read'] }, id: { [Op.ne]: execution.id } }, transaction });
+        const notDue = locked.status !== 'active' || (locked.nextRunAt && now < locked.nextRunAt) || (locked.replyResumeAt && now < locked.replyResumeAt);
+        if (alreadySent) { await execution.update({ status: 'cancelled', errorCode: 'DUPLICATE_STEP_EXECUTION' }, { transaction }); return false; }
+        if (notDue) { const due = [locked.nextRunAt, locked.replyResumeAt].filter(Boolean).sort((a,b)=>new Date(b)-new Date(a))[0]; await execution.update({ status: locked.status === 'active' ? 'scheduled' : 'cancelled', ...(due ? { scheduledAt: due } : {}), errorCode: 'REPLY_POLICY_NOT_DUE' }, { transaction }); return false; }
+        return true;
+      });
+      if (!safeToSend) return execution.reload();
       const window = await compliance.isConversationWindowOpen(subscription.contactId, subscription.whatsappAccountId, subscription.conversationId);
       let response;
       if (!window.open) {
@@ -309,7 +337,39 @@ class ReminderSequenceService {
       await subscription.update({ currentStep: step.stepNumber, nextRunAt: scheduledAt }, { transaction });
     });
   }
+  async applyRecipientReply({ conversationId, whatsappMessageId, receivedAt = new Date(), replyToWhatsappMessageId = null, buttonPayload = null } = {}) {
+    if (!conversationId || !whatsappMessageId) return 0;
+    const subscriptions = await models.ReminderSubscription.findAll({ where: { conversationId, status: { [Op.in]: ['active','paused'] } }, include: [{ model: models.ReminderSequence, as: 'sequence' }] });
+    let changed = 0;
+    for (const item of subscriptions) {
+      await models.sequelize.transaction(async transaction => {
+        const subscription = await models.ReminderSubscription.findByPk(item.id, { transaction, lock: transaction.LOCK.UPDATE });
+        if (!subscription || !['active','paused'].includes(subscription.status) || subscription.lastRecipientReplyMessageId === String(whatsappMessageId)) return;
+        if (buttonPayload && replyToWhatsappMessageId) {
+          const source = await models.ReminderExecution.findOne({ where: { whatsappMessageId: replyToWhatsappMessageId, subscriptionId: subscription.id }, transaction });
+          const explicit = buttonConfig.normalizeButtons(source?.buttonConfigurationSnapshot).find(button => button.buttonId === String(buttonPayload));
+          if (explicit && explicit.sequenceBehavior && !['flow_decides'].includes(explicit.sequenceBehavior)) return;
+        }
+        const sequence = item.sequence || await models.ReminderSequence.findByPk(subscription.sequenceId, { transaction });
+        const policy = sequence.replyPolicy || (sequence.stopOnCustomerReply ? 'stop' : 'continue');
+        const base = { lastRecipientReplyAt: receivedAt, lastRecipientReplyMessageId: String(whatsappMessageId) };
+        if (policy === 'postpone') {
+          const { resumeAt, nextRunAt } = replySchedule({ receivedAt, existingNextRunAt: subscription.nextRunAt, value: sequence.replyCooldownValue, unit: sequence.replyCooldownUnit });
+          await subscription.update({ ...base, status: 'active', replyResumeAt: resumeAt, nextRunAt }, { transaction });
+          const [rescheduled] = await models.ReminderExecution.update({ scheduledAt: nextRunAt, errorCode: 'RECIPIENT_REPLY_COOLDOWN', errorMessage: 'Pending execution rescheduled after recipient reply.', metadata: { previousDueAt: subscription.nextRunAt, replyResumeAt: resumeAt, inboundWhatsappMessageId: whatsappMessageId } }, { where: { subscriptionId: subscription.id, status: 'scheduled' }, transaction });
+          const pendingStep = await models.ReminderSequenceStep.findOne({ where: { sequenceId: subscription.sequenceId, enabled: true, stepNumber: { [Op.gt]: subscription.currentStep } }, order: [['step_number','ASC']], transaction });
+          if (!rescheduled && pendingStep) await models.ReminderExecution.findOrCreate({ where: { subscriptionId: subscription.id, sequenceStepId: pendingStep.id }, defaults: { conversationId: subscription.conversationId, whatsappAccountId: subscription.whatsappAccountId, scheduledAt: nextRunAt }, transaction });
+        } else if (policy === 'pause') await subscription.update({ ...base, status: 'paused', metadata: { ...(subscription.metadata||{}), pausedReason: 'recipient_reply', previousNextRunAt: subscription.nextRunAt }, nextRunAt: null }, { transaction });
+        else if (policy === 'stop') await subscription.update({ ...base, status: 'stopped_by_reply', stoppedByReplyAt: receivedAt, cancelledAt: receivedAt, nextRunAt: null }, { transaction });
+        else if (policy === 'complete') await subscription.update({ ...base, status: 'completed', completedAt: receivedAt, nextRunAt: null }, { transaction });
+        else await subscription.update(base, { transaction });
+        changed += 1;
+      });
+    }
+    return changed;
+  }
   async stopForConversation(conversationId, reason = 'reply') {
+    if (reason === 'reply') return this.applyRecipientReply({ conversationId, whatsappMessageId: `legacy:${Date.now()}` });
     const map = { reply: 'stopped_by_reply', conversion: 'stopped_by_conversion', payment: 'stopped_by_payment' };
     const flag = { reply: 'stopOnCustomerReply', conversion: 'stopOnLeadConverted', payment: 'stopOnPaymentConfirmed' }[reason];
     const rows = await models.ReminderSubscription.findAll({ where: { conversationId, status: 'active' }, include: [{ model: models.ReminderSequence, as: 'sequence', where: { [flag]: true } }] });
@@ -322,3 +382,4 @@ class ReminderSequenceService {
 }
 module.exports = new ReminderSequenceService();
 module.exports.ReminderSequenceService = ReminderSequenceService;
+module.exports.replySchedule = replySchedule;

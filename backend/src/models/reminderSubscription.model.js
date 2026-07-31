@@ -7,6 +7,7 @@ module.exports = (sequelize, D) => sequelize.define('ReminderSubscription', {
   currentStep: { type: D.INTEGER, allowNull: false, defaultValue: 0 },
   subscribedAt: { type: D.DATE, allowNull: false, defaultValue: D.NOW }, nextRunAt: D.DATE,
   completedAt: D.DATE, cancelledAt: D.DATE, subscribedBy: D.BIGINT,
+  lastRecipientReplyAt: D.DATE, lastRecipientReplyMessageId: D.STRING(255), replyResumeAt: D.DATE, stoppedByReplyAt: D.DATE,
   subscriptionSource: { type: D.STRING(30), allowNull: false, defaultValue: 'api' },
   sourceReferenceId: D.STRING(160), metadata: { type: D.JSONB, allowNull: false, defaultValue: {} }
 }, { tableName: 'reminder_subscriptions', timestamps: true, underscored: true });

@@ -551,6 +551,20 @@ class WhatsappService {
     return this.sendRequest(payload, { config });
   }
 
+  async sendTypingIndicator({ whatsappAccountId, inboundWhatsappMessageId, indicatorType = 'text', conversationId = null, flowRunId = null }) {
+    if (!whatsappAccountId || !inboundWhatsappMessageId) return { skipped: true };
+    const config = normalizeConfig(await this.getWhatsAppConfig(whatsappAccountId));
+    const payload = { messaging_product: 'whatsapp', status: 'read', message_id: String(inboundWhatsappMessageId), typing_indicator: { type: indicatorType === 'text' ? 'text' : 'text' } };
+    try {
+      const response = await this.sendRequest(payload, { config });
+      logger.info('whatsapp_typing_indicator_sent', { conversationId, whatsappAccountId, inboundWhatsappMessageId, flowRunId, success: true });
+      return response;
+    } catch (error) {
+      logger.warn('whatsapp_typing_indicator_failed', { conversationId, whatsappAccountId, inboundWhatsappMessageId, flowRunId, success: false, ...safeApiError(error) });
+      return { success: false };
+    }
+  }
+
   async uploadMedia({ filePath, mimeType, mediaType = null, fileSize = null, whatsappAccountId = null }) {
     const config = await this.getWhatsAppConfig(whatsappAccountId);
     if (!config.accessToken || !config.phoneNumberId) {
@@ -1083,6 +1097,7 @@ class WhatsappService {
         : null;
       const autoReply = activeReply ? activeReply.response : null;
       if (autoReply) {
+        await this.sendTypingIndicator({ whatsappAccountId, inboundWhatsappMessageId: message.id, conversationId });
         await this.sendTextMessage({ to: from, text: autoReply, whatsappAccountId }).catch((error) => {
           logger.warn('whatsapp_auto_reply_send_failed', error);
           return null;
@@ -1107,7 +1122,7 @@ class WhatsappService {
         logger.warn('reminder_button_route_failed', { whatsappMessageId: message.id || null, code: error.code || 'REMINDER_BUTTON_ROUTE_FAILED', message: error.message });
         return input;
       });
-      const runAi=()=>aiAgentService.handleInbound(input).catch(async(error)=>{logger.warn('ai_agent_execution_failed',{conversationId,messageId:messageRecord.id,message:error.message});await aiAgentService.audit({agentId:assignedAiAgent?.id,conversationId,inboundMessageId:messageRecord.id,action:'failed_reply',stateBefore:null,stateAfter:null,reason:error.message,status:'failed'}).catch(()=>null);return null;});
+      const runAi=async()=>{await this.sendTypingIndicator({whatsappAccountId,inboundWhatsappMessageId:message.id,conversationId});return aiAgentService.handleInbound(input).catch(async(error)=>{logger.warn('ai_agent_execution_failed',{conversationId,messageId:messageRecord.id,message:error.message});await aiAgentService.audit({agentId:assignedAiAgent?.id,conversationId,inboundMessageId:messageRecord.id,action:'failed_reply',stateBefore:null,stateAfter:null,reason:error.message,status:'failed'}).catch(()=>null);return null;});};
       const runFlow=()=>require('./flow.service').handleInboundMessage(input).catch((error)=>{
         logger.warn('flow_builder_execution_failed',{
           conversationId,accountId:whatsappAccountId,messageId:messageRecord.id,...safeApiError(error)

@@ -6,6 +6,7 @@ r.get('/supervisor/live-calls',p('call_center.view_live_calls'),c.supervisorLive
 r.get('/supervisor/agents',p('call_center.view_all_agents'),c.supervisorAgents);
 r.get('/supervisor/outcomes',p('call_center.supervisor_dashboard'),c.supervisorOutcomes);
 r.get('/supervisor/history',p('call_center.view_all_history'),c.supervisorHistory);
+r.get('/supervisor/followups',p('call_center.supervisor_dashboard'),c.followups);
 r.get('/supervisor/agents/:agentId',p('call_center.view_performance'),c.supervisorAgent);
 r.post('/presence/heartbeat',c.presenceHeartbeat);
 r.get('/queue',p('call_center.agent_workspace'),p('call_queue.view_own'),c.personalQueue);
@@ -22,4 +23,5 @@ r.post('/calls/start',p('call_center.agent_workspace'),c.start);
 r.post('/calls/:id/complete',p('call_center.agent_workspace'),c.complete);
 r.post('/calls/log',p('call_center.agent_workspace'),c.log);
 r.get('/dashboard',p('call_center.agent_workspace'),c.dashboard);
+r.get('/followups',p('call_center.agent_workspace'),c.followups);
 module.exports=r;

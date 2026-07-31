@@ -19,5 +19,7 @@ export const getSupervisorLiveCalls=params=>api.get('/call-center/supervisor/liv
 export const getSupervisorAgents=params=>api.get('/call-center/supervisor/agents',{params});
 export const getSupervisorOutcomes=params=>api.get('/call-center/supervisor/outcomes',{params});
 export const getSupervisorHistory=params=>api.get('/call-center/supervisor/history',{params});
+export const getSupervisorFollowups=params=>api.get('/call-center/supervisor/followups',{params});
+export const getAgentFollowups=params=>api.get('/call-center/followups',{params});
 export const getSupervisorAgent=(id,params)=>api.get(`/call-center/supervisor/agents/${id}`,{params});
 export const sendCallCenterHeartbeat=payload=>api.post('/call-center/presence/heartbeat',payload);

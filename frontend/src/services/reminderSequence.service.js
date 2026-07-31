@@ -9,4 +9,6 @@ export const listSubscriptions=params=>api.get('/reminder-sequences/subscription
 export const listExecutions=params=>api.get('/reminder-sequences/executions',{params});
 export const changeSubscription=(id,action)=>api.post(`/reminder-sequences/subscriptions/${id}/${action}`);
 export const retryExecution=id=>api.post(`/reminder-sequences/executions/${id}/retry`);
+export const getSettings=()=>api.get('/reminder-sequences/settings');
+export const saveSettings=payload=>api.put('/reminder-sequences/settings',payload);
 export const uploadReminderMedia=(file,whatsappAccountId,sequenceId)=>{const form=new FormData();form.append('file',file);form.append('whatsappAccountId',String(whatsappAccountId));if(sequenceId)form.append('sequenceId',String(sequenceId));return api.post('/reminder-sequences/media',form,{timeout:120000})};

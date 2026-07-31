@@ -9,6 +9,8 @@ r.get('/dashboard', p('reminder_sequences.view'), c.dashboard);
 r.post('/media', p('reminder_sequences.edit'), upload.flowMediaUpload, c.uploadMedia);
 r.get('/subscriptions', p('reminder_sequences.view'), c.subscriptions);
 r.get('/executions', p('reminder_sequences.view'), c.executions);
+r.get('/settings', p('reminder_sequences.activate'), c.settings);
+r.put('/settings', p('reminder_sequences.activate'), c.saveSettings);
 r.post('/executions/:id/retry', p('reminder_sequences.retry'), c.retry);
 r.post('/subscriptions', p('reminder_sequences.subscribe'), c.subscribe);
 r.post('/subscriptions/:id/:action(pause|resume|cancel|unsubscribe)', p('reminder_sequences.unsubscribe'), c.change);

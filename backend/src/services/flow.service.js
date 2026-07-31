@@ -1495,6 +1495,7 @@ class FlowService {
         await waitingRun.update({ status: 'completed', completedAt: new Date() });
         return this.getRun(waitingRun.id);
       }
+      await whatsappService.sendTypingIndicator({ whatsappAccountId, inboundWhatsappMessageId: whatsappMessageId, conversationId: conversation?.id || null, flowRunId: waitingRun.id });
       return this.executeFlow(flow, context, { run: waitingRun, startNode });
     }
 
@@ -1513,6 +1514,7 @@ class FlowService {
     const matched = flows.filter((candidate) => triggerMatcher.matchesTrigger(candidate, event, { allowRegex: candidate.triggerConfig?.regexPrivileged === true }))
       .sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
     if (!matched.length) return null;
+    await whatsappService.sendTypingIndicator({ whatsappAccountId, inboundWhatsappMessageId: whatsappMessageId, conversationId: conversation?.id || null });
     const results = [];
     for (const flow of matched) {
       const prior = whatsappMessageId ? await FlowRun.findOne({ where: { flowId: flow.id, lastWhatsappMessageId: whatsappMessageId } }) : null;

@@ -241,7 +241,7 @@ function OptionMultiSelect({ label, options = [], value = [], onChange, loading 
   return <Autocomplete multiple size="small" options={options} value={selected} loading={loading} onOpen={onOpen} noOptionsText={error||'No active reminder sequences'} getOptionLabel={(item) => item.stepCount==null?(item.name||item.email||String(item.id)):`${item.name} · ${item.stepCount} step${item.stepCount===1?'':'s'}`} isOptionEqualToValue={(a, b) => String(a.id) === String(b.id)} onChange={(_, rows) => onChange(rows.map((item) => item.id))} renderInput={(params) => <TextField {...params} label={label} error={Boolean(error)} helperText={error||'Only active sequences available to this WhatsApp account are shown.'} />} />;
 }
 
-function AutomationActionsEditor({ value, onChange, options = {}, onLabelOptionsChange, optionsLoading, optionsError, onRefreshOptions }) {
+export function AutomationActionsEditor({ value, onChange, options = {}, onLabelOptionsChange, optionsLoading, optionsError, onRefreshOptions }) {
   const actions = Array.isArray(value) ? value : [];
   const update = (index, patch) => onChange(actions.map((action, itemIndex) => itemIndex === index ? { ...action, ...patch } : action));
   const updateConfig = (index, patch) => update(index, { config: { ...(actions[index].config || {}), ...patch } });
@@ -272,13 +272,15 @@ function AutomationActionsEditor({ value, onChange, options = {}, onLabelOptions
   </Stack>;
 }
 
-function ButtonEditor({ value, onChange, errors, options, onLabelOptionsChange }) {
+export function ButtonEditor({ value, onChange, errors = {}, options = {}, onLabelOptionsChange, context = 'flow' }) {
   const rows = Array.isArray(value) ? value : [];
   const add = () => {
     const number = rows.length + 1;
+    const stableId = globalThis.crypto?.randomUUID?.() || `button_${Date.now()}_${number}`;
     onChange([...rows, {
-      id: `button_${Date.now()}_${number}`,
-      payload: `button_${Date.now()}_${number}`,
+      id: stableId,
+      payload: stableId,
+      buttonId: stableId,
       title: `Option ${number}`,
       primaryActionType: 'CONTINUE_FLOW', primaryActionConfig: {}, automationActions: []
     }]);
@@ -308,13 +310,12 @@ function ButtonEditor({ value, onChange, errors, options, onLabelOptionsChange }
                 onChange={(event) => update(index, { primaryActionType: event.target.value, primaryActionConfig: {} })}
                 sx={{ minWidth: 140 }}
               >
-                <MenuItem value="SEND_MESSAGE">Send Message</MenuItem><MenuItem value="START_FLOW">Start a Flow</MenuItem><MenuItem value="CONTINUE_FLOW">Continue Flow</MenuItem><MenuItem value="OPEN_URL">Open URL</MenuItem><MenuItem value="CALL_PHONE">Call Phone</MenuItem><MenuItem value="SYSTEM_DEFAULT_ACTION">System Default Action</MenuItem>
+                <MenuItem value="SEND_MESSAGE">Send Message</MenuItem><MenuItem value="START_FLOW">Start a Flow</MenuItem><MenuItem value="CONTINUE_FLOW">{context === 'reminder' ? 'Continue Sequence' : 'Continue Flow'}</MenuItem><MenuItem value="OPEN_URL">Open URL</MenuItem><MenuItem value="CALL_PHONE">Call Phone</MenuItem><MenuItem value="SYSTEM_DEFAULT_ACTION">System Default Action</MenuItem>
               </TextField>
               <IconButton color="error" onClick={() => onChange(rows.filter((_, itemIndex) => itemIndex !== index))} aria-label="Delete button">
                 <DeleteOutlineIcon />
               </IconButton>
             </Stack>
-            <Typography variant="caption" color="text.secondary">Stable action ID: {row.id}</Typography>
             {type === 'SEND_MESSAGE' && <MessageField label="Message sent when pressed" value={row.primaryActionConfig?.message || row.message || ''} onChange={(message) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), message } })} />}
             {type === 'START_FLOW' && <Stack spacing={1}><Autocomplete options={options.flows || []} value={(options.flows || []).find((item) => String(item.id) === String(row.primaryActionConfig?.targetFlowId || row.targetFlowId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), targetFlowId: item?.id || '' } })} renderInput={(params) => <TextField {...params} label="Published flow" />} /><FormControlLabel control={<Checkbox checked={Boolean(row.primaryActionConfig?.pauseCurrentFlow)} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), pauseCurrentFlow: event.target.checked, stopCurrentFlow: event.target.checked ? false : row.primaryActionConfig?.stopCurrentFlow } })} />} label="Pause and resume this flow when the child completes" /><FormControlLabel control={<Checkbox checked={Boolean(row.primaryActionConfig?.stopCurrentFlow)} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), stopCurrentFlow: event.target.checked, pauseCurrentFlow: event.target.checked ? false : row.primaryActionConfig?.pauseCurrentFlow } })} />} label="Stop current flow after starting target" /></Stack>}
             {type === 'OPEN_URL' && <TextField size="small" label="HTTPS URL" value={row.primaryActionConfig?.url || row.url || ''} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), url: event.target.value } })} fullWidth />}
@@ -322,6 +323,7 @@ function ButtonEditor({ value, onChange, errors, options, onLabelOptionsChange }
             {type === 'OPEN_URL' && <Alert severity="warning">Regular WhatsApp reply buttons cannot both open a URL and return a press webhook. Use an approved URL CTA template for native opening; CTA clicks cannot run these automations.</Alert>}
             {type === 'CALL_PHONE' && <Alert severity="warning">Native phone-call buttons require a supported approved template. A regular reply button can return a webhook, but it cannot initiate the call.</Alert>}
             <Divider sx={{ my: 1 }} /><Typography fontWeight={700} fontSize={13}>Automation actions</Typography><AutomationActionsEditor value={row.automationActions || []} onChange={(automationActions) => update(index, { automationActions })} options={options} onLabelOptionsChange={onLabelOptionsChange} />
+            {context === 'reminder' && <details style={{ marginTop: 10 }}><summary>After button click</summary><TextField select size="small" fullWidth sx={{ mt: 1 }} label="Sequence behavior" value={row.sequenceBehavior || (type === 'START_FLOW' ? 'flow_decides' : 'continue')} onChange={(event) => update(index, { sequenceBehavior: event.target.value })}><MenuItem value="continue">Continue sequence</MenuItem><MenuItem value="pause">Pause sequence</MenuItem><MenuItem value="stop">Stop sequence</MenuItem><MenuItem value="complete">Complete sequence</MenuItem><MenuItem value="flow_decides">Let selected flow decide</MenuItem></TextField></details>}
             <Alert severity="info" sx={{ mt: 1 }}>On press: run enabled pre-actions → {type.replaceAll('_', ' ').toLowerCase()} → transition if configured → run post-actions.</Alert>
           </Paper>
         );
@@ -352,7 +354,7 @@ function OptionEditor({ label, value, onChange, error }) {
   );
 }
 
-function WhatsAppPreview({ type, config, label }) {
+export function WhatsAppPreview({ type, config, label }) {
   const buttons = config.buttons || [];
   const body = config.message || config.question || config.prompt || config.caption || 'Your message preview will appear here.';
   const mediaUrl = config.mediaUrl || config.imageUrl || config.headerMediaPreview || config.headerMediaUrl;

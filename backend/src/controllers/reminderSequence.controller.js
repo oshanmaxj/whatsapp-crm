@@ -5,6 +5,10 @@ const wrap = fn => async (req, res, next) => { try { return await fn(req, res); 
 exports.list = wrap(async (req,res)=>ok(res,await service.listSequences(req.query,req.user.id)));
 exports.get = wrap(async (req,res)=>ok(res,await service.getSequence(req.params.id,req.user.id)));
 exports.create = wrap(async (req,res)=>ok(res,await service.saveSequence(null,req.body,req.user.id),201));
+exports.uploadMedia = wrap(async (req,res)=>{
+  if (!req.file?.buffer?.length) throw Object.assign(new Error('Select an image before uploading.'),{status:400,code:'MEDIA_FILE_REQUIRED'});
+  return ok(res,await service.uploadMedia({...req.body,buffer:req.file.buffer,fileName:req.file.originalname,mimeType:req.file.mimetype},req.user.id),201);
+});
 exports.update = wrap(async (req,res)=>ok(res,await service.saveSequence(req.params.id,req.body,req.user.id)));
 exports.status = wrap(async (req,res)=>ok(res,await service.changeSequenceStatus(req.params.id,req.body.status,req.user.id)));
 exports.duplicate = wrap(async (req,res)=>ok(res,await service.duplicateSequence(req.params.id,req.user.id),201));

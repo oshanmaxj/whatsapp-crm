@@ -83,6 +83,15 @@ function validateForActivation(sequence) {
 }
 
 class ReminderSequenceService {
+  async uploadMedia(payload = {}, userId = null) {
+    const whatsappAccountId = payload.whatsappAccountId || null;
+    if (!whatsappAccountId) throw validationError({ whatsappAccountId: 'Select a WhatsApp account before uploading an image.' });
+    await whatsappAccountAccess.assertAccess(whatsappAccountId, userId);
+    return interactiveMedia.storeAndUpload({
+      scope: 'reminder', scopeId: payload.sequenceId || 'draft', buffer: payload.buffer,
+      fileName: payload.fileName, mimeType: payload.mimeType, mediaType: 'image', whatsappAccountId
+    });
+  }
   async listSequences(query = {}, userId = null) {
     const accessibleIds = userId ? await whatsappAccountAccess.accessibleIds(userId) : null;
     const scope = accessibleIds === null ? {} : { [Op.or]: [{ whatsappAccountId: null }, { whatsappAccountId: { [Op.in]: accessibleIds } }] };

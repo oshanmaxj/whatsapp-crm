@@ -73,7 +73,7 @@ function permissionMeta(permission) {
     .join(' ');
   return {
     group,
-    action: ['publish', 'test'].includes(rawAction) ? 'special' : rawAction,
+    action: ACTIONS.includes(rawAction) ? rawAction : 'special',
     rawAction
   };
 }
@@ -604,12 +604,10 @@ function PermissionManagementPage() {
                             <TableCell colSpan={9} sx={{ bgcolor: '#f8fafb', py: 1 }}>
                               <Stack direction="row" gap={0.75} flexWrap="wrap" sx={{ pl: 5 }}>
                                 {group.permissions.map((permission) => (
-                                  <Chip
+                                  <FormControlLabel
                                     key={permission.id}
-                                    size="small"
-                                    variant={roleDraft.has(permission.id) ? 'filled' : 'outlined'}
-                                    color={roleDraft.has(permission.id) ? 'success' : 'default'}
-                                    label={permission.name}
+                                    control={<Checkbox size="small" checked={roleDraft.has(permission.id)} onChange={(event) => updateRolePermissions([permission], event.target.checked)} />}
+                                    label={<Tooltip title={permission.description || permission.code}><span>{permission.name}</span></Tooltip>}
                                   />
                                 ))}
                               </Stack>

@@ -8,6 +8,7 @@ router.use(authMiddleware.authenticate);
 
 router.get('/conversations', chatController.getConversations.bind(chatController));
 router.get('/conversations/:conversationId/messages', chatController.getMessages.bind(chatController));
+router.post('/conversations/:conversationId/read', chatController.markRead.bind(chatController));
 router.post('/conversations/:conversationId/messages', chatController.sendMessage.bind(chatController));
 router.post('/conversations/:conversationId/interactive', express.json({ limit: '140mb' }), chatController.sendInteractive.bind(chatController));
 router.post('/conversations/:conversationId/template', requirePermission('templates.send'), chatController.sendTemplate.bind(chatController));

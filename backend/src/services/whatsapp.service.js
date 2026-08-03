@@ -565,6 +565,19 @@ class WhatsappService {
     }
   }
 
+  async sendReadReceipt({ whatsappAccountId, inboundWhatsappMessageId, conversationId = null }) {
+    if (!whatsappAccountId || !inboundWhatsappMessageId) return { skipped: true };
+    const config = normalizeConfig(await this.getWhatsAppConfig(whatsappAccountId));
+    try {
+      const response = await this.sendRequest({ messaging_product: 'whatsapp', status: 'read', message_id: String(inboundWhatsappMessageId) }, { config });
+      logger.info('whatsapp_read_receipt_sent', { conversationId, whatsappAccountId, inboundWhatsappMessageId, success: true });
+      return response;
+    } catch (error) {
+      logger.warn('whatsapp_read_receipt_failed', { conversationId, whatsappAccountId, inboundWhatsappMessageId, success: false, ...safeApiError(error) });
+      return { success: false };
+    }
+  }
+
   async uploadMedia({ filePath, mimeType, mediaType = null, fileSize = null, whatsappAccountId = null }) {
     const config = await this.getWhatsAppConfig(whatsappAccountId);
     if (!config.accessToken || !config.phoneNumberId) {
@@ -1068,6 +1081,19 @@ class WhatsappService {
       });
       socketService.emitToRoom(`conversation_${conversationId}`, 'whatsapp.message.received', socketPayload);
       await socketService.emitToConversationAudience(conversationId, 'whatsapp.message.received', socketPayload);
+      const events = require('../constants/realtimeEvents');
+      const canonicalPayload = {
+        ...socketPayload,
+        eventId: require('crypto').randomUUID(),
+        whatsappAccountId,
+        departmentId: assignmentResult?.conversation?.assignedRoleId || null,
+        assignedUserId: assignmentResult?.conversation?.assignedUserId || null,
+        timestamp: new Date(messageRecord?.createdAt || receivedAt).toISOString()
+      };
+      await socketService.emitToConversationAudience(conversationId, events.MESSAGE_CREATED, canonicalPayload);
+      await socketService.emitToConversationAudience(conversationId, events.CONVERSATION_UPDATED, {
+        ...canonicalPayload, messageId: messageRecord.id, lastMessage: socketPayload, lastMessageAt: canonicalPayload.timestamp
+      });
     }
 
     if (attachment && ['image', 'document'].includes(messageRecord.type)) {

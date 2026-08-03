@@ -3,6 +3,17 @@ const socketService = require('../services/socket.service');
 const logger = require('../config/logger');
 
 class ChatController {
+  async markRead(req, res, next) {
+    try {
+      const data = await chatService.markConversationRead(
+        req.params.conversationId,
+        req.user.id,
+        req.body?.lastReadMessageId || null,
+        { requestId: req.id || req.headers['x-request-id'] || null }
+      );
+      return res.status(200).json({ success: true, data });
+    } catch (error) { return next(error); }
+  }
   async templateDiagnostics(req, res, next) {
     try { return res.json({ success: true, data: await chatService.getTemplateDiagnostics(req.params.conversationId, req.user.id, req.query.templateName, req.query.languageCode) }); }
     catch (err) { next(err); }

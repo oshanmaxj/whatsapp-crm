@@ -431,18 +431,35 @@ class ChatService {
     return serializeMessage(message);
   }
 
-  async markConversationRead(conversationId, userId) {
+  async markConversationRead(conversationId, userId, requestedBoundaryId = null, context = {}) {
     await conversationAccessService.assertConversationAccess(conversationId, userId);
-    return Message.update(
-      { isRead: true, readAt: new Date() },
-      {
-        where: {
-          conversationId,
-          direction: 'inbound',
-          isRead: false
-        }
-      }
-    );
+    const result = await sequelize.transaction(async (transaction) => {
+      const boundary = requestedBoundaryId
+        ? await Message.findOne({ where: { id: requestedBoundaryId, conversationId, direction: 'inbound' }, transaction, lock: transaction.LOCK.UPDATE })
+        : await Message.findOne({ where: { conversationId, direction: 'inbound' }, order: [['id', 'DESC']], transaction, lock: transaction.LOCK.UPDATE });
+      if (requestedBoundaryId && !boundary) throw Object.assign(new Error('Read boundary does not belong to this conversation'), { status: 422, code: 'INVALID_READ_BOUNDARY' });
+      const before = await Message.count({ where: { conversationId, direction: 'inbound', isRead: false }, transaction });
+      const lastReadAt = new Date();
+      if (boundary) await Message.update({ isRead: true, readAt: lastReadAt }, {
+        where: { conversationId, direction: 'inbound', isRead: false, id: { [Op.lte]: boundary.id } }, transaction
+      });
+      const unreadCount = await Message.count({ where: { conversationId, direction: 'inbound', isRead: false }, transaction });
+      return { before, unreadCount, lastReadAt, boundary };
+    });
+    const totalInboxUnread = await this.getUnreadCountsForUser(userId);
+    const data = { conversationId: Number(conversationId), unreadCount: result.unreadCount, totalInboxUnread,
+      lastReadMessageId: result.boundary?.id || null, lastReadAt: result.boundary ? result.lastReadAt : null };
+    const socketService = require('./socket.service');
+    const events = require('../constants/realtimeEvents');
+    const event = { eventId: require('crypto').randomUUID(), ...data, userId, timestamp: new Date().toISOString() };
+    const { totalInboxUnread: _actorScopedTotal, ...sharedEvent } = event;
+    await socketService.emitToConversationAudience(conversationId, events.CONVERSATION_READ_STATE_CHANGED, sharedEvent);
+    socketService.emitToUser(userId, events.INBOX_UNREAD_COUNT_CHANGED, event);
+    require('../config/logger').info('conversation_mark_read_completed', { requestId: context.requestId, userId, conversationId, unreadBefore: result.before, unreadAfter: result.unreadCount, lastReadMessageId: data.lastReadMessageId });
+    if (result.boundary?.whatsappMessageId && result.boundary?.whatsappAccountId) {
+      setImmediate(() => whatsappService.sendReadReceipt({ whatsappAccountId: result.boundary.whatsappAccountId, inboundWhatsappMessageId: result.boundary.whatsappMessageId, conversationId }).catch(() => null));
+    }
+    return data;
   }
 
   async getConversationUnreadCount(conversationId, userId) {

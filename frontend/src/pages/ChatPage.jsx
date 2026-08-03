@@ -17,6 +17,7 @@ import {
   getLabels,
   getTemplateDiagnostics,
   getUnreadCount,
+  markConversationRead,
   sendConversationMessage,
   sendConversationInteractive,
   sendConversationTemplate,
@@ -96,6 +97,7 @@ function ChatPage() {
   const detailsRequestRef = useRef(null);
   const unreadRequestRef = useRef(null);
   const unreadRefreshRef = useRef({ lastRun: 0, timer: null });
+  const markReadTimerRef = useRef(null);
 
   const [conversations, setConversations] = useState([]);
   const [activeCall, setActiveCall] = useState(null);
@@ -229,6 +231,27 @@ function ChatPage() {
       setMessages(safeArray(messageResponse.data?.data));
       setMedia(safeArray(mediaResponse.data?.data));
       setNotes(safeArray(noteResponse.data?.data));
+      if (document.visibilityState === 'visible') {
+        let previousUnread = 0;
+        setConversations((current) => safeArray(current).map((item) => {
+          if (String(item.id) !== String(conversationId)) return item;
+          previousUnread = Number(item.unreadCount || 0);
+          return { ...item, unreadCount: 0 };
+        }));
+        setUnread((current) => Math.max(0, Number(current) - previousUnread));
+        markConversationRead(conversationId).then(({ data }) => {
+          const result = data?.data;
+          if (!result) return;
+          setUnread(Math.max(0, Number(result.totalInboxUnread || 0)));
+          setConversations((current) => safeArray(current).map((item) => String(item.id) === String(conversationId)
+            ? { ...item, unreadCount: Number(result.unreadCount || 0) } : item));
+        }).catch((markError) => {
+          setConversations((current) => safeArray(current).map((item) => String(item.id) === String(conversationId)
+            ? { ...item, unreadCount: previousUnread } : item));
+          setUnread((current) => Number(current) + previousUnread);
+          setError(markError.response?.data?.message || 'Unable to mark conversation as read.');
+        });
+      }
     } catch (requestError) {
       if (!controller.signal.aborted && !silent) setError(requestError.response?.data?.message || 'Unable to load conversation details.');
     } finally {
@@ -285,6 +308,12 @@ function ChatPage() {
   }, [loadConversations]);
 
   useEffect(() => {
+    if (!connected) return;
+    loadConversations();
+    refreshUnread({ immediate: true });
+  }, [connected, loadConversations, refreshUnread]);
+
+  useEffect(() => {
     Promise.allSettled([
       getAssignableUsers({ includeAll: true }).then((response) => setAgents(safeArray(response.data?.data))),
       getRoles().then((response) => setRoles(safeArray(response.data?.data))),
@@ -310,6 +339,7 @@ function ChatPage() {
 
   useEffect(() => () => {
     if (unreadRefreshRef.current.timer) window.clearTimeout(unreadRefreshRef.current.timer);
+    if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -350,6 +380,10 @@ function ChatPage() {
           String(item.id) === String(incoming.conversationId)
             ? {
                 ...item,
+                unreadCount: (incoming.direction === 'inbound' || incoming.status === 'received')
+                  ? (String(incoming.conversationId) === String(selectedRef.current)
+                    ? 0 : Number(item.unreadCount || 0) + 1)
+                  : Number(item.unreadCount || 0),
                 lastMessage: incoming,
                 lastMessageAt: incoming.createdAt || new Date().toISOString(),
                 lastInboundAt: incoming.direction === 'inbound' || incoming.status === 'received'
@@ -362,6 +396,25 @@ function ChatPage() {
         return updated.sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0));
       });
       refreshUnread();
+      if ((incoming.direction === 'inbound' || incoming.status === 'received')
+        && String(incoming.conversationId) === String(selectedRef.current)
+        && document.visibilityState === 'visible') {
+        if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current);
+        markReadTimerRef.current = window.setTimeout(() => {
+          markConversationRead(incoming.conversationId, incoming.id).then(({ data }) => {
+            const authoritative = data?.data;
+            if (authoritative) setUnread(Math.max(0, Number(authoritative.totalInboxUnread || 0)));
+          }).catch(() => refreshUnread({ immediate: true }));
+        }, 200);
+      }
+    };
+
+    const handleReadState = (state) => {
+      if (!state?.conversationId) return;
+      setConversations((current) => safeArray(current).map((item) => String(item.id) === String(state.conversationId)
+        ? { ...item, unreadCount: Number(state.unreadCount || 0) } : item));
+      if (state.totalInboxUnread != null) setUnread(Math.max(0, Number(state.totalInboxUnread)));
+      else refreshUnread();
     };
 
     const handleStatusUpdate = (update) => {
@@ -438,6 +491,9 @@ function ChatPage() {
     };
     socket.on('chat:message', handleNewMessage);
     socket.on('whatsapp.message.received', handleNewMessage);
+    socket.on('message.created', handleNewMessage);
+    socket.on('conversation.read_state_changed', handleReadState);
+    socket.on('inbox.unread_count_changed', handleReadState);
     socket.on('message_status_updated', handleStatusUpdate);
     socket.on('chat:error', handleSocketError);
     socket.on('lead:status-updated', handleLeadStatusUpdate);
@@ -449,6 +505,9 @@ function ChatPage() {
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('whatsapp.message.received', handleNewMessage);
+      socket.off('message.created', handleNewMessage);
+      socket.off('conversation.read_state_changed', handleReadState);
+      socket.off('inbox.unread_count_changed', handleReadState);
       socket.off('message_status_updated', handleStatusUpdate);
       socket.off('chat:error', handleSocketError);
       socket.off('lead:status-updated', handleLeadStatusUpdate);
@@ -463,7 +522,6 @@ function ChatPage() {
   useEffect(() => {
     if (!socket || !connected || !selected) return;
     socket.emit('chat:join', { conversationId: selected });
-    socket.emit('chat:markRead', { conversationId: selected });
   }, [socket, connected, selected]);
 
   const handleSelectConversation = useCallback((conversationId) => {

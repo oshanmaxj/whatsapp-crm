@@ -143,8 +143,8 @@ class UserController {
   async setRolePermissions(req, res, next) {
     try {
       const requestedPermissions = req.body.permissionIds || req.body.permissions || [];
-      const role = await userService.setRolePermissions(req.params.id, Array.isArray(requestedPermissions) ? requestedPermissions : [requestedPermissions]);
-      return res.status(200).json({ success: true, data: role });
+      const result = await userService.setRolePermissions(req.params.id, Array.isArray(requestedPermissions) ? requestedPermissions : [requestedPermissions]);
+      return res.status(200).json({ success: true, data: result });
     } catch (err) {
       next(err);
     }

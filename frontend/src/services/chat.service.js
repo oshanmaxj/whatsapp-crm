@@ -43,6 +43,10 @@ export const sendConversationInteractive = (conversationId, payload, onUploadPro
   { onUploadProgress }
 );
 export const getUnreadCount = (config = {}) => deduplicatedGet('unread', `${PREFIX}/unread`, config);
+export const markConversationRead = (conversationId, lastReadMessageId = null) => api.post(
+  `${PREFIX}/conversations/${conversationId}/read`,
+  lastReadMessageId ? { lastReadMessageId } : {}
+);
 export const getNotes = (conversationId, config = {}) => deduplicatedGet(
   `notes:${conversationId}`,
   '/notes',

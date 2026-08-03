@@ -619,6 +619,12 @@ class UserService {
       }
     }
 
+    const previous = await RolePermission.findAll({ where: { roleId: normalizedRoleId }, attributes: ['permissionId'], raw: true });
+    const previousIds = new Set(previous.map((item) => Number(item.permissionId)));
+    const nextIds = new Set(cleanPermissionIds);
+    const grantedIds = cleanPermissionIds.filter((id) => !previousIds.has(id));
+    const revokedIds = [...previousIds].filter((id) => !nextIds.has(id));
+    const unchangedIds = cleanPermissionIds.filter((id) => previousIds.has(id));
     await sequelize.transaction(async (transaction) => {
       await RolePermission.destroy({
         where: { roleId: normalizedRoleId },
@@ -635,7 +641,17 @@ class UserService {
       }
     });
 
-    return role.reload({ include: [{ model: Permission, as: 'permissions' }] });
+    const updatedRole = await role.reload({ include: [{ model: Permission, as: 'permissions' }] });
+    const affectedUsers = await User.findAll({
+      include: [{ model: Role, as: 'roles', where: { id: normalizedRoleId }, attributes: [], through: { attributes: [] } }],
+      attributes: ['id']
+    });
+    const socketService = require('./socket.service');
+    const events = require('../constants/realtimeEvents');
+    affectedUsers.forEach(({ id }) => socketService.emitToUser(id, events.PERMISSIONS_CHANGED, {
+      roleId: normalizedRoleId, refreshRequired: true
+    }));
+    return { role: updatedRole, granted: grantedIds, revoked: revokedIds, unchanged: unchangedIds, rejected: [] };
   }
 
   async getUserAccessPayload(id) {

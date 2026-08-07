@@ -456,7 +456,7 @@ class ChatService {
     await socketService.emitToConversationAudience(conversationId, events.CONVERSATION_READ_STATE_CHANGED, sharedEvent);
     socketService.emitToUser(userId, events.INBOX_UNREAD_COUNT_CHANGED, event);
     require('../config/logger').info('conversation_mark_read_completed', { requestId: context.requestId, userId, conversationId, unreadBefore: result.before, unreadAfter: result.unreadCount, lastReadMessageId: data.lastReadMessageId });
-    if (result.boundary?.whatsappMessageId && result.boundary?.whatsappAccountId) {
+    if (!context.skipMetaReceipt && result.boundary?.whatsappMessageId && result.boundary?.whatsappAccountId) {
       setImmediate(() => whatsappService.sendReadReceipt({ whatsappAccountId: result.boundary.whatsappAccountId, inboundWhatsappMessageId: result.boundary.whatsappMessageId, conversationId }).catch(() => null));
     }
     return data;

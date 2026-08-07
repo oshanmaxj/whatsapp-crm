@@ -47,6 +47,10 @@ export const markConversationRead = (conversationId, lastReadMessageId = null) =
   `${PREFIX}/conversations/${conversationId}/read`,
   lastReadMessageId ? { lastReadMessageId } : {}
 );
+export const sendConversationTyping = (conversationId) => api.post(
+  `${PREFIX}/conversations/${conversationId}/typing`,
+  { isTyping: true }
+);
 export const getNotes = (conversationId, config = {}) => deduplicatedGet(
   `notes:${conversationId}`,
   '/notes',

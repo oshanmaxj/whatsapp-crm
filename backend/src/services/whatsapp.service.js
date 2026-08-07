@@ -190,6 +190,7 @@ function validateOutbound(config, payload) {
       'WHATSAPP_CONNECTION_INVALID'
     );
   }
+  if (payload?.status === 'read' && payload?.message_id) return { config, payload };
   const recipient = normalizePhone(payload?.to);
   if (!recipient) throw Object.assign(new Error('A valid WhatsApp recipient number is required.'), { status: 400, code: 'INVALID_PHONE_NUMBER' });
   payload.to = recipient;
@@ -552,15 +553,15 @@ class WhatsappService {
   }
 
   async sendTypingIndicator({ whatsappAccountId, inboundWhatsappMessageId, indicatorType = 'text', conversationId = null, flowRunId = null }) {
-    if (!whatsappAccountId || !inboundWhatsappMessageId) return { skipped: true };
+    if (!whatsappAccountId || !inboundWhatsappMessageId) return { success: false };
     const config = normalizeConfig(await this.getWhatsAppConfig(whatsappAccountId));
     const payload = { messaging_product: 'whatsapp', status: 'read', message_id: String(inboundWhatsappMessageId), typing_indicator: { type: indicatorType === 'text' ? 'text' : 'text' } };
     try {
       const response = await this.sendRequest(payload, { config });
-      logger.info('whatsapp_typing_indicator_sent', { conversationId, whatsappAccountId, inboundWhatsappMessageId, flowRunId, success: true });
+      logger.info('whatsapp_typing_indicator_sent', { conversationId, whatsappAccountId, inboundMessageIdLastFour: lastFour(inboundWhatsappMessageId), flowRunId, success: true });
       return response;
     } catch (error) {
-      logger.warn('whatsapp_typing_indicator_failed', { conversationId, whatsappAccountId, inboundWhatsappMessageId, flowRunId, success: false, ...safeApiError(error) });
+      logger.warn('whatsapp_typing_indicator_failed', { conversationId, whatsappAccountId, inboundMessageIdLastFour: lastFour(inboundWhatsappMessageId), flowRunId, success: false, ...safeApiError(error) });
       return { success: false };
     }
   }

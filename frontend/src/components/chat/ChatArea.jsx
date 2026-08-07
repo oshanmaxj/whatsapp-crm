@@ -22,6 +22,7 @@ import { agentName, contactName, formatDateTime, formatTime, initials, safeArray
 import InboxFlowDialog from './InboxFlowDialog';
 import AuthenticatedMedia from './AuthenticatedMedia';
 import { hasPermission } from '../../utils/access';
+import { sendConversationTyping } from '../../services/chat.service';
 
 function StatusTicks({ message }) {
   if (message.direction !== 'outbound') return null;
@@ -555,10 +556,25 @@ export function MessageComposer({
   const [voiceUrl, setVoiceUrl] = useState('');
   const [voiceError, setVoiceError] = useState('');
   const [voiceProgress, setVoiceProgress] = useState(0);
+  const [composerFocused, setComposerFocused] = useState(false);
   const chunksRef = useRef([]);
   const streamRef = useRef(null);
   const cancelRecordingRef = useRef(false);
   const canSendVoice = hasPermission('voice.send');
+  useEffect(() => {
+    const eligible = composerFocused && selected && windowOpen && !selectedTemplate && !sending && Boolean(value.trim()) && conversation?.id;
+    if (!eligible) return undefined;
+    let interval;
+    const renew = () => { Promise.resolve(sendConversationTyping(conversation.id)).catch(() => null); };
+    const debounce = window.setTimeout(() => {
+      renew();
+      interval = window.setInterval(renew, 20_000);
+    }, 400);
+    return () => {
+      window.clearTimeout(debounce);
+      if (interval) window.clearInterval(interval);
+    };
+  }, [composerFocused, selected, windowOpen, selectedTemplate, sending, value, conversation?.id]);
   useEffect(() => {
     if (!recorder || recorder.state !== 'recording') return undefined;
     const timer = window.setInterval(() => setRecordingSeconds((value) => value + 1), 1000);
@@ -710,6 +726,8 @@ export function MessageComposer({
           value={value}
           disabled={!selected}
           onChange={(event) => onChange(event.target.value)}
+          onFocus={() => setComposerFocused(true)}
+          onBlur={() => setComposerFocused(false)}
           onKeyDown={handleKeyDown}
           placeholder={!selected ? 'Select a conversation first' : (!windowOpen && !selectedTemplate ? 'Select an approved template' : 'Type a message')}
           sx={{ minWidth: { xs: 'calc(100% - 8px)', sm: 120 }, flex: '1 1 180px', order: { xs: 10, sm: 'initial' }, '& .MuiOutlinedInput-root': { borderRadius: 3, py: 0.5, bgcolor: 'action.hover' } }}

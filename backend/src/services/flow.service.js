@@ -30,6 +30,7 @@ const triggerMatcher = require('./flowTriggerMatcher.service');
 const interactiveMediaService = require('./interactiveMedia.service');
 const logger = require('../config/logger');
 const conversationAccessService = require('./conversationAccess.service');
+const whatsappTypingIndicatorService = require('./whatsappTypingIndicator.service');
 
 const MAX_NESTED_FLOW_DEPTH = Number(process.env.MAX_NESTED_FLOW_DEPTH || 5);
 const SUPPORTED_NODE_TYPES = new Set([
@@ -1133,6 +1134,19 @@ class FlowService {
     if (!realSendEnabled) return { status: 'simulated', to, text, nodeType: node.nodeType };
     if (!context.conversationId || !context.whatsappAccountId) throw Object.assign(new Error('Canonical conversation and WhatsApp account are required for Flow delivery.'), { status: 409, code: 'WHATSAPP_ACCOUNT_MISMATCH' });
     await require('./messagingWindow.service').authorizeSessionMessage({ conversationId: context.conversationId, whatsappAccountId: context.whatsappAccountId });
+    if (process.env.FLOW_TYPING_INDICATOR_ENABLED === 'true') {
+      const typing = await whatsappTypingIndicatorService.sendWhatsAppTypingIndicator({
+        conversationId: context.conversationId,
+        whatsappAccountId: context.whatsappAccountId,
+        inboundWhatsappMessageId: context.whatsappMessageId || null,
+        flowRunId: context.flowRunId || null
+      });
+      if (typing.status === 'sent') {
+        const configuredDelay = Number(process.env.FLOW_TYPING_DELAY_MS ?? 1200);
+        const delayMs = Math.min(4000, Math.max(0, Number.isFinite(configuredDelay) ? configuredDelay : 1200));
+        if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
     let response;
     let storedType = 'text';
     let sentMediaId = null;
@@ -1497,7 +1511,6 @@ class FlowService {
         await waitingRun.update({ status: 'completed', completedAt: new Date() });
         return this.getRun(waitingRun.id);
       }
-      await whatsappService.sendTypingIndicator({ whatsappAccountId, inboundWhatsappMessageId: whatsappMessageId, conversationId: conversation?.id || null, flowRunId: waitingRun.id });
       return this.executeFlow(flow, context, { run: waitingRun, startNode });
     }
 
@@ -1516,7 +1529,6 @@ class FlowService {
     const matched = flows.filter((candidate) => triggerMatcher.matchesTrigger(candidate, event, { allowRegex: candidate.triggerConfig?.regexPrivileged === true }))
       .sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
     if (!matched.length) return null;
-    await whatsappService.sendTypingIndicator({ whatsappAccountId, inboundWhatsappMessageId: whatsappMessageId, conversationId: conversation?.id || null });
     const results = [];
     for (const flow of matched) {
       const prior = whatsappMessageId ? await FlowRun.findOne({ where: { flowId: flow.id, lastWhatsappMessageId: whatsappMessageId } }) : null;

@@ -3,6 +3,17 @@ const socketService = require('../services/socket.service');
 const logger = require('../config/logger');
 
 class ChatController {
+  async typing(req, res, next) {
+    try {
+      if (req.body?.isTyping !== true) return res.json({ success: true, data: { status: 'ignored_not_typing' } });
+      await require('../services/conversationAccess.service').assertConversationAccess(req.params.conversationId, req.user);
+      const result = await require('../services/whatsappTypingIndicator.service').sendWhatsAppTypingIndicator({ conversationId: req.params.conversationId });
+      if (result.status === 'sent') {
+        await chatService.markConversationRead(req.params.conversationId, req.user.id, result.inboundMessageId, { requestId: req.id || null, skipMetaReceipt: true }).catch(() => null);
+      }
+      return res.json({ success: true, data: result });
+    } catch (error) { return next(error); }
+  }
   async markRead(req, res, next) {
     try {
       const data = await chatService.markConversationRead(

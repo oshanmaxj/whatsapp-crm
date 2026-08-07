@@ -18,6 +18,9 @@ const optional = value => value === undefined || value === null || String(value)
 const validationError = errors => Object.assign(new Error('Validation failed'), {
   status: 422, code: 'VALIDATION_FAILED', errors
 });
+const conflictError = (message, errors) => Object.assign(new Error(message), {
+  status: 409, code: 'REMINDER_SEQUENCE_CONFLICT', errors
+});
 
 function normalizeSequence(payload = {}) {
   const steps = Array.isArray(payload.steps) ? payload.steps.map((step = {}) => ({
@@ -64,6 +67,34 @@ function validateSequence(values) {
     if (['buttons', 'image_buttons'].includes(step.sessionMessageType)) Object.assign(errors, buttonConfig.validateButtons(step.interactiveConfig, `${prefix}.interactiveConfig.buttons`).errors);
     if (step.templateId !== null && !/^\d+$/.test(String(step.templateId))) errors[`${prefix}.templateId`] = 'Fallback template is invalid.';
   });
+  if (Object.keys(errors).length) throw validationError(errors);
+}
+
+async function validateReferences(values, transaction, { activation = false } = {}) {
+  const errors = {};
+  for (let index = 0; index < values.steps.length; index++) {
+    const step = values.steps[index];
+    const prefix = `steps.${index}`;
+    const buttons = buttonConfig.normalizeButtons(step.interactiveConfig);
+    const flowIds = [...new Set(buttons.flatMap(button => [
+      button.behavior === 'start_flow' ? button.flowId : null,
+      button.primaryActionType === 'START_FLOW' ? button.primaryActionConfig?.targetFlowId : null
+    ]).filter(Boolean).map(String))];
+    for (const flowId of flowIds) {
+      const flow = await models.Flow.findByPk(flowId, { transaction });
+      if (!flow || flow.status !== 'published' || (flow.whatsappAccountId && String(flow.whatsappAccountId) !== String(values.whatsappAccountId))) {
+        errors[`${prefix}.interactiveConfig.buttons`] = 'Selected Flow must be published and belong to this WhatsApp account.';
+      }
+    }
+    if (step.templateId) {
+      const template = await models.WhatsAppTemplate.findByPk(step.templateId, { transaction });
+      if (!template || template.status !== 'APPROVED' || String(template.whatsappAccountId) !== String(values.whatsappAccountId) || (step.templateLanguage && template.language !== step.templateLanguage)) {
+        errors[`${prefix}.templateId`] = 'Fallback template must be approved for this WhatsApp account and language.';
+      }
+    } else if (activation && step.enabled !== false) {
+      errors[`${prefix}.templateId`] = 'An approved fallback template is required before activation.';
+    }
+  }
   if (Object.keys(errors).length) throw validationError(errors);
 }
 
@@ -119,6 +150,7 @@ class ReminderSequenceService {
     validateSequence(normalized);
     if (normalized.whatsappAccountId) await whatsappAccountAccess.assertAccess(normalized.whatsappAccountId, userId);
     return models.sequelize.transaction(async transaction => {
+      await validateReferences(normalized, transaction, { activation: normalized.status === REMINDER_SEQUENCE_STATUS.ACTIVE });
       const values = { ...normalized, createdBy: userId, updatedBy: userId };
       delete values.id; delete values.steps;
       let row;
@@ -131,6 +163,19 @@ class ReminderSequenceService {
         row = await models.ReminderSequence.create(values, { transaction });
       }
       if (Array.isArray(normalized.steps)) {
+        const existing = id ? await models.ReminderSequenceStep.findAll({
+          where: { sequenceId: row.id }, transaction, lock: transaction.LOCK.UPDATE
+        }) : [];
+        const existingById = new Map(existing.map(step => [String(step.id), step]));
+        const requestedIds = normalized.steps.filter(step => step.id != null).map(step => String(step.id));
+        const duplicateRequestedId = requestedIds.find((stepId, index) => requestedIds.indexOf(stepId) !== index);
+        if (duplicateRequestedId) throw conflictError('A reminder step was submitted more than once.', { steps: 'Reminder step IDs must be unique.' });
+        const missingId = requestedIds.find(stepId => !existingById.has(stepId));
+        if (missingId) throw Object.assign(new Error('Reminder step not found in this sequence.'), { status: 404, code: 'REMINDER_STEP_NOT_FOUND' });
+        if (existing.length) await models.ReminderSequenceStep.update(
+          { stepNumber: models.sequelize.literal(`step_number + ${normalized.steps.length + existing.length + 1000}`) },
+          { where: { sequenceId: row.id }, transaction }
+        );
         const ids = [];
         for (let i = 0; i < normalized.steps.length; i++) {
           const stepValues = { ...normalized.steps[i], sequenceId: row.id, stepNumber: i + 1 };
@@ -139,7 +184,13 @@ class ReminderSequenceService {
           delete stepValues.sendAfter;
           delete stepValues.unit;
           delete stepValues.message;
-          const [step] = await models.ReminderSequenceStep.upsert({ ...(normalized.steps[i].id ? { id: normalized.steps[i].id } : {}), ...stepValues }, { transaction, returning: true });
+          let step;
+          if (normalized.steps[i].id != null) {
+            step = existingById.get(String(normalized.steps[i].id));
+            await step.update(stepValues, { transaction });
+          } else {
+            step = await models.ReminderSequenceStep.create(stepValues, { transaction });
+          }
           ids.push(step.id);
         }
         await models.ReminderSequenceStep.destroy({ where: { sequenceId: row.id, ...(ids.length ? { id: { [Op.notIn]: ids } } : {}) }, transaction });
@@ -184,6 +235,10 @@ class ReminderSequenceService {
         status: 409, code: 'REMINDER_STATUS_TRANSITION_INVALID'
       });
       const result = status === REMINDER_SEQUENCE_STATUS.ACTIVE ? validateForActivation(row) : { warnings: [] };
+      if (status === REMINDER_SEQUENCE_STATUS.ACTIVE) await validateReferences({
+        whatsappAccountId: row.whatsappAccountId,
+        steps: row.steps
+      }, transaction, { activation: true });
       await operation('update_sequence_status', () => row.update({ status, updatedBy: userId }, { transaction }));
       return { sequence: row, warnings: result.warnings };
       });
@@ -383,3 +438,5 @@ class ReminderSequenceService {
 module.exports = new ReminderSequenceService();
 module.exports.ReminderSequenceService = ReminderSequenceService;
 module.exports.replySchedule = replySchedule;
+module.exports.normalizeSequence = normalizeSequence;
+module.exports.validateSequence = validateSequence;

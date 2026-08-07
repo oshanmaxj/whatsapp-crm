@@ -1,7 +1,9 @@
 const logger = require('../config/logger');
 
 module.exports = (err, req, res, next) => {
-  const status = err.status || err.statusCode || (err.type === 'entity.too.large' ? 413 : 500);
+  const databaseCode = err.parent?.code || err.original?.code || null;
+  const inferredStatus = databaseCode === '23505' ? 409 : databaseCode === '23503' ? 422 : null;
+  const status = err.status || err.statusCode || inferredStatus || (err.type === 'entity.parse.failed' ? 400 : err.type === 'entity.too.large' ? 413 : 500);
   const uploadCode = err.code || (status === 413 ? 'REQUEST_TOO_LARGE' : null);
   const requestId = req.requestId || req.headers['x-request-id'] || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const response = {
@@ -52,7 +54,7 @@ module.exports = (err, req, res, next) => {
     'LEAD_STATUS_NOT_FOUND','LEAD_STATUS_DUPLICATE','LEAD_STATUS_CODE_LOCKED','LEAD_STATUS_IN_USE',
     'CALL_QUEUE_FORBIDDEN','CALL_QUEUE_LEAD_INELIGIBLE','CALL_QUEUE_LEAD_FORBIDDEN','CALL_QUEUE_BULK_LIMIT',
     'CALL_QUEUE_ENTRY_NOT_FOUND','CALL_QUEUE_EMPTY',
-    'AI_PROVIDER_KEY_INVALID','AI_PROVIDER_TEST_FAILED','AI_PROVIDER_DUPLICATE','REMINDER_STATUS_TRANSITION_INVALID',
+    'AI_PROVIDER_KEY_INVALID','AI_PROVIDER_TEST_FAILED','AI_PROVIDER_DUPLICATE','REMINDER_STATUS_TRANSITION_INVALID','REMINDER_SEQUENCE_CONFLICT','REMINDER_STEP_NOT_FOUND',
     'ZOOM_CREDENTIALS_RECONFIGURATION_REQUIRED',
     'FLOW_SEQUENCE_REQUIRED','FLOW_REMINDER_IDENTITY_REQUIRED','FLOW_VALIDATION_FAILED','FILE_TOO_LARGE','REQUEST_TOO_LARGE','MEDIA_FILE_REQUIRED','INTERACTIVE_MEDIA_TYPE_UNSUPPORTED',
     'INTERACTIVE_MEDIA_MIME_UNSUPPORTED','INTERACTIVE_MEDIA_EMPTY','INTERACTIVE_MEDIA_TOO_LARGE',

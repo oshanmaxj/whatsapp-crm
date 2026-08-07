@@ -56,18 +56,20 @@ test('reminder lifecycle publishes valid drafts, pauses, and resumes with canoni
   const originalTransaction = models.sequelize.transaction;
   const originalFind = models.ReminderSequence.findByPk;
   const originalFindSteps = models.ReminderSequenceStep.findAll;
+  const originalFindTemplate = models.WhatsAppTemplate.findByPk;
   const row = {
-    id: 7, name: 'Follow up', status: 'draft',
-    steps: [{ stepNumber: 1, delayValue: 1, delayUnit: 'hours', body: 'Hello', templateId: null }],
+    id: 7, name: 'Follow up', status: 'draft', whatsappAccountId: null,
+    steps: [{ stepNumber: 1, delayValue: 1, delayUnit: 'hours', body: 'Hello', templateId: 55, templateLanguage: 'en_US' }],
     update: async values => Object.assign(row, values)
   };
   models.sequelize.transaction = async callback => callback({ LOCK: { UPDATE: 'UPDATE' } });
   models.ReminderSequence.findByPk = async () => row;
   models.ReminderSequenceStep.findAll = async () => row.steps;
+  models.WhatsAppTemplate.findByPk = async () => ({ id: 55, status: 'APPROVED', whatsappAccountId: null, language: 'en_US' });
   try {
     const activated = await reminderSequenceService.changeSequenceStatus(7, 'ACTIVE', 2);
     assert.equal(row.status, 'active');
-    assert.equal(activated.warnings.length, 1);
+    assert.equal(activated.warnings.length, 0);
     await reminderSequenceService.changeSequenceStatus(7, 'paused', 2);
     assert.equal(row.status, 'paused');
     await reminderSequenceService.changeSequenceStatus(7, 'active', 2);
@@ -76,6 +78,7 @@ test('reminder lifecycle publishes valid drafts, pauses, and resumes with canoni
     models.sequelize.transaction = originalTransaction;
     models.ReminderSequence.findByPk = originalFind;
     models.ReminderSequenceStep.findAll = originalFindSteps;
+    models.WhatsAppTemplate.findByPk = originalFindTemplate;
   }
 });
 

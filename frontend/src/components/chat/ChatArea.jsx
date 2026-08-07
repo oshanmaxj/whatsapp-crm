@@ -254,7 +254,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
   );
 });
 
-export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, onStatusChange, mobile }) {
+export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, mobile }) {
   const contact = conversation?.contact;
   return (
     <Box sx={{ px: { xs: 1.25, sm: 2 }, py: 1.25, borderBottom: (theme) => `1px solid ${theme.palette.divider}`, bgcolor: 'background.paper' }}>
@@ -279,13 +279,6 @@ export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, on
             </Typography>
           </Stack>
         </Box>
-        <Chip
-          size="small"
-          label={conversation?.status || 'open'}
-          color={conversation?.status === 'open' ? 'success' : 'default'}
-          onClick={() => onStatusChange(conversation?.status === 'open' ? 'closed' : 'open')}
-          sx={{ display: { xs: 'none', sm: 'flex' }, textTransform: 'capitalize', fontWeight: 700 }}
-        />
         <Tooltip title="Contact workspace"><IconButton onClick={onToggleWorkspace}><InfoOutlinedIcon /></IconButton></Tooltip>
       </Stack>
     </Box>
@@ -301,11 +294,8 @@ export function CustomerInfoBar({ conversation }) {
     return () => window.clearInterval(interval);
   }, []);
 
-  const lastInboundAt = conversation?.lastInboundAt || conversation?.last_inbound_at;
-  const lastInboundTime = lastInboundAt ? new Date(lastInboundAt).getTime() : Number.NaN;
-  const remainingMs = Number.isFinite(lastInboundTime)
-    ? lastInboundTime + (24 * 60 * 60 * 1000) - now
-    : 0;
+  const expiresAt = conversation?.messagingWindow?.expiresAt;
+  const remainingMs = expiresAt ? new Date(expiresAt).getTime() - now : 0;
   const insideWindow = remainingMs > 0;
   const remainingMinutes = insideWindow ? Math.ceil(remainingMs / 60000) : 0;
   const remainingHours = Math.floor(remainingMinutes / 60);
@@ -765,7 +755,6 @@ export function ChatArea({
   onBack,
   onToggleWorkspace,
   onEdit,
-  onStatusChange,
   replyToMessage,
   onReply,
   onMarkPaymentSlip,
@@ -806,7 +795,7 @@ export function ChatArea({
     >
       {conversation && (
         <>
-          <ChatHeader conversation={conversation} onBack={onBack} onToggleWorkspace={onToggleWorkspace} onEdit={onEdit} onStatusChange={onStatusChange} mobile={mobile} />
+          <ChatHeader conversation={conversation} onBack={onBack} onToggleWorkspace={onToggleWorkspace} onEdit={onEdit} mobile={mobile} />
           <CustomerInfoBar conversation={conversation} />
         </>
       )}

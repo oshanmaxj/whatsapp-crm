@@ -16,7 +16,7 @@ import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { agentName, contactName, formatDateTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
 import { getAccessPayload } from '../../utils/access';
-import { LEAD_STATUSES } from '../../constants/leadStatuses';
+import useLeadStatuses from '../../hooks/useLeadStatuses';
 import LabelMultiSelect from '../LabelMultiSelect';
 import{controlConversationAi,getConversationAiDecisions,getConversationAiState,listAiAgents}from'../../services/aiAgent.service';
 
@@ -39,6 +39,7 @@ function Section({ title, children }) {
 }
 
 export function ProfileTab({ conversation, agents, roles, labels, onLabelsChange, onLabelOptionsChange, onAssign, onUpdateContact, onLeadStatusChange, leadStatusSaving, engagement }) {
+  const leadStatuses = useLeadStatuses();
   const contact = conversation?.contact || {};
   const lead = conversation?.lead || {};
   const assignableUsers = safeArray(agents);
@@ -131,7 +132,7 @@ export function ProfileTab({ conversation, agents, roles, labels, onLabelsChange
           <FormControl size="small" fullWidth disabled={leadStatusSaving}>
             <InputLabel>Lead Status</InputLabel>
             <Select label="Lead Status" value={lead.status?.code || lead.stage || 'new'} onChange={(event) => onLeadStatusChange(event.target.value)}>
-              {LEAD_STATUSES.map((status) => <MenuItem key={status.code} value={status.code}>{status.name}</MenuItem>)}
+              {leadStatuses.map((status) => <MenuItem key={status.id} value={status.code}>{status.name}</MenuItem>)}
             </Select>
           </FormControl>
           {leadStatusSaving && <LinearProgress />}

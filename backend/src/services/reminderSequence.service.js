@@ -1,6 +1,5 @@
 const { Op } = require('sequelize');
 const models = require('../models');
-const compliance = require('./whatsappCompliance.service');
 const whatsapp = require('./whatsapp.service');
 const logger = require('../config/logger');
 const whatsappAccountAccess = require('./whatsappAccountAccess.service');
@@ -65,7 +64,6 @@ function validateSequence(values) {
     if (step.enabled !== false && ['image', 'buttons', 'image_buttons'].includes(step.sessionMessageType) && !step.body) errors[`${prefix}.body`] = 'Message body/caption is required.';
     if (['image', 'image_buttons'].includes(step.sessionMessageType) && !Object.keys(step.mediaConfig || {}).length) errors[`${prefix}.mediaConfig`] = 'Select an image before saving this reminder.';
     if (['buttons', 'image_buttons'].includes(step.sessionMessageType)) Object.assign(errors, buttonConfig.validateButtons(step.interactiveConfig, `${prefix}.interactiveConfig.buttons`).errors);
-    if (step.templateId !== null && !/^\d+$/.test(String(step.templateId))) errors[`${prefix}.templateId`] = 'Fallback template is invalid.';
   });
   if (Object.keys(errors).length) throw validationError(errors);
 }
@@ -86,14 +84,6 @@ async function validateReferences(values, transaction, { activation = false } = 
         errors[`${prefix}.interactiveConfig.buttons`] = 'Selected Flow must be published and belong to this WhatsApp account.';
       }
     }
-    if (step.templateId) {
-      const template = await models.WhatsAppTemplate.findByPk(step.templateId, { transaction });
-      if (!template || template.status !== 'APPROVED' || String(template.whatsappAccountId) !== String(values.whatsappAccountId) || (step.templateLanguage && template.language !== step.templateLanguage)) {
-        errors[`${prefix}.templateId`] = 'Fallback template must be approved for this WhatsApp account and language.';
-      }
-    } else if (activation && step.enabled !== false) {
-      errors[`${prefix}.templateId`] = 'An approved fallback template is required before activation.';
-    }
   }
   if (Object.keys(errors).length) throw validationError(errors);
 }
@@ -113,12 +103,7 @@ function validateForActivation(sequence) {
     if (Number(step.stepNumber) !== index + 1) errors[`${prefix}.stepNumber`] = 'Step ordering is invalid.';
   });
   if (Object.keys(errors).length) throw validationError(errors);
-  return {
-    warnings: steps.filter(step => !step.templateId).map((step, index) => ({
-      field: `steps.${index}.templateId`,
-      message: `Reminder ${index + 1} will not send outside the WhatsApp 24-hour service window without an approved fallback template.`
-    }))
-  };
+  return { warnings: [] };
 }
 
 class ReminderSequenceService {
@@ -358,16 +343,12 @@ class ReminderSequenceService {
         return true;
       });
       if (!safeToSend) return execution.reload();
-      const window = await compliance.isConversationWindowOpen(subscription.contactId, subscription.whatsappAccountId, subscription.conversationId);
+      const window = await require('./messagingWindow.service').getMessagingWindow(subscription.conversationId, subscription.whatsappAccountId);
       let response;
-      if (!window.open) {
-        if (!step.templateId) return this.block(execution, subscription, step, 'OUTSIDE_WINDOW_TEMPLATE_REQUIRED', 'Outside the 24-hour window; an approved account template is required.');
-        const template = await models.WhatsAppTemplate.findOne({ where: { id: step.templateId, whatsappAccountId: subscription.whatsappAccountId, status: 'APPROVED' } });
-        if (!template || (step.templateLanguage && template.language && step.templateLanguage !== template.language)) return this.block(execution, subscription, step, 'INVALID_FALLBACK_TEMPLATE', 'Configured fallback template is not approved for this WhatsApp account and language.');
-        const components = step.fallbackVariableMapping && Object.keys(step.fallbackVariableMapping).length ? step.fallbackVariableMapping : step.templateParameterMappings;
-        if (template.headerType === 'IMAGE' && !components?.header) return this.block(execution, subscription, step, 'TEMPLATE_IMAGE_HEADER_REQUIRED', 'Outside-24-hour template requires an image header parameter.');
-        response = await whatsapp.sendTemplateMessage({ to: subscription.phone, templateName: template.name, languageCode: step.templateLanguage || template.language, components, whatsappAccountId: subscription.whatsappAccountId, log: false });
-        await execution.update({ sequenceId: sequence.id, messageType: 'template', templateId: template.id, serviceWindowDecision: 'outside_24h_template', buttonConfigurationSnapshot: step.interactiveConfig || {} });
+      if (!window.isOpen) {
+        await execution.update({ status: 'failed', failedAt: new Date(), whatsappMessageId: null, serviceWindowDecision: 'messaging_window_closed', errorCode: 'MESSAGING_WINDOW_CLOSED', errorMessage: 'Customer messaging window was closed when this reminder became due.' });
+        await this.scheduleNext(subscription, sequence, step);
+        return execution.reload();
       } else {
         if (step.sessionMessageType === 'text') response = await whatsapp.sendTextMessage({ to: subscription.phone, text: step.body || '', whatsappAccountId: subscription.whatsappAccountId, log: false });
         else {
@@ -383,23 +364,19 @@ class ReminderSequenceService {
         }
         await execution.update({ sequenceId: sequence.id, messageType: step.sessionMessageType, mediaRecordId: step.mediaId, serviceWindowDecision: 'inside_24h', buttonConfigurationSnapshot: step.interactiveConfig || {} });
       }
-      await execution.update({ status: 'sent', sentAt: new Date(), whatsappMessageId: response?.messages?.[0]?.id || response?.id || null, errorCode: null, errorMessage: null });
+      const whatsappMessageId = response?.messages?.[0]?.id || response?.id || null;
+      if (!whatsappMessageId) throw Object.assign(new Error('WhatsApp accepted no message identifier.'), { code: 'WHATSAPP_MESSAGE_ID_MISSING', permanent: true });
+      await execution.update({ status: 'sent', sentAt: new Date(), whatsappMessageId, errorCode: null, errorMessage: null });
       await this.scheduleNext(subscription, sequence, step);
     } catch (error) {
-      const retry = !error.permanent && execution.attemptCount < Number(process.env.REMINDER_MAX_ATTEMPTS || 3);
-      const next = retry ? new Date(Date.now() + Math.min(3600000, 60000 * (2 ** Math.max(0, execution.attemptCount - 1)))) : null;
-      await execution.update({ status: retry ? 'scheduled' : 'failed', nextRetryAt: next, scheduledAt: next || execution.scheduledAt, errorCode: error.code || 'DELIVERY_FAILED', errorMessage: safeError(error) });
-      if (!retry && !step.continueOnFailure) await subscription.update({ status: 'failed', nextRunAt: null });
-      else if (!retry) await this.scheduleNext(subscription, sequence, step);
-      logger.warn('reminder_execution_failed', { executionId: execution.id, code: error.code || 'DELIVERY_FAILED' });
+      const meta = error.response?.data?.error || error.whatsappApiResponse?.error || error.metaError?.error || {};
+      const failureMessage = meta.error_user_msg || meta.message || error.message || 'Delivery failed';
+      const failureCode = String(meta.code || error.code || 'DELIVERY_FAILED');
+      await execution.update({ status: 'failed', failedAt: new Date(), nextRetryAt: null, whatsappMessageId: null, errorCode: failureCode, errorMessage: safeError(new Error(failureMessage)) });
+      await this.scheduleNext(subscription, sequence, step);
+      logger.warn('reminder_execution_failed', { executionId: execution.id, code: failureCode });
     }
     return execution.reload();
-  }
-  async block(execution, subscription, step, code, message) {
-    await execution.update({ status: 'blocked_outside_service_window', serviceWindowDecision: 'blocked_outside_service_window', errorCode: code, errorMessage: message, failedAt: new Date() });
-    if (step.continueOnFailure) await this.scheduleNext(subscription, await models.ReminderSequence.findByPk(subscription.sequenceId), step);
-    else await subscription.update({ status: 'failed', nextRunAt: null });
-    return execution;
   }
   async scheduleNext(subscription, sequence, step) {
     const next = await models.ReminderSequenceStep.findOne({ where: { sequenceId: sequence.id, enabled: true, stepNumber: { [Op.gt]: step.stepNumber } }, order: [['step_number', 'ASC']] });

@@ -19,11 +19,11 @@ function calculateMessagingWindow(openedAt, now = new Date()) {
 class MessagingWindowService {
   async getMessagingWindow(conversationId, whatsappAccountId, { transaction = null, now = new Date() } = {}) {
     if (!conversationId || !whatsappAccountId) throw Object.assign(new Error('Conversation and WhatsApp account are required.'), { status: 422, code: 'WHATSAPP_ACCOUNT_MISMATCH' });
-    const conversation = await Conversation.findByPk(conversationId, { attributes: ['id', 'whatsappAccountId'], transaction });
+    const conversation = await Conversation.findByPk(conversationId, { attributes: ['id', 'contactId', 'whatsappAccountId'], transaction });
     if (!conversation) throw Object.assign(new Error('Conversation not found.'), { status: 404, code: 'CONVERSATION_NOT_FOUND' });
     if (String(conversation.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Conversation belongs to a different WhatsApp account.'), { status: 409, code: 'WHATSAPP_ACCOUNT_MISMATCH' });
     const inbound = await Message.findOne({
-      where: { conversationId, whatsappAccountId, direction: 'inbound' },
+      where: { conversationId, contactId: conversation.contactId, whatsappAccountId, direction: 'inbound' },
       attributes: ['createdAt'], order: [['created_at', 'DESC']], transaction
     });
     return calculateMessagingWindow(inbound?.createdAt, now);

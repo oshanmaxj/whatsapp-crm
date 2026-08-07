@@ -22,7 +22,6 @@ import {
   sendConversationInteractive,
   sendConversationTemplate,
   setConversationLabels,
-  updateConversation,
   uploadMedia
 } from '../services/chat.service';
 import { getActiveCall } from '../services/callCenter.service';
@@ -31,6 +30,7 @@ import { updateContact } from '../services/contact.service';
 import { updateLeadStatus } from '../services/lead.service';
 import { listWhatsAppTemplates } from '../services/whatsappTemplate.service';
 import { markMessageAsPaymentSlip } from '../services/paymentSlip.service';
+import useLeadStatuses from '../hooks/useLeadStatuses';
 import {
   ChatArea,
   ChatLayout,
@@ -105,6 +105,7 @@ function ChatPage() {
   const [callTick, setCallTick] = useState(Date.now());
   const [agents, setAgents] = useState([]);
   const [roles, setRoles] = useState([]);
+  const leadStatuses = useLeadStatuses();
   const [selected, setSelected] = useState(() => searchParams.get('conversationId') || null);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -120,7 +121,7 @@ function ChatPage() {
   const [windowNow, setWindowNow] = useState(() => Date.now());
   const [newMessage, setNewMessage] = useState('');
   const [noteText, setNoteText] = useState('');
-  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', leadStatus: '', unread: '', whatsappAccountId: '', messagingWindow: '' });
+  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', leadStatus: '', unread: '', whatsappAccountId: '', messagingWindow: '' });
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -135,12 +136,11 @@ function ChatPage() {
     assignedUserId: filters.assignedUserId || undefined,
     assignedRoleId: filters.assignedRoleId || undefined,
     mine: filters.mine || undefined,
-    status: filters.status || undefined,
     unread: filters.unread || undefined,
     leadStatus: filters.leadStatus || undefined
     , whatsappAccountId: filters.whatsappAccountId || undefined,
     messagingWindow: filters.messagingWindow || undefined
-  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.leadStatus, filters.unread, filters.whatsappAccountId, filters.messagingWindow]);
+  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.leadStatus, filters.unread, filters.whatsappAccountId, filters.messagingWindow]);
 
   const selectedConversation = conversation
     || safeArray(conversations).find((item) => String(item.id) === String(selected))
@@ -652,16 +652,6 @@ function ChatPage() {
     }
   }, [selected, loadDetails, loadConversations]);
 
-  const handleStatus = useCallback(async (status) => {
-    if (!selected) return;
-    try {
-      await updateConversation(selected, { status });
-      await Promise.all([loadDetails(selected), loadConversations({ silent: true })]);
-    } catch (requestError) {
-      setError(requestError.response?.data?.message || 'Unable to update conversation status.');
-    }
-  }, [selected, loadDetails, loadConversations]);
-
   const handleLeadStatus = useCallback(async (statusCode) => {
     const lead = selectedConversation?.lead;
     if (!lead?.id) return;
@@ -916,6 +906,7 @@ function ChatPage() {
             onFiltersChange={setFilters}
             agents={agents}
             roles={roles}
+            leadStatuses={leadStatuses}
             unread={unread}
             connected={connected}
             loading={loading}
@@ -953,7 +944,6 @@ function ChatPage() {
             onBack={handleBack}
             onToggleWorkspace={() => setWorkspaceOpen((value) => !value)}
             onEdit={() => setWorkspaceOpen(true)}
-            onStatusChange={handleStatus}
             replyToMessage={replyToMessage}
             onReply={(message) => setReplyToMessage(message)}
             onMarkPaymentSlip={handleMarkPaymentSlip}

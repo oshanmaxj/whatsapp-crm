@@ -1,7 +1,7 @@
 ﻿const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
-const { CampaignEvent, CampaignRecipient, FlowNode, Message, MessageQueue, Notification } = require('../models');
+const { CampaignEvent, CampaignRecipient, FlowNode, Message, MessageQueue, Notification, ReminderExecution } = require('../models');
 const whatsappConfig = require('../config/whatsapp');
 const whatsappSettingsService = require('./whatsappSettings.service');
 const whatsappAccountService = require('./whatsappAccount.service');
@@ -1274,6 +1274,19 @@ class WhatsappService {
     }
 
     if (status.id) {
+      const reminderExecution = await ReminderExecution.findOne({ where: { whatsappMessageId: status.id } }).catch(() => null);
+      const deliveryRank = { sent: 1, delivered: 2, read: 3 };
+      const shouldUpdateReminder = reminderExecution && (
+        nextStatus === 'failed' ||
+        (deliveryRank[nextStatus] && deliveryRank[nextStatus] >= (deliveryRank[reminderExecution.status] || 0))
+      );
+      if (shouldUpdateReminder) {
+        const reminderUpdate = { status: nextStatus };
+        if (nextStatus === 'delivered') reminderUpdate.deliveredAt = updatedAt;
+        if (nextStatus === 'read') reminderUpdate.readAt = updatedAt;
+        if (nextStatus === 'failed') Object.assign(reminderUpdate, { failedAt: updatedAt, errorCode: errors.errorCode || 'META_REJECTED', errorMessage: errors.errorMessage || 'Meta rejected the reminder message.' });
+        await reminderExecution.update(reminderUpdate).catch(() => null);
+      }
       const queueUpdate = { externalMessageId: status.id };
       if (['delivered', 'read', 'sent'].includes(status.status)) queueUpdate.status = 'sent';
       await MessageQueue.update(queueUpdate, { where: { externalMessageId: status.id } }).catch(() => null);

@@ -17,10 +17,9 @@ import { assignLead, autoAssignLeads, createLead, deleteLead, getLeads, setLeadL
 import { getLabels } from '../services/chat.service';
 import LabelMultiSelect from '../components/LabelMultiSelect';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
-import { LEAD_STATUSES } from '../constants/leadStatuses';
+import useLeadStatuses from '../hooks/useLeadStatuses';
 import { LEAD_COURSES, LEAD_SOURCES } from '../constants/leadFilterOptions';
 
-const statuses = LEAD_STATUSES.map((status) => status.name);
 const sources = LEAD_SOURCES;
 const priorities = ['low', 'medium', 'high'];
 const courses = LEAD_COURSES;
@@ -74,6 +73,8 @@ function toPayload(form) {
 }
 
 function LeadsPage() {
+  const leadStatuses = useLeadStatuses();
+  const statuses = leadStatuses.map((status) => status.name);
   const navigate = useNavigate();
   const { socket } = useOutletContext() || {};
   const [leads, setLeads] = useState([]);
@@ -135,7 +136,7 @@ function LeadsPage() {
     if (!socket) return undefined;
     const applyLeadEvent = (payload = {}) => {
       if (payload.leadId == null) return;
-      const status = LEAD_STATUSES.find((item) => item.code === payload.statusCode);
+      const status = leadStatuses.find((item) => item.code === payload.statusCode);
       const owner = payload.ownerId == null
         ? null
         : agents.find((agent) => String(agent.id) === String(payload.ownerId));
@@ -246,7 +247,7 @@ function LeadsPage() {
 
   const changeStatus = async (lead, statusCode) => {
     const previous = { status: lead.status, statusCode: lead.statusCode };
-    const next = LEAD_STATUSES.find((status) => status.code === statusCode);
+    const next = leadStatuses.find((status) => status.code === statusCode);
     setLeads((rows) => rows.map((row) => row.id === lead.id ? { ...row, status: next.name, statusCode } : row));
     setSavingStatus((current) => ({ ...current, [lead.id]: true }));
     try {
@@ -305,7 +306,7 @@ function LeadsPage() {
                 <TableRow key={lead.id} hover>
                   <TableCell><Typography fontWeight={800}>{lead.name || 'Unnamed lead'}</Typography><Typography variant="body2" color="text.secondary">{lead.phone} {lead.email ? `• ${lead.email}` : ''}</Typography></TableCell>
                   <TableCell><Stack direction="row" gap={.5} flexWrap="wrap" sx={{ minWidth: 130 }}>{(lead.labels || []).map((item) => <Chip key={item.id} size="small" label={item.name} sx={{ height: 22, bgcolor: `${item.color || '#25d366'}22`, border: '1px solid', borderColor: item.color || '#25d366' }} />)}{!(lead.labels || []).length && <Typography variant="caption" color="text.secondary">None</Typography>}</Stack></TableCell>
-                  <TableCell><Stack direction="row" alignItems="center" gap={1}><FormControl size="small" sx={{ minWidth: 145 }} disabled={savingStatus[lead.id]}><Select value={lead.statusCode || 'new'} onChange={(event) => changeStatus(lead, event.target.value)}>{LEAD_STATUSES.map((status) => <MenuItem key={status.code} value={status.code}>{status.name}</MenuItem>)}</Select></FormControl>{savingStatus[lead.id] && <CircularProgress size={18} />}</Stack></TableCell>
+                  <TableCell><Stack direction="row" alignItems="center" gap={1}><FormControl size="small" sx={{ minWidth: 145 }} disabled={savingStatus[lead.id]}><Select value={lead.statusCode || 'new'} onChange={(event) => changeStatus(lead, event.target.value)}>{leadStatuses.map((status) => <MenuItem key={status.id} value={status.code}>{status.name}</MenuItem>)}</Select></FormControl>{savingStatus[lead.id] && <CircularProgress size={18} />}</Stack></TableCell>
                   <TableCell>{lead.source || '-'}</TableCell>
                   <TableCell>{lead.courseInterested || '-'}</TableCell>
                   <TableCell>

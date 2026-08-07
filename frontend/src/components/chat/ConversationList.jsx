@@ -10,11 +10,9 @@ import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import { agentName, contactName, formatTime, initials, messagePreview, safeArray } from './chatUtils';
 import WhatsAppAccountSelect from '../WhatsAppAccountSelect';
-import { LEAD_STATUSES } from '../../constants/leadStatuses';
 
 export const ConversationItem = memo(function ConversationItem({ conversation, selected, onSelect }) {
   const unread = Number(conversation.unreadCount || 0);
-  const isOpen = conversation.status === 'open';
   const windowOpen = Boolean(conversation.messagingWindow?.isOpen) && new Date(conversation.messagingWindow?.expiresAt || 0).getTime() > Date.now();
   const lastMessageInternal = conversation.lastMessage?.isInternalNotification
     || conversation.lastMessage?.is_internal_notification;
@@ -82,14 +80,7 @@ export const ConversationItem = memo(function ConversationItem({ conversation, s
           )}
         </Stack>
         <Stack direction="row" alignItems="center" gap={0.75} sx={{ mt: 0.75 }}>
-          <Chip size="small" label={windowOpen ? '24h Open' : 'Outside 24h'} color={windowOpen ? 'success' : 'warning'} sx={{ height: 20, fontSize: 10 }} />
-          <Chip
-            size="small"
-            label={isOpen ? 'Conversation Active' : 'Conversation Closed'}
-            color={isOpen ? 'success' : 'default'}
-            variant={isOpen ? 'filled' : 'outlined'}
-            sx={{ height: 20, fontSize: 10, textTransform: 'capitalize' }}
-          />
+          <Tooltip title={windowOpen?'Customer messaging window is currently open.':'Only an approved template can be initiated outside the customer messaging window.'}><Chip size="small" label={windowOpen ? 'Open' : 'Outside window'} color={windowOpen ? 'success' : 'warning'} sx={{ height: 20, fontSize: 10 }} /></Tooltip>
           {conversation.whatsappAccount?.name && <Chip size="small" label={conversation.whatsappAccount.name} variant="outlined" sx={{ height: 20, fontSize: 10 }} />}
           {safeArray(conversation.labels).slice(0, 1).map((label) => (
             <Chip key={label.id || label.name} size="small" label={label.name} variant="outlined" sx={{ height: 20, fontSize: 10 }} />
@@ -114,6 +105,7 @@ export function ConversationList({
   onFiltersChange,
   agents,
   roles,
+  leadStatuses,
   unread,
   connected,
   loading,
@@ -189,19 +181,10 @@ export function ConversationList({
             <InputLabel>Lead Status</InputLabel>
             <Select label="Lead Status" value={filters.leadStatus || ''} onChange={(event) => onFiltersChange({ ...filters, leadStatus: event.target.value })}>
               <MenuItem value="">All statuses</MenuItem>
-              {LEAD_STATUSES.map((status) => <MenuItem key={status.code} value={status.code}>{status.name}</MenuItem>)}
+              {safeArray(leadStatuses).map((status) => <MenuItem key={status.id} value={status.code || status.id}>{status.name}</MenuItem>)}
               <MenuItem value="none">No lead/status</MenuItem>
             </Select>
           </FormControl>
-          <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
-            <FormControl size="small" fullWidth>
-              <InputLabel>Status</InputLabel>
-              <Select label="Status" value={filters.status} onChange={(event) => onFiltersChange({ ...filters, status: event.target.value })}>
-                <MenuItem value="">All</MenuItem>
-                {['open', 'pending', 'closed', 'archived'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
-              </Select>
-            </FormControl>
-          </Stack>
           <Stack direction="row" spacing={0.5} flexWrap="wrap">
             <Button size="small" variant={filters.mine === 'role' ? 'contained' : 'text'} onClick={() => onFiltersChange({ ...filters, mine: filters.mine === 'role' ? '' : 'role', assignedRoleId: '' })}>My department chats</Button>
             <Button size="small" variant={filters.mine === 'assigned' ? 'contained' : 'text'} onClick={() => onFiltersChange({ ...filters, mine: filters.mine === 'assigned' ? '' : 'assigned', assignedUserId: '' })}>My assigned chats</Button>

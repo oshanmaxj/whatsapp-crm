@@ -49,9 +49,11 @@ test('nested update uses a single transaction and parks old ordering before writ
   assert.doesNotMatch(source, /\.sync\(/);
 });
 
-test('activation validation requires an approved fallback while draft validation does not', () => {
+test('activation and long-delay saves do not require a fallback template', () => {
+  const payload = normalizeSequence({ name: '48 hour follow-up', status: 'draft', steps: [textStep({ delayValue: 48, templateId: null })] });
+  assert.doesNotThrow(() => validateSequence(payload));
   const source = fs.readFileSync(path.join(__dirname, '../src/services/reminderSequence.service.js'), 'utf8');
-  assert.match(source, /activation && step\.enabled !== false/);
-  assert.match(source, /template\.status !== 'APPROVED'/);
-  assert.match(source, /status === REMINDER_SEQUENCE_STATUS\.ACTIVE[\s\S]*validateReferences/);
+  assert.doesNotMatch(source, /approved fallback template is required before activation/i);
+  assert.match(source, /MESSAGING_WINDOW_CLOSED/);
+  assert.doesNotMatch(source, /sendTemplateMessage/);
 });

@@ -38,11 +38,11 @@ test('migration is advisory locked, transactional and passes transaction to sche
 
 test('inside and outside service-window payload paths remain distinct', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/reminderSequence.service.js'), 'utf8');
-  assert.match(source, /sendTemplateMessage/);
   assert.match(source, /sendInteractiveMessage/);
   assert.match(source, /sendMediaMessage/);
-  assert.match(source, /blocked_outside_service_window/);
-  assert.doesNotMatch(source, /convert.*interactive.*template/i);
+  assert.match(source, /MESSAGING_WINDOW_CLOSED/);
+  assert.match(source, /whatsappMessageId: null/);
+  assert.doesNotMatch(source, /sendTemplateMessage/);
 });
 
 test('button replies reuse the canonical Flow trigger matcher path', () => {

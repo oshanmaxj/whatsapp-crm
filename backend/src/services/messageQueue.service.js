@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { Campaign, CampaignEvent, CampaignRecipient, MessageQueue, Notification, StudentAutomationDispatch } = require('../models');
+const { Campaign, CampaignEvent, CampaignRecipient, Conversation, MessageQueue, Notification, StudentAutomationDispatch } = require('../models');
 const whatsappService = require('./whatsapp.service');
 const outboundHistoryService = require('./outboundHistory.service');
 const logger = require('../config/logger');
@@ -84,6 +84,23 @@ class MessageQueueService {
     let deliverySucceeded = false;
     try {
       let queuePayload = row.payload || {};
+      if (row.campaignRecipientId) {
+        const [campaign, recipient] = await Promise.all([Campaign.findByPk(row.campaignId), CampaignRecipient.findByPk(row.campaignRecipientId)]);
+        if (campaign?.filters?.messagingWindow === 'inside') {
+          const conversation = await Conversation.findOne({ where: {
+            whatsappAccountId: campaign.whatsappAccountId, status: { [Op.ne]: 'archived' },
+            ...(recipient?.contactId ? { contactId: recipient.contactId } : { normalizedPhone: recipient?.phone })
+          }, order: [['created_at', 'DESC']] });
+          const window = conversation ? await require('./messagingWindow.service').getMessagingWindow(conversation.id, campaign.whatsappAccountId) : null;
+          if (!window?.isOpen) {
+            await row.update({ status: 'cancelled', processedAt: new Date(), lastError: 'MESSAGING_WINDOW_CLOSED' });
+            await recipient.update({ status: 'skipped', errorMessage: 'MESSAGING_WINDOW_CLOSED' });
+            await CampaignEvent.create({ campaignId: campaign.id, recipientId: recipient.id, eventType: 'skipped', payload: { queueId: row.id, reasonCode: 'MESSAGING_WINDOW_CLOSED' } });
+            await this.refreshCampaignStatus(campaign.id);
+            return row;
+          }
+        }
+      }
       const requiresCanonicalHistory = row.channel === 'whatsapp' && (
         queuePayload.automationTemplateKey === 'payment_confirmation'
         || queuePayload.paymentSlipId || queuePayload.paymentReceiptId
@@ -305,7 +322,7 @@ class MessageQueueService {
     const [remaining, sent, failed] = await Promise.all([
       CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['pending', 'queued'] } } }),
       CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['sent', 'delivered', 'read', 'replied', 'converted'] } } }),
-      CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['failed', 'unreachable'] } } })
+      CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['failed', 'unreachable', 'skipped'] } } })
     ]);
     if (remaining > 0) return;
     await Campaign.update({

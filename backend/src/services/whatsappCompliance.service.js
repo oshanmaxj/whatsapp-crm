@@ -7,6 +7,7 @@ const {
 } = require('../models');
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
+const messagingWindowService = require('./messagingWindow.service');
 
 function windowStatus(open) {
   return open ? 'open' : 'closed';
@@ -30,19 +31,24 @@ class WhatsAppComplianceService {
   }
 
   async isConversationWindowOpen(contactId, whatsappAccountId = null, conversationId = null) {
+    if (conversationId && whatsappAccountId) {
+      const window = await messagingWindowService.getMessagingWindow(conversationId, whatsappAccountId);
+      return { open: window.isOpen, lastInboundAt: window.openedAt, messagingWindow: window };
+    }
     const lastInbound = await this.getLastInboundMessage(contactId, whatsappAccountId, conversationId);
     if (!lastInbound) return { open: false, lastInboundAt: null };
     const open = Date.now() - new Date(lastInbound.createdAt).getTime() <= WINDOW_MS;
     return { open, lastInboundAt: lastInbound.createdAt };
   }
 
-  async canSendFreeFormMessage(contactId, whatsappAccountId = null) {
-    const window = await this.isConversationWindowOpen(contactId, whatsappAccountId);
+  async canSendFreeFormMessage(contactId, whatsappAccountId = null, conversationId = null) {
+    const window = await this.isConversationWindowOpen(contactId, whatsappAccountId, conversationId);
     return {
       canSend: window.open,
       windowOpen: window.open,
       lastInboundAt: window.lastInboundAt,
-      reason: window.open ? '24-hour customer service window is open.' : '24-hour customer service window is closed. Approved template is required.'
+      reason: window.open ? '24-hour customer service window is open.' : '24-hour customer service window is closed. Approved template is required.',
+      messagingWindow: window.messagingWindow || null
     };
   }
 

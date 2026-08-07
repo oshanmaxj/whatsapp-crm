@@ -202,7 +202,8 @@ class ReminderSequenceService {
     });
   }
   async changeSequenceStatus(id, requestedStatus, userId) {
-    const status = String(requestedStatus || '').trim().toLowerCase();
+    const requested = String(requestedStatus || '').trim().toLowerCase();
+    const status = ({ activate: 'active', resume: 'active', pause: 'paused', archive: 'archived' })[requested] || requested;
     if (!REMINDER_SEQUENCE_STATUSES.has(status)) throw validationError({ status: 'Choose draft, active, paused, or archived.' });
     const operation = async (name, fn) => {
       try {
@@ -232,7 +233,7 @@ class ReminderSequenceService {
       }));
       if (row.status === status) return { sequence: row, warnings: [] };
       if (!REMINDER_SEQUENCE_TRANSITIONS[row.status]?.has(status)) throw Object.assign(new Error(`Cannot change reminder sequence from ${row.status} to ${status}.`), {
-        status: 409, code: 'REMINDER_STATUS_TRANSITION_INVALID'
+        status: 409, code: 'INVALID_SEQUENCE_TRANSITION'
       });
       const result = status === REMINDER_SEQUENCE_STATUS.ACTIVE ? validateForActivation(row) : { warnings: [] };
       if (status === REMINDER_SEQUENCE_STATUS.ACTIVE) await validateReferences({
@@ -261,7 +262,24 @@ class ReminderSequenceService {
     }, userId);
   }
   async removeSequence(id, userId) {
-    const row = await this.getSequence(id, userId); await row.update({ updatedBy: userId }); await row.destroy(); return { id: row.id };
+    return models.sequelize.transaction(async transaction => {
+      const row = await models.ReminderSequence.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!row) throw Object.assign(new Error('Reminder sequence not found.'), { status: 404 });
+      if (row.whatsappAccountId) await whatsappAccountAccess.assertAccess(row.whatsappAccountId, userId);
+      const [subscriptions, blockingSubscriptions, executions] = await Promise.all([
+        models.ReminderSubscription.count({ where: { sequenceId: row.id }, transaction }),
+        models.ReminderSubscription.count({ where: { sequenceId: row.id, status: { [Op.in]: ['active', 'paused'] } }, transaction }),
+        models.ReminderExecution.count({ where: { sequenceId: row.id }, transaction })
+      ]);
+      const counts = { subscriptions, activeOrPausedSubscriptions: blockingSubscriptions, executions };
+      if (row.status === 'active' || blockingSubscriptions) throw Object.assign(new Error('Sequence cannot be deleted while it or its subscriptions are active.'), { status: 409, code: 'REMINDER_SEQUENCE_DELETE_BLOCKED', details: counts });
+      const hardDelete = row.status === 'draft' && subscriptions === 0 && executions === 0;
+      if (!hardDelete && row.status !== 'archived') throw Object.assign(new Error('Archive this sequence before permanent deletion.'), { status: 409, code: 'REMINDER_SEQUENCE_DELETE_BLOCKED', details: counts });
+      await models.AuditLog.create({ userId, action: hardDelete ? 'reminder_sequence.hard_deleted' : 'reminder_sequence.soft_deleted', entityType: 'reminder_sequence', entityId: String(row.id), changes: { name: row.name, status: row.status, counts } }, { transaction });
+      await row.update({ updatedBy: userId }, { transaction });
+      await row.destroy({ transaction, force: hardDelete });
+      return { id: row.id, deletion: hardDelete ? 'hard' : 'soft', counts };
+    });
   }
   async subscribe(input, userId = null, existingTransaction = null) {
     const sequence = await this.getSequence(input.sequenceId);

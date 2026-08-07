@@ -1094,6 +1094,10 @@ class WhatsappService {
       await socketService.emitToConversationAudience(conversationId, events.CONVERSATION_UPDATED, {
         ...canonicalPayload, messageId: messageRecord.id, lastMessage: socketPayload, lastMessageAt: canonicalPayload.timestamp
       });
+      const messagingWindow = await require('./messagingWindow.service').getMessagingWindow(conversationId, whatsappAccountId);
+      await socketService.emitToConversationAudience(conversationId, events.MESSAGING_WINDOW_UPDATED, {
+        conversationId, whatsappAccountId, messagingWindow, timestamp: new Date().toISOString()
+      });
     }
 
     if (attachment && ['image', 'document'].includes(messageRecord.type)) {

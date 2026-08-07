@@ -8,7 +8,7 @@ module.exports = (sequelize, DataTypes) => {
     phone: { type: DataTypes.STRING(50), allowNull: false },
     name: { type: DataTypes.STRING(200), allowNull: true },
     status: {
-      type: DataTypes.ENUM('pending', 'queued', 'simulated_sent', 'sent', 'delivered', 'read', 'failed', 'unreachable', 'replied', 'converted'),
+      type: DataTypes.ENUM('pending', 'queued', 'simulated_sent', 'sent', 'delivered', 'read', 'failed', 'unreachable', 'skipped', 'replied', 'converted'),
       allowNull: false,
       defaultValue: 'pending'
     },

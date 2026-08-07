@@ -94,6 +94,8 @@ function serializeConversation(conversation) {
   const { messages, ...conversationData } = json;
   const messagesSent = Number(json.messagesSent || 0);
   const repliesReceived = Number(json.repliesReceived || 0);
+  const openedAt = json.lastInboundAt || null;
+  const messagingWindow = require('./messagingWindow.service').calculateMessagingWindow(openedAt);
   return {
     ...conversationData,
     assignee: serializeAgent(json.assignee),
@@ -103,7 +105,8 @@ function serializeConversation(conversation) {
     assigned_role_id: json.assignedRoleId,
     unreadCount: Number(json.unreadCount || 0),
     lastMessage: messages?.[0] || null,
-    interactionRate: calculateInteractionRate(messagesSent, repliesReceived)
+    interactionRate: calculateInteractionRate(messagesSent, repliesReceived),
+    messagingWindow
   };
 }
 
@@ -197,7 +200,8 @@ class InboxService {
     status,
     unread,
     whatsappAccountId,
-    leadStatus
+    leadStatus,
+    messagingWindow
   } = {}, userOrId) {
     const userId = typeof userOrId === 'object' ? userOrId.id : userOrId;
     const filters = {};
@@ -217,6 +221,10 @@ class InboxService {
     if (status) filters.status = status;
     if (whatsappAccountId) filters.whatsappAccountId = whatsappAccountId;
     const where = await conversationAccessService.scopedWhere(userOrId, filters);
+    if (['inside', 'outside'].includes(messagingWindow)) {
+      const exists = `EXISTS (SELECT 1 FROM messages mw WHERE mw.conversation_id = "Conversation"."id" AND mw.whatsapp_account_id = "Conversation"."whatsapp_account_id" AND mw.direction = 'inbound' AND mw.deleted_at IS NULL AND mw.created_at > NOW() - INTERVAL '24 hours')`;
+      where[Op.and] = [...(where[Op.and] || []), literal(messagingWindow === 'inside' ? exists : `NOT ${exists}`)];
+    }
 
     const contactWhere = {};
     if (search) {

@@ -8,6 +8,10 @@ const { normalizeMessagePresentation } = require('../src/services/messagePresent
 const fsp = require('fs/promises');
 const path = require('path');
 const logger = require('../src/config/logger');
+const messagingWindow = require('../src/services/messagingWindow.service');
+const originalAuthorizeSessionMessage = messagingWindow.authorizeSessionMessage;
+test.before(() => { messagingWindow.authorizeSessionMessage = async () => ({ allowed: true, messagingWindow: { isOpen: true } }); });
+test.after(() => { messagingWindow.authorizeSessionMessage = originalAuthorizeSessionMessage; });
 
 function mutable(values) {
   return { ...values, update: async function update(patch) { Object.assign(this, patch); return this; }, toJSON() { return { ...this, update: undefined, toJSON: undefined }; } };

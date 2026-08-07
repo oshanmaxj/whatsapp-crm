@@ -76,6 +76,7 @@ function inferMediaType(file) {
 }
 
 function isMessagingWindowOpen(conversation, now = Date.now()) {
+  if (conversation?.messagingWindow) return Boolean(conversation.messagingWindow.isOpen)
   const value = conversation?.lastInboundAt || conversation?.last_inbound_at;
   const lastInboundTime = value ? new Date(value).getTime() : Number.NaN;
   return Number.isFinite(lastInboundTime)
@@ -119,7 +120,7 @@ function ChatPage() {
   const [windowNow, setWindowNow] = useState(() => Date.now());
   const [newMessage, setNewMessage] = useState('');
   const [noteText, setNoteText] = useState('');
-  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', leadStatus: '', unread: '', whatsappAccountId: '' });
+  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', status: '', leadStatus: '', unread: '', whatsappAccountId: '', messagingWindow: '' });
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -137,8 +138,9 @@ function ChatPage() {
     status: filters.status || undefined,
     unread: filters.unread || undefined,
     leadStatus: filters.leadStatus || undefined
-    , whatsappAccountId: filters.whatsappAccountId || undefined
-  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.leadStatus, filters.unread, filters.whatsappAccountId]);
+    , whatsappAccountId: filters.whatsappAccountId || undefined,
+    messagingWindow: filters.messagingWindow || undefined
+  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.status, filters.leadStatus, filters.unread, filters.whatsappAccountId, filters.messagingWindow]);
 
   const selectedConversation = conversation
     || safeArray(conversations).find((item) => String(item.id) === String(selected))
@@ -368,9 +370,9 @@ function ChatPage() {
           if (incoming.id != null && rows.some((item) => String(item.id) === String(incoming.id))) return rows;
           return [...rows, incoming];
         });
-        if (incoming.direction === 'inbound' || incoming.status === 'received') {
+        if (incoming.direction === 'inbound') {
           setConversation((current) => current
-            ? { ...current, lastInboundAt: incoming.createdAt || new Date().toISOString() }
+            ? { ...current, lastInboundAt: incoming.createdAt || new Date().toISOString(), messagingWindow: { isOpen: true, openedAt: incoming.createdAt || new Date().toISOString(), expiresAt: new Date(new Date(incoming.createdAt || Date.now()).getTime()+86400000).toISOString(), remainingSeconds: 86400, reason: 'CUSTOMER_SERVICE_WINDOW' } }
             : current);
         }
         setConversation((current) => applyInteractionMessage(current, incoming));
@@ -380,15 +382,16 @@ function ChatPage() {
           String(item.id) === String(incoming.conversationId)
             ? {
                 ...item,
-                unreadCount: (incoming.direction === 'inbound' || incoming.status === 'received')
+                unreadCount: incoming.direction === 'inbound'
                   ? (String(incoming.conversationId) === String(selectedRef.current)
                     ? 0 : Number(item.unreadCount || 0) + 1)
                   : Number(item.unreadCount || 0),
                 lastMessage: incoming,
                 lastMessageAt: incoming.createdAt || new Date().toISOString(),
-                lastInboundAt: incoming.direction === 'inbound' || incoming.status === 'received'
+                lastInboundAt: incoming.direction === 'inbound'
                   ? incoming.createdAt || new Date().toISOString()
                   : item.lastInboundAt,
+                messagingWindow: incoming.direction === 'inbound' ? { isOpen: true, openedAt: incoming.createdAt || new Date().toISOString(), expiresAt: new Date(new Date(incoming.createdAt || Date.now()).getTime()+86400000).toISOString(), remainingSeconds: 86400, reason: 'CUSTOMER_SERVICE_WINDOW' } : item.messagingWindow,
                 interactionRate: applyInteractionMessage(item, incoming).interactionRate
               }
             : item
@@ -396,7 +399,7 @@ function ChatPage() {
         return updated.sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0));
       });
       refreshUnread();
-      if ((incoming.direction === 'inbound' || incoming.status === 'received')
+      if (incoming.direction === 'inbound'
         && String(incoming.conversationId) === String(selectedRef.current)
         && document.visibilityState === 'visible') {
         if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current);
@@ -442,6 +445,11 @@ function ChatPage() {
     };
 
     const handleSocketError = ({ message } = {}) => setError(message || 'Unable to send WhatsApp message.');
+    const handleMessagingWindow = (payload = {}) => {
+      if (!payload.conversationId || !payload.messagingWindow) return;
+      setConversations(current=>safeArray(current).map(item=>String(item.id)===String(payload.conversationId)?{...item,messagingWindow:payload.messagingWindow,lastInboundAt:payload.messagingWindow.openedAt}:item));
+      if(String(selectedRef.current)===String(payload.conversationId))setConversation(current=>current?{...current,messagingWindow:payload.messagingWindow,lastInboundAt:payload.messagingWindow.openedAt}:current);
+    };
     const applyLeadUpdate = (payload = {}) => {
       if (payload.leadId == null && payload.conversationId == null) return;
       const owner = payload.ownerId == null
@@ -502,6 +510,7 @@ function ChatPage() {
     socket.on('lead.agent.changed', applyLeadUpdate);
     socket.on('conversation.merged', handleConversationMerged);
     socket.on('crm.labels.changed', handleLabelsChanged);
+    socket.on('messaging_window_updated', handleMessagingWindow);
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('whatsapp.message.received', handleNewMessage);
@@ -516,6 +525,7 @@ function ChatPage() {
       socket.off('lead.agent.changed', applyLeadUpdate);
       socket.off('conversation.merged', handleConversationMerged);
       socket.off('crm.labels.changed', handleLabelsChanged);
+      socket.off('messaging_window_updated', handleMessagingWindow);
     };
   }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage]);
 

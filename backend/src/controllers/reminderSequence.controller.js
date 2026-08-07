@@ -10,7 +10,7 @@ exports.uploadMedia = wrap(async (req,res)=>{
   return ok(res,await service.uploadMedia({...req.body,buffer:req.file.buffer,fileName:req.file.originalname,mimeType:req.file.mimetype},req.user.id),201);
 });
 exports.update = wrap(async (req,res)=>ok(res,await service.saveSequence(req.params.id,req.body,req.user.id)));
-exports.status = wrap(async (req,res)=>ok(res,await service.changeSequenceStatus(req.params.id,req.body.status,req.user.id)));
+exports.status = wrap(async (req,res)=>ok(res,await service.changeSequenceStatus(req.params.id,req.body.action || req.body.status,req.user.id)));
 exports.duplicate = wrap(async (req,res)=>ok(res,await service.duplicateSequence(req.params.id,req.user.id),201));
 exports.remove = wrap(async (req,res)=>ok(res,await service.removeSequence(req.params.id,req.user.id)));
 exports.subscribe = wrap(async (req,res)=>ok(res,await service.subscribe(req.body,req.user.id),201));

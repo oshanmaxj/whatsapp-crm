@@ -132,11 +132,11 @@ class ChatService {
       throw error;
     }
 
-    const compliance = await whatsappComplianceService.canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId);
+    const compliance = await whatsappComplianceService.canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId, conversation.id);
     if (!compliance.canSend) {
       const error = new Error('Template required to message this customer.');
       error.status = 409;
-      error.code = 'TEMPLATE_REQUIRED';
+      error.code = compliance.messagingWindow?.reason === 'NO_INBOUND_CUSTOMER_MESSAGE' ? 'NO_INBOUND_CUSTOMER_MESSAGE' : 'MESSAGING_WINDOW_CLOSED';
       error.lastInboundAt = compliance.lastInboundAt;
       throw error;
     }
@@ -212,8 +212,8 @@ class ChatService {
       title: String(button.title || '').trim().slice(0, 20)
     }));
     if (normalizedButtons.some((button) => !button.title)) throw Object.assign(new Error('Every interactive button requires a title.'), { status: 422, code: 'INTERACTIVE_BUTTONS_INVALID' });
-    const compliance = await whatsappComplianceService.canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId);
-    if (!compliance.canSend) throw Object.assign(new Error('Template required to message this customer.'), { status: 409, code: 'TEMPLATE_REQUIRED' });
+    const compliance = await whatsappComplianceService.canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId, conversation.id);
+    if (!compliance.canSend) throw Object.assign(new Error('Template required to message this customer.'), { status: 409, code: compliance.messagingWindow?.reason === 'NO_INBOUND_CUSTOMER_MESSAGE' ? 'NO_INBOUND_CUSTOMER_MESSAGE' : 'MESSAGING_WINDOW_CLOSED' });
 
     let existing = null;
     if (clientRequestId) {
@@ -387,7 +387,7 @@ class ChatService {
     if (!conversation?.whatsappAccountId) throw Object.assign(new Error('Canonical conversation does not have a WhatsApp account.'), { status: 422, code: 'WHATSAPP_ACCOUNT_REQUIRED' });
     const template = await whatsappTemplateService.approvedTemplateByName(templateName, languageCode, conversation.whatsappAccountId);
     const account = await require('../models').WhatsAppAccount.findByPk(conversation.whatsappAccountId, { attributes: ['id', 'name', 'phoneNumberId', 'wabaId'] });
-    const compliance = await require('./whatsappCompliance.service').canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId);
+    const compliance = await require('./whatsappCompliance.service').canSendFreeFormMessage(conversation.contactId, conversation.whatsappAccountId, conversation.id);
     const lastFailure = await Message.findOne({ where: { conversationId: conversation.id, type: 'template', status: 'failed', ...(templateName ? { templateName } : {}) }, order: [['status_updated_at', 'DESC']], attributes: ['errorCode', 'errorSubcode', 'errorMessage', 'statusUpdatedAt'] });
     return { account, template: template ? { id: template.id, name: template.name, category: template.category, language: template.language, status: template.status, lastSync: template.lastSyncedAt } : null, lastSendError: lastFailure, windowOpen: compliance.canSend, messageRequirement: compliance.canSend ? 'normal_text_or_template' : 'template_required' };
   }
@@ -499,10 +499,15 @@ class ChatService {
 
   async getConversationList(userId) {
     const where = await conversationAccessService.scopedWhere(userId, { status: { [Op.ne]: 'archived' } });
-    return Conversation.findAll({
+    const conversations = await Conversation.findAll({
       where,
       order: [['updated_at', 'DESC']]
     });
+    const messagingWindowService = require('./messagingWindow.service');
+    return Promise.all(conversations.map(async conversation => ({
+      ...(conversation.toJSON ? conversation.toJSON() : conversation),
+      messagingWindow: await messagingWindowService.getMessagingWindow(conversation.id, conversation.whatsappAccountId)
+    })));
   }
 
   async getConversationMessages(conversationId, userId) {

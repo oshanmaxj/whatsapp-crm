@@ -25,7 +25,7 @@ const blankForm = () => ({
   name: '', description: '', whatsappTemplateId: '', recipientMode: 'all', contactIds: [],
   tag: '', leadStatus: '', departmentId: '', csv: '', startDate: '', endDate: '',
   statusId: '', sourceId: '', variables: {}, headerMedia: null, headerPreview: '', headerText: '',
-  sendMode: 'now', scheduledAt: '', whatsappAccountId: ''
+  sendMode: 'now', scheduledAt: '', whatsappAccountId: '', messagingWindow: 'all'
 });
 
 function displayName(contact) {
@@ -138,7 +138,7 @@ function CampaignsPage() {
   };
 
   const audiencePayload = () => {
-    const filters = {};
+    const filters = { messagingWindow: form.messagingWindow };
     let audienceType = 'contacts';
     if (form.recipientMode === 'selected') filters.contactIds = form.contactIds;
     if (form.recipientMode === 'tag') filters.tag = form.tag;
@@ -159,10 +159,10 @@ function CampaignsPage() {
         end_date: form.endDate,
         status_id: form.statusId ? Number(form.statusId) : undefined,
         source_id: form.sourceId ? Number(form.sourceId) : undefined,
-        limit: 10000
+        limit: 10000, messagingWindow: form.messagingWindow, whatsappAccountId: form.whatsappAccountId
       };
     }
-    return { audienceType, filters, limit: 10000 };
+    return { audienceType, filters, limit: 10000, messagingWindow: form.messagingWindow, whatsappAccountId: form.whatsappAccountId };
   };
 
   const previewRecipients = async () => {
@@ -358,6 +358,8 @@ function CampaignsPage() {
         <MenuItem value="lead_status">By lead status</MenuItem><MenuItem value="department">By department</MenuItem><MenuItem value="csv">Imported CSV</MenuItem>
         <MenuItem value="lead_date_range">By Lead Date Range</MenuItem>
       </Select></FormControl>
+      <FormControl fullWidth><InputLabel>Messaging window</InputLabel><Select label="Messaging window" value={form.messagingWindow} onChange={(e)=>{setField('messagingWindow',e.target.value);setPreview(null)}}><MenuItem value="all">All eligible recipients</MenuItem><MenuItem value="inside">Only chats inside the 24-hour window</MenuItem></Select></FormControl>
+      {form.messagingWindow==='inside'&&<Alert severity="info">Eligibility is estimated now and checked again immediately before each send. Closed windows will be skipped.</Alert>}
       {form.recipientMode === 'selected' && <FormControl fullWidth><InputLabel>Contacts</InputLabel><Select multiple label="Contacts" value={form.contactIds} onChange={(e) => setField('contactIds', e.target.value)} renderValue={(selected) => `${selected.length} contact(s) selected`}>{contacts.map((contact) => <MenuItem key={contact.id} value={contact.id}><Checkbox checked={form.contactIds.includes(contact.id)} />{displayName(contact)} · {contact.phone}</MenuItem>)}</Select></FormControl>}
       {form.recipientMode === 'tag' && <TextField select label="Contact label / tag" value={form.tag} onChange={(e) => setField('tag', e.target.value)} fullWidth>{allTags.map((tag) => <MenuItem key={tag} value={tag}>{tag}</MenuItem>)}</TextField>}
       {form.recipientMode === 'lead_status' && <TextField select label="Lead status" value={form.leadStatus} onChange={(e) => setField('leadStatus', e.target.value)} fullWidth>{leadStatuses.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField>}

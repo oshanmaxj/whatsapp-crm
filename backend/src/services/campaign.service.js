@@ -5,6 +5,7 @@ const {
   CampaignEvent,
   CampaignRecipient,
   Contact,
+  Conversation,
   Lead,
   LeadSource,
   LeadStatus,
@@ -20,6 +21,7 @@ const whatsappTemplateService = require('./whatsappTemplate.service');
 const interactiveMediaService = require('./interactiveMedia.service');
 const { normalizePhone } = require('../utils/phone');
 const logger = require('../config/logger');
+const messagingWindowService = require('./messagingWindow.service');
 
 function fullName(person) {
   return [person?.firstName, person?.lastName].filter(Boolean).join(' ') || person?.name || person?.phone || 'Unknown';
@@ -179,6 +181,7 @@ class CampaignService {
     const recipientSource = payload.recipient_source || payload.recipientSource;
     const filters = {
       ...(payload.filters || {}),
+      messagingWindow: payload.messagingWindow || payload.filters?.messagingWindow || 'all',
       ...(recipientSource ? {
         recipientSource,
         startDate: payload.start_date || payload.startDate,
@@ -272,7 +275,21 @@ class CampaignService {
         });
       });
     }
-    const recipients = Array.from(byPhone.values());
+    let recipients = Array.from(byPhone.values());
+    if ((options.messagingWindow || filters.messagingWindow) === 'inside') {
+      if (!options.whatsappAccountId) throw Object.assign(new Error('Select a WhatsApp account before filtering by messaging window.'), { status: 422, code: 'WHATSAPP_ACCOUNT_MISMATCH' });
+      const eligible = [];
+      for (const recipient of recipients) {
+        const conversation = await Conversation.findOne({ where: {
+          whatsappAccountId: options.whatsappAccountId, status: { [Op.ne]: 'archived' },
+          ...(recipient.contactId ? { contactId: recipient.contactId } : { normalizedPhone: recipient.phone })
+        }, order: [['created_at', 'DESC']] });
+        if (!conversation) continue;
+        const window = await messagingWindowService.getMessagingWindow(conversation.id, options.whatsappAccountId);
+        if (window.isOpen) eligible.push({ ...recipient, conversationId: conversation.id, messagingWindow: window });
+      }
+      recipients = eligible;
+    }
     return { total: recipients.length, recipients: recipients.slice(0, limit) };
   }
 
@@ -365,7 +382,7 @@ class CampaignService {
   async ensureRecipients(campaign) {
     const existing = await CampaignRecipient.findAll({ where: { campaignId: campaign.id } });
     if (existing.length) return existing;
-    const audience = await this.previewAudience({ audienceType: campaign.audienceType, filters: campaign.filters, limit: 10000 });
+    const audience = await this.previewAudience({ audienceType: campaign.audienceType, filters: campaign.filters, messagingWindow: campaign.filters?.messagingWindow, whatsappAccountId: campaign.whatsappAccountId, limit: 10000 });
     for (const item of audience.recipients) {
       await CampaignRecipient.findOrCreate({
         where: { campaignId: campaign.id, phone: normalizePhone(item.phone) },
@@ -376,7 +393,8 @@ class CampaignService {
           phone: normalizePhone(item.phone),
           name: item.name,
           status: 'pending',
-          variableData: item
+          variableData: item,
+          whatsappAccountId: campaign.whatsappAccountId || null
         }
       });
     }
@@ -529,14 +547,15 @@ class CampaignService {
     const delivered = (counts.delivered || 0) + (counts.read || 0) + (counts.replied || 0) + (counts.converted || 0);
     const read = (counts.read || 0) + (counts.replied || 0) + (counts.converted || 0);
     const failed = (counts.failed || 0) + (counts.unreachable || 0);
+    const skipped = counts.skipped || 0;
     const rate = (value, base = totalRecipients) => base ? Math.round((value / base) * 10000) / 100 : 0;
     return {
       campaign,
-      totals: { totalRecipients, queued, sent, delivered, read, failed },
+      totals: { totalRecipients, queued, sent, delivered, read, failed, skipped },
       rates: { deliveryRate: rate(delivered, sent), readRate: rate(read, delivered), failureRate: rate(failed) },
       byStatus: counts,
       failureReport: await CampaignRecipient.findAll({
-        where: { campaignId: id, status: { [Op.in]: ['failed', 'unreachable'] } },
+        where: { campaignId: id, status: { [Op.in]: ['failed', 'unreachable', 'skipped'] } },
         order: [['updated_at', 'DESC']]
       })
     };

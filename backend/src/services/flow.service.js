@@ -1131,6 +1131,8 @@ class FlowService {
       }).catch(() => render(config.fallbackMessage || 'A team member will help you shortly.', context));
     }
     if (!realSendEnabled) return { status: 'simulated', to, text, nodeType: node.nodeType };
+    if (!context.conversationId || !context.whatsappAccountId) throw Object.assign(new Error('Canonical conversation and WhatsApp account are required for Flow delivery.'), { status: 409, code: 'WHATSAPP_ACCOUNT_MISMATCH' });
+    await require('./messagingWindow.service').authorizeSessionMessage({ conversationId: context.conversationId, whatsappAccountId: context.whatsappAccountId });
     let response;
     let storedType = 'text';
     let sentMediaId = null;

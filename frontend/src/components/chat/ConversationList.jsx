@@ -15,6 +15,7 @@ import { LEAD_STATUSES } from '../../constants/leadStatuses';
 export const ConversationItem = memo(function ConversationItem({ conversation, selected, onSelect }) {
   const unread = Number(conversation.unreadCount || 0);
   const isOpen = conversation.status === 'open';
+  const windowOpen = Boolean(conversation.messagingWindow?.isOpen) && new Date(conversation.messagingWindow?.expiresAt || 0).getTime() > Date.now();
   const lastMessageInternal = conversation.lastMessage?.isInternalNotification
     || conversation.lastMessage?.is_internal_notification;
 
@@ -81,9 +82,10 @@ export const ConversationItem = memo(function ConversationItem({ conversation, s
           )}
         </Stack>
         <Stack direction="row" alignItems="center" gap={0.75} sx={{ mt: 0.75 }}>
+          <Chip size="small" label={windowOpen ? '24h Open' : 'Outside 24h'} color={windowOpen ? 'success' : 'warning'} sx={{ height: 20, fontSize: 10 }} />
           <Chip
             size="small"
-            label={isOpen ? 'Open' : conversation.status || 'Open'}
+            label={isOpen ? 'Conversation Active' : 'Conversation Closed'}
             color={isOpen ? 'success' : 'default'}
             variant={isOpen ? 'filled' : 'outlined'}
             sx={{ height: 20, fontSize: 10, textTransform: 'capitalize' }}
@@ -118,6 +120,7 @@ export function ConversationList({
   onRefresh
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const windowCounts = safeArray(conversations).reduce((counts, row) => { const window=row.messagingWindow||{},remaining=Math.max(0,Math.ceil((new Date(window.expiresAt||0).getTime()-Date.now())/1000)); if(window.isOpen&&remaining>0){counts.inside+=1;if(remaining<=3600)counts.closing+=1}else counts.outside+=1;return counts },{inside:0,outside:0,closing:0});
 
   return (
     <Box sx={{ width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', bgcolor: 'background.paper' }}>
@@ -158,6 +161,11 @@ export function ConversationList({
             startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>
           }}
         />
+        <Stack direction="row" spacing={0.5} sx={{pt:1}} flexWrap="wrap">
+          <Chip size="small" clickable label={`Inside 24h: ${windowCounts.inside}`} color="success" onClick={()=>onFiltersChange({...filters,messagingWindow:'inside'})}/>
+          <Chip size="small" clickable label={`Outside 24h: ${windowCounts.outside}`} color="warning" onClick={()=>onFiltersChange({...filters,messagingWindow:'outside'})}/>
+          <Chip size="small" label={`Closing within 1h: ${windowCounts.closing}`} variant="outlined"/>
+        </Stack>
         <Collapse in={filtersOpen}>
           <Box sx={{ pt: 1 }}><WhatsAppAccountSelect value={filters.whatsappAccountId || ''} onChange={(value) => onFiltersChange({ ...filters, whatsappAccountId: value })} allowAll fullWidth /></Box>
           <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
@@ -176,6 +184,7 @@ export function ConversationList({
               </Select>
             </FormControl>
           </Stack>
+          <FormControl size="small" fullWidth sx={{ mt: 1 }}><InputLabel>Messaging window</InputLabel><Select label="Messaging window" value={filters.messagingWindow||''} onChange={(event)=>onFiltersChange({...filters,messagingWindow:event.target.value})}><MenuItem value="">All</MenuItem><MenuItem value="inside">Inside 24 hours</MenuItem><MenuItem value="outside">Outside 24 hours</MenuItem></Select></FormControl>
           <FormControl size="small" fullWidth sx={{ mt: 1 }}>
             <InputLabel>Lead Status</InputLabel>
             <Select label="Lead Status" value={filters.leadStatus || ''} onChange={(event) => onFiltersChange({ ...filters, leadStatus: event.target.value })}>

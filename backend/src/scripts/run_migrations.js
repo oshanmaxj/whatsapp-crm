@@ -57,6 +57,7 @@ const whatsappAiAgentsMigration = require('../../migrations/045_whatsapp_ai_agen
 const reminderSequencesAiProvidersMigration = require('../../migrations/046_reminder_sequences_ai_providers');
 const reminderInteractiveMessagesMigration = require('../../migrations/056_reminder_interactive_messages');
 const reminderReplyPolicyMigration = require('../../migrations/057_reminder_reply_policy');
+const messagingWindowCampaignAudienceMigration = require('../../migrations/058_messaging_window_campaign_audience');
 const campaignTemplateHeadersMigration = require('../../migrations/047_campaign_template_headers');
 
 function originalDatabaseError(error) {
@@ -261,6 +262,7 @@ async function run() {
     await runMigration('056_reminder_interactive_messages.js', reminderInteractiveMessagesMigration, queryInterface);
     console.log('Applied: reminder interactive messages');
     await runMigration('057_reminder_reply_policy.js', reminderReplyPolicyMigration, queryInterface);
+    await runMigration('058_messaging_window_campaign_audience.js', messagingWindowCampaignAudienceMigration, queryInterface);
     console.log('Applied: reminder reply policy');
     await runMigration('047_campaign_template_headers.js', campaignTemplateHeadersMigration, queryInterface);
     console.log('Applied: approved template header media for campaigns');

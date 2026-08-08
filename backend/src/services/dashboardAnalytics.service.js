@@ -25,7 +25,8 @@ function scoreAndRank(rows) {
 class DashboardAnalyticsService {
   async accountingSummary(actor) {
     const day = colomboDay(); const monthKey = `${day.key.slice(0, 7)}-01`; const monthStart = new Date(`${monthKey}T00:00:00+05:30`);
-    const sum = async (type, startKey) => Number(await AccountingTransaction.sum('amount', { where: { type, date: { [Op.gte]: startKey, [Op.lte]: day.key } } }) || 0);
+    const epochWhere = (await require('./accountingEpoch.service').scopeWhere('current', actor)).where;
+    const sum = async (type, startKey) => Number(await AccountingTransaction.sum('amount', { where: { ...epochWhere, type, date: { [Op.gte]: startKey, [Op.lte]: day.key } } }) || 0);
     const [incomeToday, incomeMonth, expensesMonth, pendingFees, paymentVerifications, receiptsGenerated, reversals, commissionsPending] = await Promise.all([
       sum('income', day.key), sum('income', monthKey), sum('expense', monthKey), StudentFee.sum('balance', { where: { status: { [Op.in]: ['pending', 'partial', 'overdue'] } } }),
       PaymentSlip.count({ where: { verificationStatus: 'PENDING' } }), PaymentReceipt.count({ where: { receiptDate: { [Op.gte]: monthStart }, status: 'ACTIVE' } }),

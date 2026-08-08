@@ -13,10 +13,10 @@ import {
   createAccountingCategory, createAccountingTransaction, deleteAccountingCategory,
   deleteAccountingTransaction, getAccountingCategories, getAccountingReports,
   getAccountingSummary, getAccountingTransactions, updateAccountingCategory,
-  updateAccountingTransaction
+  updateAccountingTransaction, previewAccountingReset, resetAccounting
 } from '../services/accounting.service';
 import { downloadReceipt, generateReceipt, saveBlob } from '../services/paymentReceipt.service';
-import { hasPermission } from '../utils/access';
+import { getAccessPayload, hasPermission } from '../utils/access';
 
 const methods = ['cash', 'bank', 'card', 'online', 'other'];
 const money = (value) => Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -44,10 +44,20 @@ function TransactionTable({ rows, actions = false, onEdit, onDelete, onReceipt }
 export function AccountingDashboardPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  useEffect(() => { getAccountingSummary().then((response) => setData(response.data.data)).catch((e) => setError(errorText(e, 'Unable to load accounting summary.'))); }, []);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetStage, setResetStage] = useState(1);
+  const [resetForm, setResetForm] = useState({ trackingStartedAt: new Date().toISOString(), reason: 'Accounting ledger reset requested by administrator', confirmation: '' });
+  const [preview, setPreview] = useState(null);
+  const isAdmin = getAccessPayload().isSystemAdmin;
+  const load = () => getAccountingSummary().then((response) => setData(response.data.data));
+  useEffect(() => { load().catch((e) => setError(errorText(e, 'Unable to load accounting summary.'))); }, []);
+  const previewReset = async () => { try { const response = await previewAccountingReset(resetForm); setPreview(response.data.data); setResetStage(2); } catch (e) { setError(errorText(e, 'Unable to preview reset.')); } };
+  const applyReset = async () => { try { const response = await resetAccounting(resetForm); setData(response.data.data.totals); setResetOpen(false); setResetStage(1); setPreview(null); } catch (e) { setError(errorText(e, 'Unable to reset Accounting reporting.')); } };
+  const epoch = data?.reportingEpoch;
   return <Stack spacing={2.5}>
-    <PageTitle title="Accounting Dashboard" subtitle="Income, expenses, and current profitability at a glance." />
+    <PageTitle title="Accounting Dashboard" subtitle="Income, expenses, and current profitability at a glance." action={isAdmin ? <Button color="warning" variant="outlined" onClick={() => setResetOpen(true)}>Reset accounting reporting</Button> : null} />
     {error && <Alert severity="error">{error}</Alert>}
+    {epoch && <Alert severity="info">Accounting tracking from: {new Date(epoch.trackingStartedAt).toLocaleString()} · Reset by {epoch.changedBy ? [epoch.changedBy.firstName, epoch.changedBy.lastName].filter(Boolean).join(' ') || epoch.changedBy.email : 'System'} · {epoch.reason}</Alert>}
     <Grid container spacing={2}>
       <Grid item xs={12} sm={6} md={4}><Metric label="Total Income" value={data?.totalIncome} color="success.main" /></Grid>
       <Grid item xs={12} sm={6} md={4}><Metric label="Total Expenses" value={data?.totalExpenses} color="error.main" /></Grid>
@@ -56,6 +66,9 @@ export function AccountingDashboardPage() {
       <Grid item xs={12} sm={6}><Metric label="Expenses This Month" value={data?.expensesThisMonth} color="error.main" /></Grid>
     </Grid>
     <Box><Typography variant="h6" fontWeight={850} sx={{ mb: 1 }}>Recent Transactions</Typography><TransactionTable rows={data?.recentTransactions || []} /></Box>
+    <Dialog open={resetOpen} onClose={() => setResetOpen(false)} fullWidth maxWidth="sm"><DialogTitle>Reset Accounting reporting · Step {resetStage} of 2</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
+      {resetStage === 1 ? <><Alert severity="warning">Historical ledger records and their payment, receipt and commission relationships will remain preserved. They will be excluded from current-period reporting.</Alert><Typography>Current income: {money(data?.totalIncome)} · Current expenses: {money(data?.totalExpenses)}</Typography><TextField type="datetime-local" label="Tracking start" value={resetForm.trackingStartedAt.slice(0,16)} onChange={(e) => setResetForm({ ...resetForm, trackingStartedAt: new Date(e.target.value).toISOString() })} InputLabelProps={{ shrink: true }} /><TextField label="Reason" value={resetForm.reason} onChange={(e) => setResetForm({ ...resetForm, reason: e.target.value })} multiline /></> : <><Alert severity="error">{preview?.affectedHistoricalTransactions || 0} transaction(s) will become historical. No ledger or operational rows will be deleted.</Alert><Typography>Proposed tracking start: {new Date(preview?.proposedTrackingStartedAt).toLocaleString()}</Typography><TextField label="Type RESET ACCOUNTING" value={resetForm.confirmation} onChange={(e) => setResetForm({ ...resetForm, confirmation: e.target.value })} autoComplete="off" /></>}
+    </Stack></DialogContent><DialogActions><Button onClick={() => { setResetOpen(false); setResetStage(1); }}>Cancel</Button>{resetStage === 2 && <Button onClick={() => setResetStage(1)}>Back</Button>}<Button variant="contained" color="warning" disabled={resetStage === 1 ? !resetForm.reason.trim() : resetForm.confirmation !== 'RESET ACCOUNTING'} onClick={resetStage === 1 ? previewReset : applyReset}>{resetStage === 1 ? 'Review reset' : 'Reset reporting'}</Button></DialogActions></Dialog>
   </Stack>;
 }
 
@@ -68,7 +81,8 @@ export function AccountingTransactionsPage({ type }) {
   const title = type === 'income' ? 'Income' : 'Expenses';
   const [rows, setRows] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [filters, setFilters] = useState({ fromDate: '', toDate: '', categoryId: '', paymentMethod: '' });
+  const isAdmin = getAccessPayload().isSystemAdmin;
+  const [filters, setFilters] = useState({ fromDate: '', toDate: '', categoryId: '', paymentMethod: '', period: 'current' });
   const [form, setForm] = useState(blankTransaction(type));
   const [editing, setEditing] = useState(null);
   const [open, setOpen] = useState(false);
@@ -81,7 +95,7 @@ export function AccountingTransactionsPage({ type }) {
     setRows(transactions.data.data || []);
     setCategories(categoryRows.data.data || []);
   };
-  useEffect(() => { load().catch((e) => setMessage({ severity: 'error', text: errorText(e, `Unable to load ${title.toLowerCase()}.`) })); }, [type, filters.fromDate, filters.toDate, filters.categoryId, filters.paymentMethod]);
+  useEffect(() => { load().catch((e) => setMessage({ severity: 'error', text: errorText(e, `Unable to load ${title.toLowerCase()}.`) })); }, [type, filters.fromDate, filters.toDate, filters.categoryId, filters.paymentMethod, filters.period]);
   const beginCreate = () => { setEditing(null); setForm(blankTransaction(type)); setOpen(true); };
   const beginEdit = (row) => { setEditing(row); setForm({ ...blankTransaction(type), ...row, categoryId: row.categoryId || row.category?.id || '' }); setOpen(true); };
   const save = async () => {
@@ -113,6 +127,7 @@ export function AccountingTransactionsPage({ type }) {
     <PageTitle title={title} subtitle={`Manage and filter ${title.toLowerCase()} transactions.`} action={<Button variant="contained" startIcon={<AddIcon />} onClick={beginCreate}>Add {type}</Button>} />
     {message && <Alert severity={message.severity} onClose={() => setMessage(null)}>{message.text}</Alert>}
     <Paper variant="outlined" sx={{ p: 2 }}><Grid container spacing={1.5}>
+      {isAdmin && <Grid item xs={12}><TextField select label="Accounting period" value={filters.period} onChange={(e) => setFilters({ ...filters, period: e.target.value })} sx={{ minWidth: 260 }}><MenuItem value="current">Current accounting period</MenuItem><MenuItem value="historical">Historical transactions</MenuItem><MenuItem value="all">All periods</MenuItem></TextField></Grid>}
       <Grid item xs={12} sm={6} md={3}><TextField type="date" label="From" value={filters.fromDate} onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
       <Grid item xs={12} sm={6} md={3}><TextField type="date" label="To" value={filters.toDate} onChange={(e) => setFilters({ ...filters, toDate: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth /></Grid>
       <Grid item xs={12} sm={6} md={3}><TextField select label="Category" value={filters.categoryId} onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })} fullWidth><MenuItem value="">All categories</MenuItem>{categories.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}</TextField></Grid>
@@ -165,7 +180,8 @@ function csvCell(value) {
 }
 
 export function AccountingReportsPage() {
-  const [filters, setFilters] = useState({ fromDate: '', toDate: '' });
+  const isAdmin = getAccessPayload().isSystemAdmin;
+  const [filters, setFilters] = useState({ fromDate: '', toDate: '', period: 'current' });
   const [report, setReport] = useState({ totalIncome: 0, totalExpenses: 0, netProfit: 0, categoryBreakdown: [], transactions: [] });
   const [error, setError] = useState('');
   const load = () => getAccountingReports(filters).then((response) => setReport(response.data.data));
@@ -181,7 +197,7 @@ export function AccountingReportsPage() {
   return <Stack spacing={2.5}>
     <PageTitle title="Accounting Reports" subtitle="Compare income and expenses and inspect category performance." action={<Button startIcon={<DownloadIcon />} variant="outlined" onClick={exportCsv}>Export CSV</Button>} />
     {error && <Alert severity="error">{error}</Alert>}
-    <Paper variant="outlined" sx={{ p: 2 }}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}><TextField type="date" label="From" value={filters.fromDate} onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })} InputLabelProps={{ shrink: true }} /><TextField type="date" label="To" value={filters.toDate} onChange={(e) => setFilters({ ...filters, toDate: e.target.value })} InputLabelProps={{ shrink: true }} /><Button variant="contained" onClick={() => load().catch((e) => setError(errorText(e, 'Unable to load report.')))}>Apply</Button></Stack></Paper>
+    <Paper variant="outlined" sx={{ p: 2 }}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>{isAdmin && <TextField select label="Accounting period" value={filters.period} onChange={(e) => setFilters({ ...filters, period: e.target.value })}><MenuItem value="current">Current accounting period</MenuItem><MenuItem value="historical">Historical transactions</MenuItem><MenuItem value="all">All periods</MenuItem></TextField>}<TextField type="date" label="From" value={filters.fromDate} onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })} InputLabelProps={{ shrink: true }} /><TextField type="date" label="To" value={filters.toDate} onChange={(e) => setFilters({ ...filters, toDate: e.target.value })} InputLabelProps={{ shrink: true }} /><Button variant="contained" onClick={() => load().catch((e) => setError(errorText(e, 'Unable to load report.')))}>Apply</Button></Stack></Paper>
     <Grid container spacing={2}><Grid item xs={12} md={4}><Metric label="Income" value={report.totalIncome} color="success.main" /></Grid><Grid item xs={12} md={4}><Metric label="Expenses" value={report.totalExpenses} color="error.main" /></Grid><Grid item xs={12} md={4}><Metric label="Net Profit" value={report.netProfit} /></Grid></Grid>
     <TableContainer component={Paper} variant="outlined"><Table><TableHead><TableRow><TableCell>Type</TableCell><TableCell>Category</TableCell><TableCell align="right">Transactions</TableCell><TableCell align="right">Total</TableCell></TableRow></TableHead><TableBody>{report.categoryBreakdown.map((row) => <TableRow key={`${row.type}-${row.categoryId}`}><TableCell><Chip size="small" color={row.type === 'income' ? 'success' : 'error'} label={row.type} /></TableCell><TableCell>{row.category}</TableCell><TableCell align="right">{row.count}</TableCell><TableCell align="right">{money(row.total)}</TableCell></TableRow>)}</TableBody></Table></TableContainer>
   </Stack>;

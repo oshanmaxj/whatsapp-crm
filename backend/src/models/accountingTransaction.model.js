@@ -14,6 +14,9 @@ module.exports = (sequelize, DataTypes) => {
     createdBy: { type: DataTypes.BIGINT, allowNull: true, field: 'created_by' },
     sourceConversationId: { type: DataTypes.BIGINT, allowNull: true, field: 'source_conversation_id' },
     whatsappAccountId: { type: DataTypes.BIGINT, allowNull: true, field: 'whatsapp_account_id' }
+    , sourceEventAt: { type: DataTypes.DATE, allowNull: false, field: 'source_event_at' }
+    , sourceType: { type: DataTypes.STRING(60), allowNull: true, field: 'source_type' }
+    , sourceId: { type: DataTypes.STRING(120), allowNull: true, field: 'source_id' }
   }, {
     tableName: 'accounting_transactions',
     timestamps: true,

@@ -329,7 +329,9 @@ class PaymentSlipService {
         type: 'income', date, amount, categoryId: category.id,
         paymentMethod: 'bank', referenceNo: slip.referenceNumber || `WHATSAPP-SLIP-${slip.id}`,
         description: `Verified WhatsApp payment slip #${slip.id}`, relatedStudentId: selectedStudentId, createdBy: reviewerUserId,
-        sourceConversationId: slip.conversationId, whatsappAccountId: slip.whatsappAccountId
+        sourceConversationId: slip.conversationId, whatsappAccountId: slip.whatsappAccountId,
+        sourceEventAt: slip.transactionDate ? new Date(`${slip.transactionDate}T${slip.transactionTime || '00:00:00'}+05:30`) : new Date(),
+        sourceType: 'payment_slip', sourceId: String(slip.id)
       }, { transaction });
       const installmentPaid = money(Number(installment.paidAmount) + amount);
       await installment.update({ paidAmount: installmentPaid, pendingPaymentAmount: null, paidDate: date, paymentMethod: 'Bank Transfer', transactionReference: slip.referenceNumber, status: 'confirmed', confirmedBy: reviewerUserId, confirmedAt: new Date(), accountingTransactionId: payment.id, sourceConversationId: slip.conversationId, whatsappAccountId: slip.whatsappAccountId }, { transaction });

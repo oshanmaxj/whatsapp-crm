@@ -58,6 +58,7 @@ const reminderSequencesAiProvidersMigration = require('../../migrations/046_remi
 const reminderInteractiveMessagesMigration = require('../../migrations/056_reminder_interactive_messages');
 const reminderReplyPolicyMigration = require('../../migrations/057_reminder_reply_policy');
 const messagingWindowCampaignAudienceMigration = require('../../migrations/058_messaging_window_campaign_audience');
+const accountingReportingEpochMigration = require('../../migrations/059_accounting_reporting_epoch');
 const campaignTemplateHeadersMigration = require('../../migrations/047_campaign_template_headers');
 
 function originalDatabaseError(error) {
@@ -263,6 +264,7 @@ async function run() {
     console.log('Applied: reminder interactive messages');
     await runMigration('057_reminder_reply_policy.js', reminderReplyPolicyMigration, queryInterface);
     await runMigration('058_messaging_window_campaign_audience.js', messagingWindowCampaignAudienceMigration, queryInterface);
+    await runMigration('059_accounting_reporting_epoch.js', accountingReportingEpochMigration, queryInterface);
     console.log('Applied: reminder reply policy');
     await runMigration('047_campaign_template_headers.js', campaignTemplateHeadersMigration, queryInterface);
     console.log('Applied: approved template header media for campaigns');

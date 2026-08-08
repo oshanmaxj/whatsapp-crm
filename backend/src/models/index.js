@@ -81,6 +81,7 @@ const WhatsAppRoutingRuleAgent = require('./whatsappRoutingRuleAgent.model');
 const WhatsAppRoutingUnassigned = require('./whatsappRoutingUnassigned.model');
 const AccountingCategory = require('./accountingCategory.model');
 const AccountingTransaction = require('./accountingTransaction.model');
+const AccountingReportingEpoch = require('./accountingReportingEpoch.model');
 const NotificationMessageTemplate = require('./notificationMessageTemplate.model');
 const LmsCourse = require('./lmsCourse.model');
 const LmsLesson = require('./lmsLesson.model');
@@ -208,6 +209,7 @@ const models = {
   WhatsAppRoutingUnassigned: WhatsAppRoutingUnassigned(sequelize, Sequelize.DataTypes),
   AccountingCategory: AccountingCategory(sequelize, Sequelize.DataTypes),
   AccountingTransaction: AccountingTransaction(sequelize, Sequelize.DataTypes),
+  AccountingReportingEpoch: AccountingReportingEpoch(sequelize, Sequelize.DataTypes),
   NotificationMessageTemplate: NotificationMessageTemplate(sequelize, Sequelize.DataTypes),
   LmsCourse: LmsCourse(sequelize, Sequelize.DataTypes),
   LmsLesson: LmsLesson(sequelize, Sequelize.DataTypes),

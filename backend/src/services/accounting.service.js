@@ -2,6 +2,7 @@ const { Op, fn, col } = require('sequelize');
 const {
   AccountingCategory, AccountingTransaction, Campaign, Course, PaymentReceipt, Student, User, sequelize
 } = require('../models');
+const accountingEpochService = require('./accountingEpoch.service');
 
 const TYPES = ['income', 'expense'];
 const METHODS = ['cash', 'bank', 'card', 'online', 'other'];
@@ -32,8 +33,10 @@ class AccountingService {
     ];
   }
 
-  transactionWhere(filters = {}) {
+  async transactionWhere(filters = {}, actor = null) {
+    const reporting = await accountingEpochService.scopeWhere(filters.period || 'current', actor);
     return {
+      ...reporting.where,
       ...dateWhere(filters),
       ...(filters.type && TYPES.includes(filters.type) ? { type: filters.type } : {}),
       ...(filters.categoryId ? { categoryId: filters.categoryId } : {}),
@@ -41,17 +44,18 @@ class AccountingService {
     };
   }
 
-  async listTransactions(filters = {}) {
+  async listTransactions(filters = {}, actor = null) {
     return AccountingTransaction.findAll({
-      where: this.transactionWhere(filters),
+      where: await this.transactionWhere(filters, actor),
       include: this.includes(),
       order: [['date', 'DESC'], ['id', 'DESC']],
       limit: Math.min(Number(filters.limit) || 1000, 5000)
     });
   }
 
-  async getTransaction(id) {
-    const row = await AccountingTransaction.findByPk(id, { include: this.includes() });
+  async getTransaction(id, actor = null, period = 'current') {
+    const reporting = await accountingEpochService.scopeWhere(period, actor);
+    const row = await AccountingTransaction.findOne({ where: { id, ...reporting.where }, include: this.includes() });
     if (!row) throw Object.assign(new Error('Accounting transaction not found'), { status: 404 });
     return row;
   }
@@ -86,8 +90,10 @@ class AccountingService {
       relatedCourseId: payload.relatedCourseId || null,
       relatedCampaignId: payload.relatedCampaignId || null,
       createdBy: userId || null
+      , sourceEventAt: payload.sourceEventAt ? new Date(payload.sourceEventAt) : new Date()
+      , sourceType: 'manual'
     });
-    return this.getTransaction(row.id);
+    return AccountingTransaction.findByPk(row.id, { include: this.includes() });
   }
 
   async updateTransaction(id, payload) {
@@ -107,6 +113,7 @@ class AccountingService {
       relatedStudentId: payload.relatedStudentId !== undefined ? (payload.relatedStudentId || null) : row.relatedStudentId,
       relatedCourseId: payload.relatedCourseId !== undefined ? (payload.relatedCourseId || null) : row.relatedCourseId,
       relatedCampaignId: payload.relatedCampaignId !== undefined ? (payload.relatedCampaignId || null) : row.relatedCampaignId
+      , sourceEventAt: row.sourceEventAt
     });
     return this.getTransaction(id);
   }
@@ -180,15 +187,16 @@ class AccountingService {
     return { deleted: true, id };
   }
 
-  async summary(filters = {}) {
-    const where = dateWhere(filters);
+  async summary(filters = {}, actor = null) {
+    const reporting = await accountingEpochService.scopeWhere(filters.period || 'current', actor);
+    const where = { ...reporting.where, ...dateWhere(filters) };
     const start = new Date();
     start.setDate(1);
     const monthStart = start.toISOString().slice(0, 10);
     const [totals, monthTotals, recentTransactions] = await Promise.all([
       AccountingTransaction.findAll({ where, attributes: ['type', [fn('sum', col('amount')), 'total']], group: ['type'], raw: true }),
-      AccountingTransaction.findAll({ where: { date: { [Op.gte]: monthStart } }, attributes: ['type', [fn('sum', col('amount')), 'total']], group: ['type'], raw: true }),
-      AccountingTransaction.findAll({ include: this.includes(), order: [['date', 'DESC'], ['id', 'DESC']], limit: 8 })
+      AccountingTransaction.findAll({ where: { ...reporting.where, date: { [Op.gte]: monthStart } }, attributes: ['type', [fn('sum', col('amount')), 'total']], group: ['type'], raw: true }),
+      AccountingTransaction.findAll({ where: reporting.where, include: this.includes(), order: [['source_event_at', 'DESC'], ['id', 'DESC']], limit: 8 })
     ]);
     const get = (rows, type) => amount(rows.find((row) => row.type === type)?.total);
     const totalIncome = get(totals, 'income');
@@ -197,12 +205,12 @@ class AccountingService {
       totalIncome, totalExpenses, netProfit: totalIncome - totalExpenses,
       incomeThisMonth: get(monthTotals, 'income'),
       expensesThisMonth: get(monthTotals, 'expense'),
-      recentTransactions
+      recentTransactions, reportingEpoch: reporting.epoch, period: reporting.scope
     };
   }
 
-  async reports(filters = {}) {
-    const transactions = await this.listTransactions(filters);
+  async reports(filters = {}, actor = null) {
+    const transactions = await this.listTransactions(filters, actor);
     const rows = transactions.map((row) => row.toJSON());
     const totalIncome = rows.filter((row) => row.type === 'income').reduce((sum, row) => sum + amount(row.amount), 0);
     const totalExpenses = rows.filter((row) => row.type === 'expense').reduce((sum, row) => sum + amount(row.amount), 0);
@@ -217,7 +225,7 @@ class AccountingService {
     return {
       totalIncome, totalExpenses, netProfit: totalIncome - totalExpenses,
       categoryBreakdown: [...groups.values()].sort((a, b) => b.total - a.total),
-      transactions: rows
+      transactions: rows, reportingEpoch: (await accountingEpochService.scopeWhere(filters.period || 'current', actor)).epoch, period: filters.period || 'current'
     };
   }
 }

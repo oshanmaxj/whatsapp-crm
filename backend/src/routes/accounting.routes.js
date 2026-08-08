@@ -16,4 +16,6 @@ router.post('/categories', permission('accounting.create'), controller.createCat
 router.patch('/categories/:id', permission('accounting.edit'), controller.updateCategory.bind(controller));
 router.delete('/categories/:id', permission('accounting.delete'), controller.deleteCategory.bind(controller));
 router.get('/reports', permission('accounting.view'), controller.reports.bind(controller));
+router.post('/reset/preview', controller.resetPreview.bind(controller));
+router.post('/reset', controller.reset.bind(controller));
 module.exports = router;

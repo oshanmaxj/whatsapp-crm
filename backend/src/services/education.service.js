@@ -1333,7 +1333,9 @@ class EducationService {
             relatedCourseId: context.course?.id || null,
             sourceConversationId: row.sourceConversationId || existingTransaction.sourceConversationId || null,
             whatsappAccountId: row.whatsappAccountId || existingTransaction.whatsappAccountId || null,
-            createdBy: existingTransaction.createdBy || userId || null
+            createdBy: existingTransaction.createdBy || userId || null,
+            sourceEventAt: existingTransaction.sourceEventAt || row.confirmedAt || row.recordedAt || new Date(`${row.paidDate || todayDate()}T00:00:00+05:30`),
+            sourceType: existingTransaction.sourceType || 'fee_installment_payment', sourceId: existingTransaction.sourceId || String(row.id)
           }, { transaction });
           transactionId = existingTransaction.id;
         } else {
@@ -1350,7 +1352,9 @@ class EducationService {
             relatedCourseId: context.course?.id || null,
             sourceConversationId: row.sourceConversationId || null,
             whatsappAccountId: row.whatsappAccountId || null,
-            createdBy: userId || null
+            createdBy: userId || null,
+            sourceEventAt: row.confirmedAt || row.recordedAt || new Date(`${row.paidDate || todayDate()}T00:00:00+05:30`),
+            sourceType: 'fee_installment_payment', sourceId: String(row.id)
           }, { transaction });
           transactionId = replacement.id;
           await row.update({ accountingTransactionId: replacement.id }, { transaction });
@@ -1379,7 +1383,8 @@ class EducationService {
         relatedCourseId: context.course?.id || null,
         sourceConversationId: row.sourceConversationId || null,
         whatsappAccountId: row.whatsappAccountId || null,
-        createdBy: userId || null
+        createdBy: userId || null,
+        sourceEventAt: row.recordedAt || new Date(), sourceType: 'fee_installment_payment', sourceId: String(row.id)
       }, { transaction });
       transactionId = accountingTransaction.id;
       await row.update({
@@ -1496,7 +1501,8 @@ class EducationService {
         description: cleanText(payload.reason) || `Reversal of fee income transaction ${originalTransaction.id}`,
         relatedStudentId: feeRecord?.studentId || null,
         relatedCourseId: feeRecord?.courseId || null,
-        createdBy: userId || null
+        createdBy: userId || null,
+        sourceEventAt: new Date(), sourceType: 'fee_installment_reversal', sourceId: String(row.id)
       }, { transaction });
       reversalTransactionId = reversal.id;
       await row.update({

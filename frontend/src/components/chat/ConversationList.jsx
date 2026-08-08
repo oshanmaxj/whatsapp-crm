@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   Avatar, Badge, Box, Button, Chip, Collapse, FormControl, IconButton, InputAdornment,
   InputLabel, LinearProgress, List, MenuItem, Select, Stack, TextField, Tooltip, Typography
@@ -109,10 +109,22 @@ export function ConversationList({
   unread,
   connected,
   loading,
-  onRefresh
+  onRefresh,
+  loadingMore,
+  hasMore,
+  pageError,
+  onLoadMore,
+  windowCounts = { inside: 0, outside: 0, closing: 0 }
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const windowCounts = safeArray(conversations).reduce((counts, row) => { const window=row.messagingWindow||{},remaining=Math.max(0,Math.ceil((new Date(window.expiresAt||0).getTime()-Date.now())/1000)); if(window.isOpen&&remaining>0){counts.inside+=1;if(remaining<=3600)counts.closing+=1}else counts.outside+=1;return counts },{inside:0,outside:0,closing:0});
+  const loadMoreRef = useRef(null);
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node || !hasMore || loadingMore) return undefined;
+    const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) onLoadMore?.(); }, { rootMargin: '200px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, onLoadMore]);
 
   return (
     <Box sx={{ width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', bgcolor: 'background.paper' }}>
@@ -214,6 +226,11 @@ export function ConversationList({
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>Try adjusting your search or filters.</Typography>
           </Box>
         )}
+        <Box ref={loadMoreRef} sx={{ py: 1.5, textAlign: 'center' }}>
+          {loadingMore && <Typography variant="caption" color="text.secondary">Loading more…</Typography>}
+          {!loadingMore && pageError && <Button size="small" onClick={onLoadMore}>Retry loading conversations</Button>}
+          {!loading && !loadingMore && !hasMore && safeArray(conversations).length > 0 && <Typography variant="caption" color="text.secondary">End of conversations</Typography>}
+        </Box>
       </List>
     </Box>
   );

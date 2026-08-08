@@ -19,6 +19,7 @@ export const getConversations = (params = {}, config = {}) => deduplicatedGet(
   { ...config, params }
 );
 export const getAssignableUsers = (params = {}) => api.get('/conversations/assignable-users', { params });
+export const getConversationCounts = (params = {}, config = {}) => api.get('/conversations/counts', { ...config, params });
 export const getConversation = (id, config = {}) => deduplicatedGet(`conversation:${id}`, `/conversations/${id}`, config);
 export const updateConversation = (id, payload) => api.patch(`/conversations/${id}`, payload);
 export const assignConversation = (id, assignment) => api.post(
@@ -26,10 +27,10 @@ export const assignConversation = (id, assignment) => api.post(
   assignment && typeof assignment === 'object' ? assignment : { assigned_user_id: assignment ?? null }
 );
 export const setConversationLabels = (id, labels) => api.post(`/conversations/${id}/labels`, { labels });
-export const getConversationMessages = (conversationId, config = {}) => deduplicatedGet(
-  `messages:${conversationId}`,
+export const getConversationMessages = (conversationId, params = {}, config = {}) => deduplicatedGet(
+  `messages:${conversationId}:${JSON.stringify(params)}`,
   `${PREFIX}/conversations/${conversationId}/messages`,
-  config
+  { ...config, params }
 );
 export const sendConversationMessage = (conversationId, payload) => api.post(
   `${PREFIX}/conversations/${conversationId}/messages`,

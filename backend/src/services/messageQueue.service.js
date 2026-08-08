@@ -59,24 +59,26 @@ class MessageQueueService {
   }
 
   async processDue(limit = RATE_LIMIT_PER_TICK) {
-    const rows = await MessageQueue.findAll({
-      where: {
-        status: { [Op.in]: ['queued', 'retrying'] },
-        scheduledAt: { [Op.lte]: new Date() }
-      },
-      order: [['priority', 'ASC'], ['scheduled_at', 'ASC']],
-      limit
-    });
-
     const results = [];
-    for (const row of rows) {
+    for (let index = 0; index < limit; index += 1) {
+      const row = await sequelize.transaction(async (transaction) => {
+        const claimed = await MessageQueue.findOne({
+          where: { status: { [Op.in]: ['queued', 'retrying'] }, scheduledAt: { [Op.lte]: new Date() } },
+          order: [['priority', 'ASC'], ['scheduled_at', 'ASC']], transaction,
+          lock: transaction.LOCK.UPDATE, skipLocked: true
+        });
+        if (!claimed) return null;
+        await claimed.update({ status: 'processing', attempts: claimed.attempts + 1 }, { transaction });
+        return claimed;
+      });
+      if (!row) break;
       results.push(await this.processOne(row));
     }
     return results;
   }
 
   async processOne(row) {
-    await row.update({ status: 'processing', attempts: row.attempts + 1 });
+    if (row.status !== 'processing') await row.update({ status: 'processing', attempts: row.attempts + 1 });
     if (row.campaignId) await Campaign.update({ status: 'Processing' }, { where: { id: row.campaignId, status: 'Scheduled' } });
     let preparedHistory = null;
     let deliveredMessageId = null;
@@ -84,6 +86,10 @@ class MessageQueueService {
     let deliverySucceeded = false;
     try {
       let queuePayload = row.payload || {};
+      if (queuePayload.credentialPayload && queuePayload.encryptedText) {
+        queuePayload = { ...queuePayload, text: require('./onboardingPayloadCrypto.service').decrypt(queuePayload.encryptedText) };
+        row.payload = queuePayload;
+      }
       if (row.campaignRecipientId) {
         const [campaign, recipient] = await Promise.all([Campaign.findByPk(row.campaignId), CampaignRecipient.findByPk(row.campaignRecipientId)]);
         if (campaign?.filters?.messagingWindow === 'inside') {
@@ -116,7 +122,7 @@ class MessageQueueService {
           sentByUserId: row.createdBy || null,
           type: row.messageType === 'document' ? 'document' : 'text',
           messageType: queuePayload.paymentReceiptId ? 'payment_receipt' : (queuePayload.paymentSlipId ? 'payment_slip_acknowledgement' : 'automation'),
-          text: queuePayload.text || queuePayload.message || null,
+          text: queuePayload.credentialPayload ? '[LMS access details sent securely]' : (queuePayload.text || queuePayload.message || null),
           mediaId: queuePayload.mediaId || null,
           status: 'pending', historyMessageId: queuePayload.historyMessageId || null,
           rawPayload: { source: queuePayload.paymentReceiptId ? 'payment_receipt' : (queuePayload.paymentSlipId ? 'payment_slip' : 'student_automation'), queueId: row.id }
@@ -152,6 +158,7 @@ class MessageQueueService {
           { status: 'accepted', whatsappMessageId: externalMessageId, whatsappAccountId: row.whatsappAccountId || preparedHistory?.conversation?.whatsappAccountId || null, acceptedAt: new Date(), attempts: row.attempts },
           { where: { id: queuePayload.automationDispatchId } }
         );
+        if (queuePayload.credentialPayload) await row.update({ payload: { ...queuePayload, text: undefined, encryptedText: undefined, credentialPayload: false, credentialRedacted: true } });
         if (!preparedHistory) await outboundHistoryService.record({
           phone: row.toNumber,
           name: queuePayload.studentName || null,
@@ -161,7 +168,7 @@ class MessageQueueService {
           whatsappMessageId: externalMessageId,
           type: 'text',
           messageType: 'automation',
-          text: queuePayload.text || queuePayload.message || null,
+          text: queuePayload.credentialPayload ? '[LMS access details sent securely]' : (queuePayload.text || queuePayload.message || null),
           status: 'sent',
           whatsappAccountId: row.whatsappAccountId || null,
           rawPayload: {

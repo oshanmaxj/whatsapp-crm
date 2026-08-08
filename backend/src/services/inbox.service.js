@@ -1,4 +1,5 @@
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const { Op, fn, col, literal } = require('sequelize');
 const logger = require('../config/logger');
@@ -34,6 +35,25 @@ function ensureUploadDir() {
 }
 
 const normalizeWhatsAppNumber = normalizePhone;
+const cursorSecret = () => process.env.INBOX_CURSOR_SECRET || process.env.JWT_SECRET || 'development-inbox-cursor-secret';
+function encodeCursor(row) {
+  const payload = Buffer.from(JSON.stringify({ t: row.lastMessageAt || row.updatedAt || row.createdAt, id: String(row.id) })).toString('base64url');
+  const signature = crypto.createHmac('sha256', cursorSecret()).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+function decodeCursor(value) {
+  if (!value) return null;
+  const [payload, signature] = String(value).split('.');
+  const expected = crypto.createHmac('sha256', cursorSecret()).update(payload || '').digest('base64url');
+  if (!signature || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+    throw Object.assign(new Error('Invalid conversation cursor.'), { status: 400, code: 'INBOX_CURSOR_INVALID' });
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!parsed.t || !/^\d+$/.test(String(parsed.id))) throw new Error('invalid');
+    return { t: new Date(parsed.t), id: String(parsed.id) };
+  } catch (_) { throw Object.assign(new Error('Invalid conversation cursor.'), { status: 400, code: 'INBOX_CURSOR_INVALID' }); }
+}
 
 function serializeAgent(agent) {
   if (!agent) return null;
@@ -201,7 +221,10 @@ class InboxService {
     unread,
     whatsappAccountId,
     leadStatus,
-    messagingWindow
+    messagingWindow,
+    cursor,
+    limit: requestedLimit = 100,
+    q
   } = {}, userOrId) {
     const userId = typeof userOrId === 'object' ? userOrId.id : userOrId;
     const filters = {};
@@ -221,25 +244,43 @@ class InboxService {
     if (status) filters.status = status;
     if (whatsappAccountId) filters.whatsappAccountId = whatsappAccountId;
     const where = await conversationAccessService.scopedWhere(userOrId, filters);
+    let cursorPredicate = null;
+    if (cursor) {
+      const decoded = decodeCursor(cursor);
+      cursorPredicate = {
+        [Op.or]: [
+          sequelize.where(fn('COALESCE', col('Conversation.last_message_at'), col('Conversation.updated_at'), col('Conversation.created_at')), { [Op.lt]: decoded.t }),
+          { [Op.and]: [
+            sequelize.where(fn('COALESCE', col('Conversation.last_message_at'), col('Conversation.updated_at'), col('Conversation.created_at')), decoded.t),
+            { id: { [Op.lt]: decoded.id } }
+          ] }
+        ]
+      };
+    }
     if (['inside', 'outside'].includes(messagingWindow)) {
       const exists = `EXISTS (SELECT 1 FROM messages mw WHERE mw.conversation_id = "Conversation"."id" AND mw.whatsapp_account_id = "Conversation"."whatsapp_account_id" AND mw.direction = 'inbound' AND mw.deleted_at IS NULL AND mw.created_at > NOW() - INTERVAL '24 hours')`;
       where[Op.and] = [...(where[Op.and] || []), literal(messagingWindow === 'inside' ? exists : `NOT ${exists}`)];
     }
 
     const contactWhere = {};
-    if (search) {
-      const term = `%${search}%`;
+    const rawSearch = String(q || search || '').trim();
+    const rawDigits = rawSearch.replace(/\D/g, '');
+    const searchValue = rawSearch.length >= 2 || rawDigits.length >= 5 ? rawSearch : '';
+    if (searchValue) {
+      const term = `%${searchValue}%`;
+      const digits = searchValue.replace(/\D/g, '');
       contactWhere[Op.or] = [
         { firstName: { [Op.iLike]: term } },
         { lastName: { [Op.iLike]: term } },
         { phone: { [Op.iLike]: term } },
-        { email: { [Op.iLike]: term } },
-        sequelize.where(fn('concat', col('contact.first_name'), ' ', col('contact.last_name')), { [Op.iLike]: term })
+        { email: { [Op.iLike]: term } }, { whatsappId: { [Op.iLike]: `%${digits || searchValue}%` } },
+        sequelize.where(fn('concat', col('contact.first_name'), ' ', col('contact.last_name')), { [Op.iLike]: term }),
+        literal(`EXISTS (SELECT 1 FROM students search_student WHERE search_student.contact_id = "Conversation"."contact_id" AND (search_student.name ILIKE ${sequelize.escape(term)} OR search_student.student_no ILIKE ${sequelize.escape(term)} OR search_student.email ILIKE ${sequelize.escape(term)} OR search_student.phone ILIKE ${sequelize.escape(`%${digits || searchValue}%`)}))`)
       ];
     }
 
     const includes = this.conversationIncludes().map((include) => {
-      if (include.as === 'contact') return { ...include, where: contactWhere, required: !!search };
+      if (include.as === 'contact') return { ...include, where: contactWhere, required: !!searchValue };
       if (include.as !== 'lead' || !leadStatus) return include;
       if (leadStatus === 'none') return { ...include, where: { id: null }, required: false };
       return {
@@ -250,12 +291,18 @@ class InboxService {
       };
     });
     if (leadStatus === 'none') where.leadId = null;
-    const conversations = await Conversation.findAll({
+    const totalWhere = { ...where };
+    if (cursorPredicate) where[Op.and] = [...(where[Op.and] || []), cursorPredicate];
+    const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 100));
+    const [conversations, total] = await Promise.all([Conversation.findAll({
       attributes: this.conversationAttributes(),
       where,
       include: includes,
-      order: [['last_message_at', 'DESC NULLS LAST'], ['updated_at', 'DESC']]
-    });
+      order: [[literal('COALESCE("Conversation"."last_message_at", "Conversation"."updated_at", "Conversation"."created_at")'), 'DESC'], ['id', 'DESC']],
+      limit: limit + 1, distinct: true, subQuery: false
+    }), Conversation.count({ where: totalWhere, include: includes, distinct: true })]);
+    const hasMore = conversations.length > limit;
+    if (hasMore) conversations.length = limit;
 
     const canonicalByIdentity = new Map();
     for (const conversation of conversations.map(serializeConversation)) {
@@ -296,9 +343,26 @@ class InboxService {
       lastMessage: latestByConversation.get(String(conversation.id)) || null
     }));
     const withInteractionRates = await this.attachInteractionRates(withLatestMessages);
-    return unread === 'true'
+    const items = unread === 'true'
       ? withInteractionRates.filter((item) => item.unreadCount > 0)
       : withInteractionRates;
+    return { items, nextCursor: hasMore && items.length ? encodeCursor(items[items.length - 1]) : null, hasMore, total };
+  }
+
+  async counts(query = {}, userOrId) {
+    const filters = { status: { [Op.ne]: 'archived' } };
+    if (query.whatsappAccountId) filters.whatsappAccountId = query.whatsappAccountId;
+    if (query.assignedUserId) filters.assignedUserId = query.assignedUserId;
+    if (query.assignedRoleId) filters.assignedRoleId = query.assignedRoleId;
+    const where = await conversationAccessService.scopedWhere(userOrId, filters);
+    const inside = literal(`EXISTS (SELECT 1 FROM messages counter_message WHERE counter_message.conversation_id = "Conversation"."id" AND counter_message.direction='inbound' AND counter_message.deleted_at IS NULL AND counter_message.created_at > NOW() - INTERVAL '24 hours')`);
+    const closing = literal(`EXISTS (SELECT 1 FROM messages counter_message WHERE counter_message.conversation_id = "Conversation"."id" AND counter_message.direction='inbound' AND counter_message.deleted_at IS NULL AND counter_message.created_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW() - INTERVAL '23 hours')`);
+    const [total, insideWindow, closingWithinHour] = await Promise.all([
+      Conversation.count({ where }),
+      Conversation.count({ where: { ...where, [Op.and]: [...(where[Op.and] || []), inside] } }),
+      Conversation.count({ where: { ...where, [Op.and]: [...(where[Op.and] || []), closing] } })
+    ]);
+    return { total, inside: insideWindow, outside: Math.max(0, total - insideWindow), closing: closingWithinHour };
   }
 
   async listAssignableUsers({ roleId = null, departmentId = null, includeAll = true } = {}) {

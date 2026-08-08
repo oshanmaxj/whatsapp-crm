@@ -656,6 +656,7 @@ class EducationService {
     }
     await studentMessageAutomationService.dispatchEnrollmentWelcome(enrollment.id, {
       createdBy: userId,
+      originEvent: 'enrollment_creation',
       portalPassword: payload.portalPassword || ''
     }).catch((error) => logger.warn('enrollment_welcome_queue_failed', { enrollmentId: enrollment.id, error: error.message }));
     return StudentEnrollment.findByPk(enrollment.id, {
@@ -818,19 +819,21 @@ class EducationService {
     }
     await Promise.all(createdEnrollments.map((enrollment) => studentMessageAutomationService.dispatchEnrollmentWelcome(enrollment.id, {
       createdBy: userId,
+      originEvent: 'student_registration',
       portalPassword: portalPassword || generatedPortalPassword || ''
     }).catch((error) => logger.warn('enrollment_welcome_queue_failed', { enrollmentId: enrollment.id, error: error.message }))));
     const created = serialize(await this.getStudent(student.id));
-    if (generatedPortalPassword) created.generatedPortalPassword = generatedPortalPassword;
     await studentMessageAutomationService.dispatch('student_welcome', student.id, {
       eventId: `student:${student.id}`,
       eventDate: new Date().toISOString().slice(0, 10),
+      originEvent: 'student_registration',
       portalPassword: portalPassword || generatedPortalPassword || ''
     }).catch((error) => logger.warn('student_welcome_queue_failed', { studentId: student.id, error: error.message }));
     if (process.env.LMS_GUIDE_AUTOMATION_ENABLED !== 'false') {
       await studentMessageAutomationService.dispatch('lms_user_guide', student.id, {
         eventId: `student:${student.id}`,
         eventDate: new Date().toISOString().slice(0, 10),
+        originEvent: 'lms_provisioning',
         scheduledAt: new Date(Date.now() + 5 * 60 * 1000)
       }).catch((error) => logger.warn('lms_guide_queue_failed', { studentId: student.id, error: error.message }));
     }
@@ -859,13 +862,19 @@ class EducationService {
     return this.getStudent(id);
   }
 
-  async resetStudentPortalPassword(id, payload = {}) {
+  async resetStudentPortalPassword(id, payload = {}, actor = null) {
     const row = await this.getStudent(id);
     const generated = !String(payload.password || '').trim();
+    if (generated && payload.confirmation !== 'RESET LMS PASSWORD') throw Object.assign(new Error('Confirm the LMS password reset before continuing.'), { status: 422, code: 'LMS_PASSWORD_RESET_CONFIRMATION_REQUIRED' });
     const password = generated ? `Stu-${crypto.randomBytes(5).toString('base64url')}` : String(payload.password).trim();
     if (password.length < 8) throw Object.assign(new Error('Student portal password must be at least 8 characters'), { status: 400 });
-    await row.update({ portalPasswordHash: password });
-    return { studentId: row.id, studentNo: row.studentNo, generatedPassword: generated ? password : null };
+    await sequelize.transaction(async (transaction) => row.update({ portalPasswordHash: password }, { transaction }));
+    const delivery = await studentMessageAutomationService.dispatch('student_welcome', row.id, {
+      eventId: `lms-credential-reset:${row.id}`, originEvent: 'manual_credential_reset',
+      forceAttempt: crypto.randomUUID(), portalPassword: password, createdBy: actor?.id || null
+    });
+    await auditService.record({ userId: actor?.id || null, action: 'STUDENT_LMS_CREDENTIAL_RESET_AND_SEND', entityType: 'student', entityId: row.id, changes: { generated, deliveryStatus: delivery.status } });
+    return { studentId: row.id, studentNo: row.studentNo, credentialReset: true, deliveryStatus: delivery.status };
   }
 
   async deleteStudent(id) {

@@ -9,6 +9,7 @@ import {
   createTemplate,
   downloadMedia,
   getConversation,
+  getConversationCounts,
   getConversationMessages,
   getConversations,
   getMedia,
@@ -99,6 +100,8 @@ function ChatPage() {
   const unreadRequestRef = useRef(null);
   const unreadRefreshRef = useRef({ lastRun: 0, timer: null });
   const markReadTimerRef = useRef(null);
+  const nextCursorRef = useRef(null);
+  const loadingMoreRef = useRef(false);
 
   const [conversations, setConversations] = useState([]);
   const [activeCall, setActiveCall] = useState(null);
@@ -109,6 +112,9 @@ function ChatPage() {
   const [selected, setSelected] = useState(() => searchParams.get('conversationId') || null);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [messageCursor, setMessageCursor] = useState(null);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [media, setMedia] = useState([]);
   const [notes, setNotes] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -125,6 +131,10 @@ function ChatPage() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const [conversationCounts, setConversationCounts] = useState({ inside: 0, outside: 0, closing: 0 });
   const [sending, setSending] = useState(false);
   const [leadStatusSaving, setLeadStatusSaving] = useState(false);
   const [error, setError] = useState('');
@@ -132,7 +142,8 @@ function ChatPage() {
 
   const debouncedSearch = useDebouncedValue(filters.search);
   const queryFilters = useMemo(() => ({
-    search: debouncedSearch || undefined,
+    q: debouncedSearch || undefined,
+    limit: 100,
     assignedUserId: filters.assignedUserId || undefined,
     assignedRoleId: filters.assignedRoleId || undefined,
     mine: filters.mine || undefined,
@@ -197,23 +208,41 @@ function ChatPage() {
     setWorkspaceOpen(inlineWorkspace);
   }, [inlineWorkspace]);
 
-  const loadConversations = useCallback(async ({ silent = false } = {}) => {
-    conversationsRequestRef.current?.abort();
+  const loadConversations = useCallback(async ({ silent = false, append = false } = {}) => {
+    if (append && (loadingMoreRef.current || !nextCursorRef.current)) return;
+    if (!append) conversationsRequestRef.current?.abort();
     const controller = new AbortController();
     conversationsRequestRef.current = controller;
-    if (!silent) setLoading(true);
+    if (append) { loadingMoreRef.current = true; setLoadingMore(true); } else if (!silent) setLoading(true);
+    setPageError('');
     try {
-      const response = await getConversations(queryFilters, { signal: controller.signal });
+      const response = await getConversations({ ...queryFilters, cursor: append ? nextCursorRef.current : undefined }, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      setConversations(safeArray(response.data?.data));
+      const page = response.data?.data || {};
+      const incoming = safeArray(page.items || page);
+      setConversations((current) => {
+        if (!append) return incoming;
+        return [...new Map([...safeArray(current), ...incoming].map((item) => [String(item.id), item])).values()];
+      });
+      nextCursorRef.current = page.nextCursor || null;
+      setHasMore(Boolean(page.hasMore));
     } catch (requestError) {
-      if (!controller.signal.aborted && !silent) setError(requestError.response?.data?.message || 'Unable to load conversations.');
+      if (!controller.signal.aborted) {
+        const message = requestError.response?.data?.message || 'Unable to load conversations.';
+        if (append) setPageError(message); else if (!silent) setError(message);
+      }
     } finally {
       if (conversationsRequestRef.current === controller) {
         conversationsRequestRef.current = null;
-        if (!silent) setLoading(false);
+        if (append) { loadingMoreRef.current = false; setLoadingMore(false); } else if (!silent) setLoading(false);
       }
     }
+  }, [queryFilters]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getConversationCounts(queryFilters, { signal: controller.signal }).then((response) => setConversationCounts(response.data?.data || {})).catch(() => {});
+    return () => controller.abort();
   }, [queryFilters]);
 
   const loadDetails = useCallback(async (conversationId, { silent = false } = {}) => {
@@ -224,13 +253,16 @@ function ChatPage() {
     try {
       const [conversationResponse, messageResponse, mediaResponse, noteResponse] = await Promise.all([
         getConversation(conversationId, { signal: controller.signal }),
-        getConversationMessages(conversationId, { signal: controller.signal }),
+        getConversationMessages(conversationId, { limit: 50 }, { signal: controller.signal }),
         getMedia(conversationId, { signal: controller.signal }),
         getNotes(conversationId, { signal: controller.signal })
       ]);
       if (controller.signal.aborted || String(selectedRef.current) !== String(conversationId)) return;
       setConversation(conversationResponse.data?.data || null);
-      setMessages(safeArray(messageResponse.data?.data));
+      const messagePage = messageResponse.data?.data || {};
+      setMessages(safeArray(messagePage.items || messagePage));
+      setMessageCursor(messagePage.nextCursor || null);
+      setHasOlderMessages(Boolean(messagePage.hasMore));
       setMedia(safeArray(mediaResponse.data?.data));
       setNotes(safeArray(noteResponse.data?.data));
       if (document.visibilityState === 'visible') {
@@ -260,6 +292,19 @@ function ChatPage() {
       if (detailsRequestRef.current === controller) detailsRequestRef.current = null;
     }
   }, []);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!selectedRef.current || !messageCursor || loadingOlderMessages) return;
+    setLoadingOlderMessages(true);
+    try {
+      const response = await getConversationMessages(selectedRef.current, { limit: 50, cursor: messageCursor });
+      const page = response.data?.data || {};
+      setMessages((current) => [...safeArray(page.items), ...current]);
+      setMessageCursor(page.nextCursor || null);
+      setHasOlderMessages(Boolean(page.hasMore));
+    } catch (requestError) { setError(requestError.response?.data?.message || 'Unable to load older messages.'); }
+    finally { setLoadingOlderMessages(false); }
+  }, [loadingOlderMessages, messageCursor]);
 
   const refreshUnread = useCallback(({ immediate = false } = {}) => {
     const run = () => {
@@ -910,6 +955,11 @@ function ChatPage() {
             unread={unread}
             connected={connected}
             loading={loading}
+            loadingMore={loadingMore}
+            hasMore={hasMore}
+            pageError={pageError}
+            windowCounts={conversationCounts}
+            onLoadMore={() => loadConversations({ append: true })}
             onRefresh={() => {
               loadConversations();
               refreshUnread();
@@ -921,6 +971,9 @@ function ChatPage() {
             conversation={selectedConversation}
             messages={messages}
             messagesReady={Boolean(conversation)}
+            hasOlderMessages={hasOlderMessages}
+            loadingOlderMessages={loadingOlderMessages}
+            onLoadOlderMessages={loadOlderMessages}
             quickReplies={templates}
             whatsappTemplates={whatsappTemplates}
             selectedTemplate={selectedTemplate}

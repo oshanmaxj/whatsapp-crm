@@ -28,9 +28,10 @@ import {
   deleteStudentDocument,
   deleteStudentNote,
   getStudentProfile,
+  resetStudentPortalPassword,
   updateStudentGuardian
 } from '../../services/education.service';
-import { getStudentOnboardingStatus, sendStudentOnboarding } from '../../services/studentMessageTemplate.service';
+import { forceSendStudentOnboarding, getStudentOnboardingStatus, sendStudentOnboarding } from '../../services/studentMessageTemplate.service';
 import { hasPermission } from '../../utils/access';
 
 const tabs = ['Overview', 'Fees', 'Attendance', 'Certificates', 'Guardians', 'Notes', 'Documents', 'WhatsApp'];
@@ -225,6 +226,20 @@ function StudentProfilePage() {
     finally { setSendingOnboarding(false); }
   };
 
+  const forceWelcomeMessages = async () => {
+    if (!window.confirm('Force resend creates a new delivery attempt even when messages were already accepted. Continue?')) return;
+    try { setSendingOnboarding(true); await forceSendStudentOnboarding(id); setSuccess('Forced welcome resend queued and audited.'); await load(); }
+    catch (err) { setError(err.response?.data?.message || 'Unable to force resend welcome messages.'); }
+    finally { setSendingOnboarding(false); }
+  };
+
+  const resetLmsAccess = async () => {
+    if (!window.confirm('Create a new temporary LMS password, invalidate the current password, and send new access details?')) return;
+    try { setSendingOnboarding(true); await resetStudentPortalPassword(id, '', 'RESET LMS PASSWORD'); setSuccess('New temporary LMS access details queued securely.'); await load(); }
+    catch (err) { setError(err.response?.data?.message || 'Unable to reset LMS access.'); }
+    finally { setSendingOnboarding(false); }
+  };
+
   if (loading && !profile) return <Stack spacing={2}><LinearProgress /><Typography color="text.secondary">Loading student profile...</Typography></Stack>;
   if (error && !profile) return <Alert severity="error">{error}</Alert>;
 
@@ -239,23 +254,25 @@ function StudentProfilePage() {
     {success && <Alert severity="success" onClose={() => setSuccess('')}>{success}</Alert>}
 
     <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, border: `1px solid ${theme.palette.divider}` }}>
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
-        <Avatar src={student.photo || undefined} sx={{ width: 72, height: 72, bgcolor: 'primary.main', fontWeight: 900 }}>
+      <Grid container spacing={2} alignItems="center" wrap="wrap">
+        <Grid item xs="auto" sx={{ flexShrink: 0 }}><Avatar src={student.photo || undefined} sx={{ width: { xs: 58, sm: 72 }, height: { xs: 58, sm: 72 }, bgcolor: 'primary.main', fontWeight: 900, flexShrink: 0 }}>
           {(student.fullName || 'S').slice(0, 1)}
-        </Avatar>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-            <Typography variant="h4" fontWeight={900}>{student.fullName || 'Student'}</Typography>
+        </Avatar></Grid>
+        <Grid item xs minWidth={0} sx={{ overflowWrap: 'anywhere' }}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="h4" fontWeight={900} sx={{ fontSize: { xs: '1.45rem', sm: '2rem', lg: '2.125rem' }, lineHeight: 1.15, minWidth: 0, overflowWrap: 'anywhere' }}>{student.fullName || 'Student'}</Typography>
             <Chip label={student.status || 'unknown'} size="small" />
             {fees.paymentStatus && <Chip label={fees.paymentStatus} size="small" color={paymentColor} />}
           </Stack>
           <Typography color="text.secondary">{student.studentId || '-'} · {activeEnrollments.length} active enrollment{activeEnrollments.length === 1 ? '' : 's'}</Typography>
-        </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+        </Grid>
+        <Grid item xs={12} lg="auto" sx={{ maxWidth: { lg: '48%' } }}><Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent={{ xs: 'flex-start', lg: 'flex-end' }} sx={{ '& .MuiButton-root': { flex: { xs: '1 1 150px', sm: '0 1 auto' } } }}>
           {hasPermission('student.onboarding.send') && <Button variant="contained" startIcon={<WhatsAppIcon />} disabled={sendingOnboarding} onClick={sendWelcomeMessages}>Send Welcome Messages</Button>}
+          {hasPermission('student.onboarding.force_resend') && <Button color="warning" variant="outlined" disabled={sendingOnboarding} onClick={forceWelcomeMessages}>Force resend</Button>}
+          {hasPermission('student.lms_credentials.reset') && <Button color="warning" variant="outlined" disabled={sendingOnboarding} onClick={resetLmsAccess}>Reset LMS access & send</Button>}
           {quickActions.map(([label, icon, path]) => <Button key={label} variant="outlined" startIcon={icon} onClick={() => navigate(path)}>{label}</Button>)}
-        </Stack>
-      </Stack>
+        </Stack></Grid>
+      </Grid>
     </Paper>
     {onboarding.length > 0 && <Alert severity={onboarding.some((item) => item.status === 'failed') ? 'warning' : 'info'}>
       Welcome delivery: {onboarding.slice(0, 3).map((item) => `${item.templateKey.replace(/_/g, ' ')} — ${item.status}`).join(' · ')}

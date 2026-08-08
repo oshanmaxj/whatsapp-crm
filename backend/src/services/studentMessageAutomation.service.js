@@ -143,17 +143,40 @@ class StudentMessageAutomationService {
     const template = await this.get(templateKey);
     if (!template.isActive || !template.automationEnabled) return { status: 'disabled', templateKey };
     const eventKey = String(event.eventId || event.eventKey || event.eventDate || new Date().toISOString().slice(0, 10));
-    const dedupeKey = crypto.createHash('sha256').update(`${templateKey}:${studentId}:${eventKey}`).digest('hex');
-    const existing = await StudentAutomationDispatch.findOne({ where: { dedupeKey } });
-    if (existing) return { status: 'duplicate', dispatch: existing };
+    const templateVersion = template.updatedAt ? new Date(template.updatedAt).toISOString() : 'v1';
+    const logicalOwner = templateKey === 'enrollment_welcome' ? `${studentId}:${event.enrollmentId}` : String(studentId);
+    const forceAttempt = event.forceAttempt || null;
+    const dedupeKey = crypto.createHash('sha256').update(`${templateKey}:${logicalOwner}:${templateVersion}${forceAttempt ? `:force:${forceAttempt}` : ''}`).digest('hex');
+    if (!forceAttempt) {
+      const legacyExisting = await StudentAutomationDispatch.findOne({ where: {
+        templateKey, studentId, templateVersion: null,
+        ...(templateKey === 'enrollment_welcome' ? { enrollmentId: event.enrollmentId } : {}),
+        [Op.or]: [{ whatsappMessageId: { [Op.ne]: null } }, { status: { [Op.in]: ['queued', 'retrying', 'accepted', 'delivered', 'read'] } }]
+      }, order: [['created_at', 'DESC']] });
+      if (legacyExisting) return { status: 'duplicate', dispatch: legacyExisting };
+    }
     const { student, variables } = await this.context(studentId, event);
     if (!student.phone) return { status: 'skipped', reason: 'student_phone_missing' };
     const rendered = this.renderTemplate(template, variables);
-    const dispatch = await StudentAutomationDispatch.create({
-      templateKey, studentId, eventKey, eventDate: event.eventDate || null, dedupeKey,
+    if (templateKey === 'student_welcome' && !String(variables.portal_password || '').trim()) {
+      return { status: 'pending_configuration', templateKey, reason: 'temporary_credential_or_setup_link_required' };
+    }
+    const [dispatch, created] = await StudentAutomationDispatch.findOrCreate({ where: { dedupeKey }, defaults: {
+      templateKey, studentId, eventKey, eventDate: event.eventDate || null, dedupeKey, templateVersion,
+      originEvent: event.originEvent || 'automation', forceAttempt,
       enrollmentId: event.enrollmentId || null, whatsappAccountId: event.whatsappAccountId || null,
       status: 'queued', payload: { templateKey, eventKey }
-    });
+    } });
+    if (!created) {
+      if (['accepted', 'delivered', 'read', 'queued', 'retrying'].includes(dispatch.status) || dispatch.whatsappMessageId) return { status: 'duplicate', dispatch };
+      if (dispatch.queueId) {
+        const { MessageQueue } = require('../models');
+        await MessageQueue.update({ status: 'queued', scheduledAt: new Date(), nextAttemptAt: null, lastError: null }, { where: { id: dispatch.queueId, status: { [Op.in]: ['failed', 'cancelled'] } } });
+        await dispatch.update({ status: 'queued', failedAt: null, lastErrorMessage: null });
+        return { status: 'retry_queued', dispatch };
+      }
+      return { status: 'duplicate', dispatch };
+    }
     try {
       const queue = await messageQueueService.enqueue({
         channel: 'whatsapp',
@@ -165,7 +188,9 @@ class StudentMessageAutomationService {
         conversationId: event.conversationId || null,
         contactId: student.contactId || null,
         payload: {
-          text: rendered.text,
+          ...(templateKey === 'student_welcome'
+            ? { encryptedText: require('./onboardingPayloadCrypto.service').encrypt(rendered.text), credentialPayload: true }
+            : { text: rendered.text }),
           automationDispatchId: dispatch.id,
           automationTemplateKey: templateKey,
           studentId,
@@ -203,16 +228,17 @@ class StudentMessageAutomationService {
     const enrollments = enrollmentId
       ? await StudentEnrollment.findAll({ where: { id: enrollmentId, studentId } })
       : await StudentEnrollment.findAll({ where: { studentId, enrollmentStatus: 'active' } });
-    const suffix = force ? `:force:${Date.now()}` : '';
+    const forceAttempt = force ? crypto.randomUUID() : null;
     const results = [];
-    for (const enrollment of enrollments) results.push(await this.dispatchEnrollmentWelcome(enrollment.id, { eventId: `enrollment:${enrollment.id}${suffix}`, createdBy }));
+    for (const enrollment of enrollments) results.push(await this.dispatchEnrollmentWelcome(enrollment.id, { eventId: `enrollment:${enrollment.id}`, originEvent: force ? 'manual_force_resend' : 'manual_send_missing', forceAttempt, createdBy }));
     if (!student.portalPasswordHash) {
       results.push({ templateKey: 'student_welcome', status: 'pending_configuration', reason: 'lms_credentials_not_ready' });
       results.push({ templateKey: 'lms_user_guide', status: 'pending_configuration', reason: 'lms_credentials_not_ready' });
     } else {
-      results.push(await this.dispatch('lms_user_guide', student.id, { eventId: `lms:${student.id}${suffix}`, createdBy }));
+      results.push(await this.dispatch('lms_user_guide', student.id, { eventId: `lms:${student.id}`, originEvent: force ? 'manual_force_resend' : 'manual_send_missing', forceAttempt, createdBy }));
       results.push({ templateKey: 'student_welcome', status: 'pending_configuration', reason: 'password_cannot_be_recovered_for_secure_resend' });
     }
+    if (force) await require('./audit.service').record({ userId: createdBy, action: 'STUDENT_ONBOARDING_FORCE_RESEND', entityType: 'student', entityId: studentId, changes: { enrollmentId, forceAttempt, messageTypes: results.map((item) => item.templateKey || item.dispatch?.templateKey).filter(Boolean) } });
     return results;
   }
 

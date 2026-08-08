@@ -1,6 +1,7 @@
 const inboxService = require('../services/inbox.service');
 
 class ConversationController {
+  async counts(req, res, next) { try { return res.status(200).json({ success: true, data: await inboxService.counts(req.query, req.user) }); } catch (err) { next(err); } }
   async list(req, res, next) {
     try {
       const data = await inboxService.listConversations(req.query, req.user);

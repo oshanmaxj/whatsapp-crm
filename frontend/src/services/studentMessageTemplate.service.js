@@ -6,3 +6,4 @@ export const previewStudentMessageTemplate = (key, variables = {}) => api.post(`
 export const testStudentMessageTemplate = (key, payload) => api.post(`/student-message-templates/${key}/test`, payload);
 export const getStudentOnboardingStatus = (studentId) => api.get(`/student-message-templates/students/${studentId}/onboarding`);
 export const sendStudentOnboarding = (studentId, payload = {}) => api.post(`/student-message-templates/students/${studentId}/onboarding`, payload);
+export const forceSendStudentOnboarding = (studentId, payload = {}) => api.post(`/student-message-templates/students/${studentId}/onboarding/force`, payload);

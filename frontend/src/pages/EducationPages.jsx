@@ -547,12 +547,10 @@ function EducationModulePage({ moduleKey }) {
   const resetPortalPassword = async (row) => {
     const password = window.prompt('Enter a new student portal password, or leave blank to auto-generate one:');
     if (password === null) return;
+    if (!window.confirm('Resetting LMS credentials changes the student login. Continue and send the new access details by WhatsApp?')) return;
     try {
-      const response = await resetStudentPortalPassword(row.id, password.trim());
-      const generated = response.data.data.generatedPassword;
-      setSuccess(generated
-        ? `New portal password for ${row.studentNo}: ${generated} (shown once)`
-        : `Portal password reset for ${row.studentNo}.`);
+      await resetStudentPortalPassword(row.id, password.trim(), 'RESET LMS PASSWORD');
+      setSuccess(`Portal password reset and access details queued for ${row.studentNo}.`);
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to reset student portal password.');
     }

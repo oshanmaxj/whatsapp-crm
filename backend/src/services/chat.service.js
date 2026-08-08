@@ -7,6 +7,21 @@ const { normalizePhone: normalizeWhatsAppNumber } = require('../utils/phone');
 const { Op } = require('sequelize');
 const interactiveMediaService = require('./interactiveMedia.service');
 const { normalizeMessagePresentation } = require('./messagePresentation.service');
+const crypto = require('crypto');
+
+function messageCursor(row) {
+  const payload = Buffer.from(JSON.stringify({ t: row.createdAt, id: String(row.id) })).toString('base64url');
+  const signature = crypto.createHmac('sha256', process.env.INBOX_CURSOR_SECRET || process.env.JWT_SECRET || 'development-inbox-cursor-secret').update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+function parseMessageCursor(value) {
+  if (!value) return null;
+  const [payload, signature] = String(value).split('.');
+  const expected = crypto.createHmac('sha256', process.env.INBOX_CURSOR_SECRET || process.env.JWT_SECRET || 'development-inbox-cursor-secret').update(payload || '').digest('base64url');
+  if (!signature || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw Object.assign(new Error('Invalid message cursor'), { status: 400 });
+  const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  return { t: new Date(parsed.t), id: String(parsed.id) };
+}
 
 function previewText(message) {
   if (!message) return null;
@@ -510,7 +525,7 @@ class ChatService {
     })));
   }
 
-  async getConversationMessages(conversationId, userId) {
+  async getConversationMessages(conversationId, userId, query = {}) {
     await conversationAccessService.assertConversationAccess(conversationId, userId);
     const conversation = await Conversation.findByPk(conversationId, { attributes: ['id', 'normalizedPhone', 'whatsappAccountId'] });
     const conversationIds = conversation?.normalizedPhone
@@ -519,8 +534,12 @@ class ChatService {
           attributes: ['id']
         })).map((item) => item.id)
       : [conversationId];
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+    const cursor = parseMessageCursor(query.cursor);
+    const where = { conversationId: { [Op.in]: conversationIds } };
+    if (cursor) where[Op.or] = [{ createdAt: { [Op.lt]: cursor.t } }, { createdAt: cursor.t, id: { [Op.lt]: cursor.id } }];
     const messages = await Message.findAll({
-      where: { conversationId: { [require('sequelize').Op.in]: conversationIds } },
+      where,
       include: [
         {
           model: Message,
@@ -541,9 +560,12 @@ class ChatService {
           required: false
         }
       ],
-      order: [['created_at', 'ASC']]
+      order: [['created_at', 'DESC'], ['id', 'DESC']], limit: limit + 1
     });
-    return messages.map(serializeMessage);
+    const hasMore = messages.length > limit;
+    if (hasMore) messages.length = limit;
+    const nextCursor = hasMore && messages.length ? messageCursor(messages[messages.length - 1]) : null;
+    return { items: messages.reverse().map(serializeMessage), nextCursor, hasMore };
   }
 }
 

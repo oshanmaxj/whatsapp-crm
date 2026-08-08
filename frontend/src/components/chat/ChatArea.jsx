@@ -363,7 +363,7 @@ export function CustomerInfoBar({ conversation }) {
   );
 }
 
-export function MessageList({ messages, conversationId, messagesReady, onReply, onMarkPaymentSlip }) {
+export function MessageList({ messages, conversationId, messagesReady, onReply, onMarkPaymentSlip, hasOlderMessages, loadingOlderMessages, onLoadOlderMessages }) {
   const messagesContainerRef = useRef(null);
   const messagesEndRef = useRef(null);
   const messageRefs = useRef(new Map());
@@ -444,6 +444,10 @@ export function MessageList({ messages, conversationId, messagesReady, onReply, 
   const handleScroll = () => {
     const container = messagesContainerRef.current;
     if (!container) return;
+    if (container.scrollTop < 100 && hasOlderMessages && !loadingOlderMessages) {
+      const previousHeight = container.scrollHeight;
+      Promise.resolve(onLoadOlderMessages?.()).then(() => window.requestAnimationFrame(() => { container.scrollTop += container.scrollHeight - previousHeight; }));
+    }
     nearBottomRef.current = container.scrollHeight - container.scrollTop - container.clientHeight < 140;
     if (nearBottomRef.current) setShowScrollToLatest(false);
   };
@@ -492,6 +496,7 @@ export function MessageList({ messages, conversationId, messagesReady, onReply, 
           <Chip label="No messages yet — say hello" sx={{ bgcolor: '#fff' }} />
         </Box>
       )}
+      {selected && loadingOlderMessages && <Box sx={{ textAlign: 'center', py: 1 }}><Chip size="small" label="Loading older messages…" /></Box>}
       {selected && safeArray(messages).map((message) => (
         <Box
           key={message.id}
@@ -756,6 +761,9 @@ export function ChatArea({
   conversation,
   messages,
   messagesReady,
+  hasOlderMessages,
+  loadingOlderMessages,
+  onLoadOlderMessages,
   quickReplies,
   whatsappTemplates,
   selectedTemplate,
@@ -817,7 +825,7 @@ export function ChatArea({
           <CustomerInfoBar conversation={conversation} />
         </>
       )}
-      <MessageList messages={messages} conversationId={conversation?.id} messagesReady={messagesReady} onReply={onReply} onMarkPaymentSlip={onMarkPaymentSlip} />
+      <MessageList messages={messages} conversationId={conversation?.id} messagesReady={messagesReady} onReply={onReply} onMarkPaymentSlip={onMarkPaymentSlip} hasOlderMessages={hasOlderMessages} loadingOlderMessages={loadingOlderMessages} onLoadOlderMessages={onLoadOlderMessages} />
       <MessageComposer
         conversation={conversation}
         value={composerValue}

@@ -32,7 +32,7 @@ class EducationController {
     } catch (err) { next(err); }
   }
   async updateStudent(req, res, next) { try { return ok(res, await educationService.updateStudent(req.params.id, req.body, req.user?.id || null)); } catch (err) { next(err); } }
-  async resetStudentPortalPassword(req, res, next) { try { return ok(res, await educationService.resetStudentPortalPassword(req.params.id, req.body)); } catch (err) { next(err); } }
+  async resetStudentPortalPassword(req, res, next) { try { return ok(res, await educationService.resetStudentPortalPassword(req.params.id, req.body, req.user)); } catch (err) { next(err); } }
   async deleteStudent(req, res, next) { try { return ok(res, await educationService.deleteStudent(req.params.id)); } catch (err) { next(err); } }
   async convertLead(req, res, next) {
     try {

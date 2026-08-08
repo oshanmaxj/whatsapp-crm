@@ -5,3 +5,6 @@ exports.list = async (req, res, next) => { try { return ok(res, { templates: awa
 exports.update = async (req, res, next) => { try { return ok(res, await service.update(req.params.id, req.body)); } catch (error) { next(error); } };
 exports.preview = async (req, res, next) => { try { return ok(res, await service.preview(req.params.key, req.body?.variables)); } catch (error) { next(error); } };
 exports.test = async (req, res, next) => { try { return ok(res, await service.sendTest(req.params.key, { ...req.body, createdBy: req.user?.id }), 201); } catch (error) { next(error); } };
+exports.onboardingStatus = async (req, res, next) => { try { return ok(res, await service.onboardingStatus(req.params.studentId)); } catch (error) { next(error); } };
+exports.sendOnboarding = async (req, res, next) => { try { return ok(res, await service.sendOnboarding(req.params.studentId, { enrollmentId: req.body?.enrollmentId, force: false, createdBy: req.user?.id }), 202); } catch (error) { next(error); } };
+exports.forceOnboarding = async (req, res, next) => { try { return ok(res, await service.sendOnboarding(req.params.studentId, { enrollmentId: req.body?.enrollmentId, force: true, createdBy: req.user?.id }), 202); } catch (error) { next(error); } };

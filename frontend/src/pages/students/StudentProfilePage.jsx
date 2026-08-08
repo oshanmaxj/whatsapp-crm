@@ -30,6 +30,8 @@ import {
   getStudentProfile,
   updateStudentGuardian
 } from '../../services/education.service';
+import { getStudentOnboardingStatus, sendStudentOnboarding } from '../../services/studentMessageTemplate.service';
+import { hasPermission } from '../../utils/access';
 
 const tabs = ['Overview', 'Fees', 'Attendance', 'Certificates', 'Guardians', 'Notes', 'Documents', 'WhatsApp'];
 const emptyGuardian = {
@@ -91,12 +93,18 @@ function StudentProfilePage() {
   const [guardianDialog, setGuardianDialog] = useState(false);
   const [guardianForm, setGuardianForm] = useState(emptyGuardian);
   const [editingGuardianId, setEditingGuardianId] = useState(null);
+  const [onboarding, setOnboarding] = useState([]);
+  const [sendingOnboarding, setSendingOnboarding] = useState(false);
 
   const load = async () => {
     try {
       setLoading(true);
       const response = await getStudentProfile(id);
       setProfile(response.data.data);
+      if (hasPermission('students.view')) {
+        const dispatches = await getStudentOnboardingStatus(id);
+        setOnboarding(dispatches.data?.data || []);
+      }
       setError('');
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to load student profile.');
@@ -205,6 +213,18 @@ function StudentProfilePage() {
     }
   };
 
+  const sendWelcomeMessages = async () => {
+    try {
+      setSendingOnboarding(true); setError('');
+      const response = await sendStudentOnboarding(id);
+      const pending = (response.data?.data || []).filter((item) => item.status === 'pending_configuration');
+      setSuccess(pending.length ? 'Eligible welcome messages queued; credential-dependent messages need configuration.' : 'Welcome messages queued.');
+      const dispatches = await getStudentOnboardingStatus(id);
+      setOnboarding(dispatches.data?.data || []);
+    } catch (err) { setError(err.response?.data?.message || 'Unable to queue welcome messages.'); }
+    finally { setSendingOnboarding(false); }
+  };
+
   if (loading && !profile) return <Stack spacing={2}><LinearProgress /><Typography color="text.secondary">Loading student profile...</Typography></Stack>;
   if (error && !profile) return <Alert severity="error">{error}</Alert>;
 
@@ -232,10 +252,14 @@ function StudentProfilePage() {
           <Typography color="text.secondary">{student.studentId || '-'} · {activeEnrollments.length} active enrollment{activeEnrollments.length === 1 ? '' : 's'}</Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          {hasPermission('student.onboarding.send') && <Button variant="contained" startIcon={<WhatsAppIcon />} disabled={sendingOnboarding} onClick={sendWelcomeMessages}>Send Welcome Messages</Button>}
           {quickActions.map(([label, icon, path]) => <Button key={label} variant="outlined" startIcon={icon} onClick={() => navigate(path)}>{label}</Button>)}
         </Stack>
       </Stack>
     </Paper>
+    {onboarding.length > 0 && <Alert severity={onboarding.some((item) => item.status === 'failed') ? 'warning' : 'info'}>
+      Welcome delivery: {onboarding.slice(0, 3).map((item) => `${item.templateKey.replace(/_/g, ' ')} — ${item.status}`).join(' · ')}
+    </Alert>}
 
     <Paper elevation={0} sx={{ border: `1px solid ${theme.palette.divider}` }}>
       <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto">

@@ -18,6 +18,7 @@ router.get('/:id', permit('receipts.view'), controller.get.bind(controller));
 router.get('/:id/pdf', permit('receipts.download'), controller.download.bind(controller));
 router.post('/:id/regenerate', permit('receipts.regenerate'), controller.regenerate.bind(controller));
 router.post('/:id/send-whatsapp', permit('receipts.send_whatsapp'), controller.sendWhatsapp.bind(controller));
+router.post('/:id/retry-whatsapp', permit('receipts.retry_delivery'), controller.retryWhatsapp.bind(controller));
 router.post('/:id/void', permit('receipts.void'), controller.void.bind(controller));
 
 receiptJobs.start();

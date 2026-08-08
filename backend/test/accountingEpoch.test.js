@@ -49,13 +49,15 @@ test('reset uses one transaction, advisory lock and required immutable audit eve
   models.AccountingReportingEpoch.findOne = async () => ({ trackingStartedAt: new Date('2025-01-01T00:00:00Z') });
   models.AccountingReportingEpoch.create = async values => ({ id: 12, ...values });
   audit.record = async values => { calls.push({ audit: values }); return { id: 44 }; };
+  const maintenanceFlag = process.env.ACCOUNTING_RESET_MAINTENANCE_ENABLED;
+  process.env.ACCOUNTING_RESET_MAINTENANCE_ENABLED = 'true';
   try {
-    const epoch = await epochService.reset({ trackingStartedAt: '2026-08-07T04:00:00Z', reason: 'Administrator reset', confirmation: 'RESET ACCOUNTING' }, { id: 9, isSystemAdmin: true });
+    const epoch = await epochService.reset({ trackingStartedAt: '2026-08-07T04:00:00Z', reason: 'Administrator reset', confirmation: 'RESET ACCOUNTING' }, { id: 9, isSystemAdmin: true, permissions: ['accounting.reset_maintenance'] });
     assert.equal(epoch.id, 12);
     assert.match(calls[0].sql, /pg_advisory_xact_lock/);
     assert.equal(calls.find(item => item.audit).audit.required, true);
     assert.equal(calls.find(item => item.audit).audit.transaction, tx);
-  } finally { Object.assign(models.sequelize, { transaction: originals.transaction, query: originals.query }); models.AccountingReportingEpoch.findOne = originals.findOne; models.AccountingReportingEpoch.create = originals.create; audit.record = originals.record; }
+  } finally { if (maintenanceFlag === undefined) delete process.env.ACCOUNTING_RESET_MAINTENANCE_ENABLED; else process.env.ACCOUNTING_RESET_MAINTENANCE_ENABLED = maintenanceFlag; Object.assign(models.sequelize, { transaction: originals.transaction, query: originals.query }); models.AccountingReportingEpoch.findOne = originals.findOne; models.AccountingReportingEpoch.create = originals.create; audit.record = originals.record; }
 });
 
 test('migration archives by epoch without destructive SQL and preserves stable source identities', () => {

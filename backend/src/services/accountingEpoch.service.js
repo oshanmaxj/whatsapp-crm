@@ -9,6 +9,13 @@ function requireAdmin(actor) {
   if (!actor?.isSystemAdmin) throw Object.assign(new Error('System administrator access is required.'), { status: 403, code: 'ACCOUNTING_RESET_FORBIDDEN' });
 }
 
+function requireMaintenance(actor) {
+  const permissions = Array.isArray(actor?.permissions) ? actor.permissions : [];
+  if (!actor?.isSystemAdmin || !permissions.includes('accounting.reset_maintenance') || process.env.ACCOUNTING_RESET_MAINTENANCE_ENABLED !== 'true') {
+    throw Object.assign(new Error('Accounting reset is restricted to the disabled maintenance interface.'), { status: 403, code: 'ACCOUNTING_RESET_FORBIDDEN' });
+  }
+}
+
 class AccountingEpochService {
   async current(options = {}) {
     return AccountingReportingEpoch.findOne({
@@ -29,7 +36,7 @@ class AccountingEpochService {
   }
 
   async preview({ trackingStartedAt }, actor) {
-    requireAdmin(actor);
+    requireMaintenance(actor);
     const proposed = new Date(trackingStartedAt);
     if (Number.isNaN(proposed.getTime()) || proposed.getTime() > Date.now()) throw Object.assign(new Error('Tracking start must be a valid timestamp that is not in the future.'), { status: 422, code: 'ACCOUNTING_EPOCH_INVALID' });
     const [currentEpoch, rows, affectedHistoricalTransactions] = await Promise.all([
@@ -43,7 +50,7 @@ class AccountingEpochService {
   }
 
   async reset(payload, actor, request = {}) {
-    requireAdmin(actor);
+    requireMaintenance(actor);
     if (payload.confirmation !== 'RESET ACCOUNTING') throw Object.assign(new Error('Type RESET ACCOUNTING to confirm.'), { status: 422, code: 'ACCOUNTING_RESET_CONFIRMATION_REQUIRED' });
     const trackingStartedAt = new Date(payload.trackingStartedAt || payload.tracking_started_at);
     if (Number.isNaN(trackingStartedAt.getTime()) || trackingStartedAt.getTime() > Date.now()) throw Object.assign(new Error('Tracking start must be a valid timestamp that is not in the future.'), { status: 422, code: 'ACCOUNTING_EPOCH_INVALID' });
@@ -64,3 +71,4 @@ class AccountingEpochService {
 
 module.exports = new AccountingEpochService();
 module.exports.requireAdmin = requireAdmin;
+module.exports.requireMaintenance = requireMaintenance;

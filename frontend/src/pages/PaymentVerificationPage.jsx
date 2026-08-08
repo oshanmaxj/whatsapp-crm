@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle,
+  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle,
   MenuItem, Paper, Stack, Tab, Tabs, TextField, Typography
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import {
   approvePaymentSlip, createStudentFeePlan, fetchPaymentSlipFile, generateFeeInstallments,
   getOutstandingInstallments, getPaymentSlip, getStudentFeeOptions, listPaymentSlips,
-  markPaymentSlipDuplicate, rejectPaymentSlip, rerunPaymentSlip
+  markPaymentSlipDuplicate, rejectPaymentSlip, rerunPaymentSlip, searchPaymentSlipStudents
 } from '../services/paymentSlip.service';
 import { getAccessPayload } from '../utils/access';
 import { feeOptionLabel, installmentOptionLabel, installmentSelection, singleOptionId } from '../utils/paymentSlipReview';
@@ -35,6 +35,25 @@ function PaymentVerificationPage() {
   const [feeData, setFeeData] = useState({ options: [], enrollments: [] });
   const [installmentOptions, setInstallmentOptions] = useState([]);
   const [enrollmentId, setEnrollmentId] = useState('');
+  const [studentQuery, setStudentQuery] = useState('');
+  const [studentSearchOptions, setStudentSearchOptions] = useState([]);
+  const [studentSearchLoading, setStudentSearchLoading] = useState(false);
+  const [manualStudent, setManualStudent] = useState(null);
+
+  useEffect(() => {
+    if (!selected) return undefined;
+    let active = true;
+    const timer = setTimeout(async () => {
+      setStudentSearchLoading(true);
+      try {
+        const response = await searchPaymentSlipStudents({ q: studentQuery, page: 1, limit: 20 });
+        if (active) setStudentSearchOptions(response.data?.data?.data || []);
+      } catch (err) {
+        if (active) setError(err.response?.data?.message || 'Unable to search students.');
+      } finally { if (active) setStudentSearchLoading(false); }
+    }, 350);
+    return () => { active = false; clearTimeout(timer); };
+  }, [selected, studentQuery]);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -55,10 +74,11 @@ function PaymentVerificationPage() {
     const base = {
       ...emptyForm,
       confirmedAmount: detail.detectedAmount || '',
-      studentId: detail.studentId ? String(detail.studentId) : '',
+      studentId: preserveNotes && form.studentId ? form.studentId : (detail.studentId ? String(detail.studentId) : ''),
       duplicateOfSlipId: detail.duplicateOfSlipId || '',
       ...(preserveNotes ? { note: form.note, reason: form.reason } : {})
     };
+    if (!preserveNotes) setManualStudent(null);
     setFeeData({ options: [], enrollments: [] });
     setInstallmentOptions([]);
     setEnrollmentId('');
@@ -122,6 +142,11 @@ function PaymentVerificationPage() {
     finally { setLoadingOptions(false); }
   };
 
+  const selectStudent = async (student) => {
+    setManualStudent(student || null);
+    await changeStudent(student ? String(student.id) : '');
+  };
+
   const changeInstallment = (installmentId) => {
     const choice = installmentSelection(installmentOptions, installmentId);
     setForm((current) => ({ ...current, ...choice }));
@@ -158,7 +183,7 @@ function PaymentVerificationPage() {
     finally { setSaving(false); }
   };
 
-  const studentOptions = selected ? [...new Map([
+  const detectedStudentOptions = selected ? [...new Map([
     ...(selected.student ? [[String(selected.student.id), selected.student]] : []),
     ...(selected.matchCandidates?.students || []).map((item) => [String(item.id), item])
   ]).values()] : [];
@@ -184,7 +209,16 @@ function PaymentVerificationPage() {
             <Alert severity="warning">Finance approval is required. OCR and detection never approve a payment.</Alert>
             <Typography><b>Caption:</b> {selected.messageCaption || 'None'}</Typography><Typography><b>Detected:</b> Rs. {selected.detectedAmount || '—'} · {selected.detectedBank || 'Bank unknown'} · Ref {selected.referenceNumber || '—'}</Typography><Typography><b>Signals:</b> {(selected.detectionSignals || []).map((item) => item.code).join(', ') || 'None'}</Typography>
             {(selected.detectionWarnings || []).length > 0 && <Alert severity="info">{selected.detectionWarnings.join(', ')}</Alert>}
-            <TextField label="Student" value={form.studentId} onChange={(event) => changeStudent(event.target.value)} select disabled={!canApprove || loadingOptions}>{studentOptions.map((item) => <MenuItem key={item.id} value={String(item.id)}>{item.studentNo} · {item.name}</MenuItem>)}</TextField>
+            <Autocomplete
+              options={[...new Map([...studentSearchOptions, ...detectedStudentOptions].map((item) => [String(item.id), item])).values()]}
+              value={manualStudent || detectedStudentOptions.find((item) => String(item.id) === form.studentId) || null}
+              onChange={(_, value) => selectStudent(value)}
+              onInputChange={(_, value, reason) => { if (reason === 'input') setStudentQuery(value); }}
+              getOptionLabel={(item) => `${item.studentNo || 'No registration'} · ${item.name}${item.phone ? ` · ${item.phone}` : ''}`}
+              isOptionEqualToValue={(option, value) => String(option.id) === String(value.id)}
+              loading={studentSearchLoading} disabled={!canApprove || loadingOptions}
+              renderInput={(params) => <TextField {...params} label="Search and select student" helperText={manualStudent ? 'Manual selection (preserved when detection is re-run)' : 'Search by name, registration number, phone, or email'} />}
+            />
             <TextField label="Student Fee" value={form.studentFeeId} onChange={(event) => changeFee(event.target.value)} select disabled={!canApprove || loadingOptions || !form.studentId}><MenuItem value=""><em>Select a fee record</em></MenuItem>{feeData.options.map((item) => <MenuItem key={item.id} value={String(item.id)}>{feeOptionLabel(item)}</MenuItem>)}</TextField>
             {form.studentId && !loadingOptions && feeData.options.length === 0 && <Alert severity="warning" action={can('fees.create') ? <Button color="inherit" size="small" disabled={saving || !feeData.enrollments.length || (feeData.enrollments.length > 1 && !enrollmentId)} onClick={createPlan}>Create fee plan</Button> : null}>No fee record exists for this student.</Alert>}
             {form.studentId && feeData.options.length === 0 && feeData.enrollments.length > 1 && can('fees.create') && <TextField select label="Enrollment / Course" value={enrollmentId} onChange={(event) => setEnrollmentId(event.target.value)}>{feeData.enrollments.map((item) => <MenuItem key={item.id} value={String(item.id)}>{item.courseName} – Rs. {Number(item.courseFee || 0).toLocaleString()} – {item.defaultInstallmentCount} installment(s)</MenuItem>)}</TextField>}

@@ -1,6 +1,7 @@
 import api from './api';
 
 export const listPaymentSlips = (params = {}) => api.get('/payment-slips', { params });
+export const searchPaymentSlipStudents = (params = {}) => api.get('/payment-slips/students/search', { params });
 export const getPaymentSlip = (id) => api.get(`/payment-slips/${id}`);
 export const markMessageAsPaymentSlip = (messageId) => api.post(`/payment-slips/messages/${messageId}/mark`);
 export const rerunPaymentSlip = (id) => api.post(`/payment-slips/${id}/rerun`);

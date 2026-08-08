@@ -185,7 +185,7 @@ test('private receipt storage rejects traversal and is outside public uploads', 
   assert.equal(resolved.includes(`${path.sep}uploads${path.sep}`), false);
 });
 
-test('automatic WhatsApp jobs deduplicate while manual resend creates an audited new job', async () => {
+test('automatic and manual WhatsApp requests share one stable delivery job', async () => {
   const jobs = new Map();
   let manualCounter = 0;
   const Job = {
@@ -200,8 +200,8 @@ test('automatic WhatsApp jobs deduplicate while manual resend creates an audited
   const retry = await service.enqueueWhatsapp(1, { manual: false });
   const manual = await service.enqueueWhatsapp(1, { manual: true, actorUserId: 4 });
   assert.equal(first.id, retry.id);
-  assert.notEqual(manual.id, first.id);
-  assert.equal(jobs.size, 2);
+  assert.equal(manual.id, first.id);
+  assert.equal(jobs.size, 1);
 });
 
 test('delivery sends once automatically, permits manual resend and audits it', async () => {

@@ -1,7 +1,7 @@
 ﻿const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
-const { CampaignEvent, CampaignRecipient, FlowNode, Message, MessageQueue, Notification, ReminderExecution } = require('../models');
+const { CampaignEvent, CampaignRecipient, FlowNode, Message, MessageQueue, Notification, ReminderExecution, PaymentReceiptJob, StudentAutomationDispatch } = require('../models');
 const whatsappConfig = require('../config/whatsapp');
 const whatsappSettingsService = require('./whatsappSettings.service');
 const whatsappAccountService = require('./whatsappAccount.service');
@@ -1292,6 +1292,24 @@ class WhatsappService {
       if (['delivered', 'read', 'sent'].includes(status.status)) queueUpdate.status = 'sent';
       await MessageQueue.update(queueUpdate, { where: { externalMessageId: status.id } }).catch(() => null);
       const queueItem = await MessageQueue.findOne({ where: { externalMessageId: status.id } }).catch(() => null);
+      const receiptJob = await PaymentReceiptJob.findOne({ where: { externalMessageId: status.id } }).catch(() => null);
+      if (receiptJob) {
+        const receiptUpdate = {};
+        if (nextStatus === 'sent') Object.assign(receiptUpdate, { status: 'ACCEPTED', acceptedAt: updatedAt });
+        if (nextStatus === 'delivered') Object.assign(receiptUpdate, { status: 'DELIVERED', deliveredAt: updatedAt });
+        if (nextStatus === 'read') Object.assign(receiptUpdate, { status: 'READ', readAt: updatedAt });
+        if (nextStatus === 'failed') Object.assign(receiptUpdate, { status: 'FAILED', failedAt: updatedAt, lastErrorCode: errors.errorCode || 'META_REJECTED', lastError: errors.errorMessage || 'Meta rejected receipt delivery', terminal: true });
+        if (Object.keys(receiptUpdate).length) await receiptJob.update(receiptUpdate).catch(() => null);
+      }
+      const automationDispatch = await StudentAutomationDispatch.findOne({ where: { whatsappMessageId: status.id } }).catch(() => null);
+      if (automationDispatch) {
+        const dispatchUpdate = {};
+        if (nextStatus === 'sent') Object.assign(dispatchUpdate, { status: 'accepted', acceptedAt: updatedAt });
+        if (nextStatus === 'delivered') Object.assign(dispatchUpdate, { status: 'delivered', deliveredAt: updatedAt });
+        if (nextStatus === 'read') Object.assign(dispatchUpdate, { status: 'read', readAt: updatedAt });
+        if (nextStatus === 'failed') Object.assign(dispatchUpdate, { status: 'failed', failedAt: updatedAt, lastErrorMessage: errors.errorMessage || 'Meta rejected onboarding delivery' });
+        if (Object.keys(dispatchUpdate).length) await automationDispatch.update(dispatchUpdate).catch(() => null);
+      }
       if (queueItem?.campaignRecipientId && ['sent', 'delivered', 'read', 'failed'].includes(nextStatus)) {
         const recipientUpdate = {
           status: nextStatus,

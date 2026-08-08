@@ -11,5 +11,3 @@ export const createAccountingCategory = (payload) => api.post('/accounting/categ
 export const updateAccountingCategory = (id, payload) => api.patch(`/accounting/categories/${id}`, payload);
 export const deleteAccountingCategory = (id) => api.delete(`/accounting/categories/${id}`);
 export const getAccountingReports = (params = {}) => api.get('/accounting/reports', { params });
-export const previewAccountingReset = (payload) => api.post('/accounting/reset/preview', payload);
-export const resetAccounting = (payload) => api.post('/accounting/reset', payload);

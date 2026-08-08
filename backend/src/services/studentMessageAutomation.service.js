@@ -151,7 +151,8 @@ class StudentMessageAutomationService {
     const rendered = this.renderTemplate(template, variables);
     const dispatch = await StudentAutomationDispatch.create({
       templateKey, studentId, eventKey, eventDate: event.eventDate || null, dedupeKey,
-      status: 'queued', payload: { variables, text: rendered.text }
+      enrollmentId: event.enrollmentId || null, whatsappAccountId: event.whatsappAccountId || null,
+      status: 'queued', payload: { templateKey, eventKey }
     });
     try {
       const queue = await messageQueueService.enqueue({
@@ -182,9 +183,37 @@ class StudentMessageAutomationService {
       await dispatch.update({ queueId: queue.id });
       return { status: 'queued', dispatch, queue };
     } catch (error) {
-      await dispatch.update({ status: 'failed' });
+      await dispatch.update({ status: 'failed', failedAt: new Date(), lastErrorMessage: error.message });
       throw error;
     }
+  }
+
+  async onboardingStatus(studentId) {
+    const student = await Student.findByPk(studentId);
+    if (!student) throw Object.assign(new Error('Student not found'), { status: 404 });
+    return StudentAutomationDispatch.findAll({
+      where: { studentId, templateKey: { [Op.in]: ['enrollment_welcome', 'student_welcome', 'lms_user_guide'] } },
+      attributes: { exclude: ['payload'] }, order: [['created_at', 'DESC']], limit: 50
+    });
+  }
+
+  async sendOnboarding(studentId, { enrollmentId = null, force = false, createdBy = null } = {}) {
+    const student = await Student.scope('withPortalPassword').findByPk(studentId);
+    if (!student) throw Object.assign(new Error('Student not found'), { status: 404 });
+    const enrollments = enrollmentId
+      ? await StudentEnrollment.findAll({ where: { id: enrollmentId, studentId } })
+      : await StudentEnrollment.findAll({ where: { studentId, enrollmentStatus: 'active' } });
+    const suffix = force ? `:force:${Date.now()}` : '';
+    const results = [];
+    for (const enrollment of enrollments) results.push(await this.dispatchEnrollmentWelcome(enrollment.id, { eventId: `enrollment:${enrollment.id}${suffix}`, createdBy }));
+    if (!student.portalPasswordHash) {
+      results.push({ templateKey: 'student_welcome', status: 'pending_configuration', reason: 'lms_credentials_not_ready' });
+      results.push({ templateKey: 'lms_user_guide', status: 'pending_configuration', reason: 'lms_credentials_not_ready' });
+    } else {
+      results.push(await this.dispatch('lms_user_guide', student.id, { eventId: `lms:${student.id}${suffix}`, createdBy }));
+      results.push({ templateKey: 'student_welcome', status: 'pending_configuration', reason: 'password_cannot_be_recovered_for_secure_resend' });
+    }
+    return results;
   }
 
   async dispatchEnrollmentWelcome(enrollmentId, event = {}) {

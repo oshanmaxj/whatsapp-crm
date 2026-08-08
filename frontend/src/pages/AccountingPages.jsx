@@ -13,7 +13,7 @@ import {
   createAccountingCategory, createAccountingTransaction, deleteAccountingCategory,
   deleteAccountingTransaction, getAccountingCategories, getAccountingReports,
   getAccountingSummary, getAccountingTransactions, updateAccountingCategory,
-  updateAccountingTransaction, previewAccountingReset, resetAccounting
+  updateAccountingTransaction
 } from '../services/accounting.service';
 import { downloadReceipt, generateReceipt, saveBlob } from '../services/paymentReceipt.service';
 import { getAccessPayload, hasPermission } from '../utils/access';
@@ -44,18 +44,11 @@ function TransactionTable({ rows, actions = false, onEdit, onDelete, onReceipt }
 export function AccountingDashboardPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const [resetOpen, setResetOpen] = useState(false);
-  const [resetStage, setResetStage] = useState(1);
-  const [resetForm, setResetForm] = useState({ trackingStartedAt: new Date().toISOString(), reason: 'Accounting ledger reset requested by administrator', confirmation: '' });
-  const [preview, setPreview] = useState(null);
-  const isAdmin = getAccessPayload().isSystemAdmin;
   const load = () => getAccountingSummary().then((response) => setData(response.data.data));
   useEffect(() => { load().catch((e) => setError(errorText(e, 'Unable to load accounting summary.'))); }, []);
-  const previewReset = async () => { try { const response = await previewAccountingReset(resetForm); setPreview(response.data.data); setResetStage(2); } catch (e) { setError(errorText(e, 'Unable to preview reset.')); } };
-  const applyReset = async () => { try { const response = await resetAccounting(resetForm); setData(response.data.data.totals); setResetOpen(false); setResetStage(1); setPreview(null); } catch (e) { setError(errorText(e, 'Unable to reset Accounting reporting.')); } };
   const epoch = data?.reportingEpoch;
   return <Stack spacing={2.5}>
-    <PageTitle title="Accounting Dashboard" subtitle="Income, expenses, and current profitability at a glance." action={isAdmin ? <Button color="warning" variant="outlined" onClick={() => setResetOpen(true)}>Reset accounting reporting</Button> : null} />
+    <PageTitle title="Accounting Dashboard" subtitle="Income, expenses, and current profitability at a glance." />
     {error && <Alert severity="error">{error}</Alert>}
     {epoch && <Alert severity="info">Accounting tracking from: {new Date(epoch.trackingStartedAt).toLocaleString()} · Reset by {epoch.changedBy ? [epoch.changedBy.firstName, epoch.changedBy.lastName].filter(Boolean).join(' ') || epoch.changedBy.email : 'System'} · {epoch.reason}</Alert>}
     <Grid container spacing={2}>
@@ -66,9 +59,6 @@ export function AccountingDashboardPage() {
       <Grid item xs={12} sm={6}><Metric label="Expenses This Month" value={data?.expensesThisMonth} color="error.main" /></Grid>
     </Grid>
     <Box><Typography variant="h6" fontWeight={850} sx={{ mb: 1 }}>Recent Transactions</Typography><TransactionTable rows={data?.recentTransactions || []} /></Box>
-    <Dialog open={resetOpen} onClose={() => setResetOpen(false)} fullWidth maxWidth="sm"><DialogTitle>Reset Accounting reporting · Step {resetStage} of 2</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}>
-      {resetStage === 1 ? <><Alert severity="warning">Historical ledger records and their payment, receipt and commission relationships will remain preserved. They will be excluded from current-period reporting.</Alert><Typography>Current income: {money(data?.totalIncome)} · Current expenses: {money(data?.totalExpenses)}</Typography><TextField type="datetime-local" label="Tracking start" value={resetForm.trackingStartedAt.slice(0,16)} onChange={(e) => setResetForm({ ...resetForm, trackingStartedAt: new Date(e.target.value).toISOString() })} InputLabelProps={{ shrink: true }} /><TextField label="Reason" value={resetForm.reason} onChange={(e) => setResetForm({ ...resetForm, reason: e.target.value })} multiline /></> : <><Alert severity="error">{preview?.affectedHistoricalTransactions || 0} transaction(s) will become historical. No ledger or operational rows will be deleted.</Alert><Typography>Proposed tracking start: {new Date(preview?.proposedTrackingStartedAt).toLocaleString()}</Typography><TextField label="Type RESET ACCOUNTING" value={resetForm.confirmation} onChange={(e) => setResetForm({ ...resetForm, confirmation: e.target.value })} autoComplete="off" /></>}
-    </Stack></DialogContent><DialogActions><Button onClick={() => { setResetOpen(false); setResetStage(1); }}>Cancel</Button>{resetStage === 2 && <Button onClick={() => setResetStage(1)}>Back</Button>}<Button variant="contained" color="warning" disabled={resetStage === 1 ? !resetForm.reason.trim() : resetForm.confirmation !== 'RESET ACCOUNTING'} onClick={resetStage === 1 ? previewReset : applyReset}>{resetStage === 1 ? 'Review reset' : 'Reset reporting'}</Button></DialogActions></Dialog>
   </Stack>;
 }
 

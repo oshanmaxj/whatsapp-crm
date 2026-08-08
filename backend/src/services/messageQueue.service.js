@@ -149,7 +149,7 @@ class MessageQueueService {
       queuePayload = row.payload || {};
       if (queuePayload.automationDispatchId) {
         await StudentAutomationDispatch.update(
-          { status: 'sent' },
+          { status: 'accepted', whatsappMessageId: externalMessageId, whatsappAccountId: row.whatsappAccountId || preparedHistory?.conversation?.whatsappAccountId || null, acceptedAt: new Date(), attempts: row.attempts },
           { where: { id: queuePayload.automationDispatchId } }
         );
         if (!preparedHistory) await outboundHistoryService.record({
@@ -253,7 +253,7 @@ class MessageQueueService {
         await row.update({ status: 'sent', processedAt: new Date(), externalMessageId: deliveredMessageId, lastError: null });
         const deliveredPayload = row.payload || {};
         if (deliveredPayload.automationDispatchId) {
-          await StudentAutomationDispatch.update({ status: 'sent' }, { where: { id: deliveredPayload.automationDispatchId } }).catch(() => null);
+          await StudentAutomationDispatch.update({ status: 'accepted', whatsappMessageId: deliveredMessageId, acceptedAt: new Date(), attempts: row.attempts }, { where: { id: deliveredPayload.automationDispatchId } }).catch(() => null);
         }
         return row;
       }
@@ -269,7 +269,7 @@ class MessageQueueService {
       const queuePayload = row.payload || {};
       if (queuePayload.automationDispatchId) {
         await StudentAutomationDispatch.update(
-          { status: hasAttempts ? 'retrying' : 'failed' },
+          { status: hasAttempts ? 'retrying' : 'failed', attempts: row.attempts, lastErrorMessage: classified.message, failedAt: hasAttempts ? null : new Date() },
           { where: { id: queuePayload.automationDispatchId } }
         );
         await Notification.create({

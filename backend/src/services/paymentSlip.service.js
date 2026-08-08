@@ -69,6 +69,31 @@ async function privatizeMedia({ media, message, slip, evidence, transaction }) {
 }
 
 class PaymentSlipService {
+  async searchStudents(query = {}) {
+    const term = String(query.q || '').trim();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(25, Math.max(1, Number(query.limit) || 15));
+    const phone = term.replace(/\D/g, '');
+    const where = { status: { [Op.in]: ['enrolled', 'active'] } };
+    if (term) where[Op.or] = [
+      { studentNo: { [Op.iLike]: `%${term}%` } }, { name: { [Op.iLike]: `%${term}%` } },
+      { email: { [Op.iLike]: `%${term}%` } }, { phone: { [Op.iLike]: `%${phone || term}%` } },
+      { '$contact.phone$': { [Op.iLike]: `%${phone || term}%` } }, { '$contact.email$': { [Op.iLike]: `%${term}%` } }
+    ];
+    const result = await Student.findAndCountAll({
+      where, attributes: ['id', 'studentNo', 'name', 'phone', 'email', 'status'],
+      include: [
+        { model: Contact, as: 'contact', required: false, attributes: ['phone', 'email'] },
+        { model: StudentEnrollment, as: 'enrollments', required: false, attributes: ['id', 'courseId', 'batchId', 'enrollmentStatus'], include: [
+          { model: Course, as: 'course', required: false, attributes: ['id', 'code', 'name'] },
+          { model: Batch, as: 'batch', required: false, attributes: ['id', 'code', 'name'] }
+        ] }
+      ],
+      distinct: true, subQuery: false, order: [['name', 'ASC'], ['id', 'ASC']], limit, offset: (page - 1) * limit
+    });
+    return { data: result.rows, pagination: { page, limit, total: result.count, pages: Math.ceil(result.count / limit) } };
+  }
+
   async feeOptions(studentId) {
     const student = await Student.findByPk(studentId, { attributes: ['id', 'studentNo', 'name'] });
     if (!student) throw safeError('Student not found.', 404, 'STUDENT_NOT_FOUND');

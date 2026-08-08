@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const { Op } = require('sequelize');
 const { PaymentReceiptJob, sequelize } = require('../models');
 const pdfService = require('./paymentReceiptPdf.service');
@@ -14,12 +13,10 @@ class PaymentReceiptJobService {
     this.deliveryService = dependencies.deliveryService || deliveryService;
     this.settingsService = dependencies.settingsService || settingsService;
     this.logger = dependencies.logger || logger;
-    this.randomUUID = dependencies.randomUUID || crypto.randomUUID;
   }
 
   async enqueue(receiptId, jobType, { actorUserId = null, manual = false, conversationId = null, whatsappAccountId = null } = {}) {
-    const stable = manual ? this.randomUUID() : 'auto';
-    const dedupeKey = `receipt:${receiptId}:${jobType}:${stable}`;
+    const dedupeKey = `receipt:${receiptId}:${jobType}:v1`;
     const [job] = await this.Job.findOrCreate({
       where: { dedupeKey },
       defaults: { receiptId, jobType, dedupeKey, actorUserId, manual, conversationId, whatsappAccountId, status: 'QUEUED', runAfter: new Date() }
@@ -31,10 +28,19 @@ class PaymentReceiptJobService {
   enqueuePdf(receiptId, options) { return this.enqueue(receiptId, 'GENERATE_PDF', options); }
   enqueueWhatsapp(receiptId, options) { return this.enqueue(receiptId, 'SEND_WHATSAPP', options); }
 
+  async retryWhatsapp(receiptId, options = {}) {
+    const job = await this.Job.findOne({ where: { dedupeKey: `receipt:${receiptId}:SEND_WHATSAPP:v1` } });
+    if (!job) return this.enqueueWhatsapp(receiptId, { ...options, manual: true });
+    if (job.status !== 'FAILED') return job;
+    await job.update({ status: 'QUEUED', runAfter: new Date(), terminal: false, failedAt: null, lastError: null, lastErrorCode: null });
+    setImmediate(() => this.processDue().catch((error) => this.logger.warn('payment_receipt_job_wakeup_failed', { message: error.message })));
+    return job;
+  }
+
   async claimOne() {
     return this.sequelize.transaction(async (transaction) => {
       const job = await this.Job.findOne({
-        where: { status: { [Op.in]: ['QUEUED', 'FAILED'] }, attempts: { [Op.lt]: this.sequelize.col('max_attempts') }, runAfter: { [Op.lte]: new Date() } },
+        where: { status: { [Op.in]: ['QUEUED', 'FAILED'] }, terminal: false, attempts: { [Op.lt]: this.sequelize.col('max_attempts') }, runAfter: { [Op.lte]: new Date() } },
         order: [['run_after', 'ASC'], ['id', 'ASC']], transaction,
         lock: transaction.LOCK.UPDATE, skipLocked: true
       });
@@ -64,10 +70,15 @@ class PaymentReceiptJobService {
           conversationId: job.conversationId, whatsappAccountId: job.whatsappAccountId
         });
       } else if (job.jobType === 'SEND_WHATSAPP') {
-        await this.deliveryService.send(job.receiptId, {
+        const result = await this.deliveryService.send(job.receiptId, {
           manual: job.manual, actorUserId: job.actorUserId,
           conversationId: job.conversationId, whatsappAccountId: job.whatsappAccountId
         });
+        if (!result.skipped) {
+          const externalMessageId = result.response?.messages?.[0]?.id || result.response?.id || null;
+          await job.update({ status: 'ACCEPTED', externalMessageId, acceptedAt: new Date(), completedAt: null, lastError: null, lastErrorCode: null });
+          return job;
+        }
       } else {
         throw new Error(`Unsupported receipt job type: ${job.jobType}`);
       }
@@ -77,7 +88,8 @@ class PaymentReceiptJobService {
       await job.update({
         status: 'FAILED',
         runAfter: new Date(Date.now() + Math.min(job.attempts * 60000, 15 * 60000)),
-        lastError: `${error.code || 'RECEIPT_JOB_FAILED'}: ${error.message}`.slice(0, 2000)
+        lastError: `${error.code || 'RECEIPT_JOB_FAILED'}: ${error.message}`.slice(0, 2000),
+        lastErrorCode: error.code || 'RECEIPT_JOB_FAILED', failedAt: new Date(), terminal: exhausted
       });
       this.logger.warn('payment_receipt_job_failed', { jobId: job.id, receiptId: job.receiptId, jobType: job.jobType, attempts: job.attempts, exhausted, code: error.code || null, message: error.message });
     }

@@ -95,6 +95,17 @@ class PaymentReceiptController {
     } catch (error) { next(error); }
   }
 
+  async retryWhatsapp(req, res, next) {
+    try {
+      const receipt = await PaymentReceipt.findByPk(req.params.id);
+      if (!receipt) throw Object.assign(new Error('Receipt not found'), { status: 404 });
+      await deliveryService.preflight(receipt.id);
+      const job = await jobService.retryWhatsapp(receipt.id, { actorUserId: req.user?.id });
+      await auditService.record({ userId: req.user?.id, action: 'PAYMENT_RECEIPT_WHATSAPP_RETRY_QUEUED', entityType: 'payment_receipt', entityId: receipt.id, changes: { jobId: job.id } });
+      return ok(res, { jobId: job.id, status: job.status }, 202);
+    } catch (error) { next(error); }
+  }
+
   async void(req, res, next) {
     try {
       const reason = String(req.body?.reason || '').trim();

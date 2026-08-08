@@ -3,6 +3,7 @@ const auth = require('../middleware/auth.middleware');
 const permit = require('../middleware/permission.middleware');
 const controller = require('../controllers/paymentSlip.controller');
 router.use(auth.authenticate);
+router.get('/students/search', permit('payment-slips.view'), controller.searchStudents.bind(controller));
 router.get('/students/:studentId/fee-options', permit('payment-slips.view'), controller.feeOptions.bind(controller));
 router.post('/students/:studentId/fee-plan', permit('fees.create'), controller.createFeePlan.bind(controller));
 router.get('/fees/:feeId/outstanding-installments', permit('payment-slips.view'), controller.installmentOptions.bind(controller));

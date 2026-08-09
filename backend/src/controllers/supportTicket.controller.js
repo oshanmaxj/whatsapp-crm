@@ -1,0 +1,10 @@
+const service=require('../services/supportTicket.service');
+const ok=(res,data,status=200)=>res.status(status).json({success:true,data});
+exports.list=async(req,res,next)=>{try{return ok(res,await service.list(req.query,{actor:req.user}));}catch(e){next(e);}};
+exports.get=async(req,res,next)=>{try{const context={actor:req.user};const data=await service.get(req.params.id,context);await service.markRead(req.params.id,context);return ok(res,data);}catch(e){next(e);}};
+exports.reply=async(req,res,next)=>{try{return ok(res,await service.reply(req.params.id,{body:req.body.body},{actor:req.user}),201);}catch(e){next(e);}};
+exports.note=async(req,res,next)=>{try{return ok(res,await service.reply(req.params.id,{body:req.body.body,internal:true},{actor:req.user}),201);}catch(e){next(e);}};
+exports.transition=async(req,res,next)=>{try{return ok(res,await service.transition(req.params.id,req.body.status,req.body,req.user));}catch(e){next(e);}};
+exports.assign=async(req,res,next)=>{try{return ok(res,await service.assign(req.params.id,req.body,req.user));}catch(e){next(e);}};
+exports.categories=async(req,res,next)=>{try{return ok(res,await service.categories(false));}catch(e){next(e);}};
+exports.dashboard=async(req,res,next)=>{try{return ok(res,await service.dashboard(req.user));}catch(e){next(e);}};

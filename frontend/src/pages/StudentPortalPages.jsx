@@ -14,9 +14,11 @@ import VideoCallIcon from '@mui/icons-material/VideoCall';
 import FolderCopyIcon from '@mui/icons-material/FolderCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import {
   addStudentLessonComment, getStudentDashboard, getStudentLesson, getStudentLessons, getStudentMaterials,
-  getStudentCourse, getStudentLiveClasses, getStudentMe, getStudentPayments, joinStudentLiveClass, studentLogin, updateStudentProgress, verifyStudentOtp
+  getStudentCourse, getStudentLiveClasses, getStudentMe, getStudentPayments, joinStudentLiveClass, studentLogin, updateStudentProgress, verifyStudentOtp,
+  getStudentSupportCategories, listStudentSupportTickets, createStudentSupportTicket, getStudentSupportTicket, replyStudentSupportTicket, confirmStudentSupportTicket
 } from '../services/studentPortal.service';
 import { API_ORIGIN } from '../config/apiConfig';
 
@@ -113,6 +115,7 @@ const nav = [
   ['/student/lessons', 'Lessons', <MenuBookIcon />],
   ['/student/materials', 'Materials', <FolderCopyIcon />],
   ['/student/payments', 'Payments', <PaymentsIcon />],
+  ['/student/support', 'Support', <SupportAgentIcon />],
   ['/student/profile', 'Profile', <PersonIcon />]
 ];
 
@@ -134,6 +137,17 @@ export function StudentPortalLayout() {
 }
 
 function PageLoading() { return <Box sx={{ py: 10, textAlign: 'center' }}><CircularProgress /></Box>; }
+
+export function StudentSupportTicketsPage() {
+  const [tickets,setTickets]=useState([]),[categories,setCategories]=useState([]),[selected,setSelected]=useState(null),[form,setForm]=useState({categoryId:'',enrollmentId:'',subject:'',description:''}),[reply,setReply]=useState(''),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState('');
+  const load=()=>Promise.all([listStudentSupportTickets(),getStudentSupportCategories(),getStudentMe()]).then(([t,c,m])=>{setTickets(t.data.data.items||[]);setCategories(c.data.data||[]);return m.data.data.student;}).catch(e=>setError(e.response?.data?.message||'Unable to load support tickets.'));
+  useEffect(()=>{load();const timer=window.setInterval(load,30000);return()=>window.clearInterval(timer);},[]);
+  const create=async()=>{if(!form.categoryId||!form.subject.trim()||!form.description.trim()){setError('Category, subject and description are required.');return;}try{setBusy(true);setError('');const r=await createStudentSupportTicket(form);setNotice(`Your support request has been created. Ticket: ${r.data.data.ticketNumber}`);setForm({categoryId:'',enrollmentId:'',subject:'',description:''});await load();}catch(e){setError(e.response?.data?.message||'Unable to create support request.');}finally{setBusy(false);}};
+  const open=async ticket=>{try{setSelected((await getStudentSupportTicket(ticket.id)).data.data);}catch(e){setError(e.response?.data?.message||'Unable to open ticket.');}};
+  const send=async()=>{if(!reply.trim())return;try{setBusy(true);setSelected((await replyStudentSupportTicket(selected.id,reply)).data.data);setReply('');await load();}catch(e){setError(e.response?.data?.message||'Unable to send reply.');}finally{setBusy(false);}};
+  const confirm=async()=>{if(!window.confirm('Confirm that this problem is fixed?'))return;try{setBusy(true);setSelected((await confirmStudentSupportTicket(selected.id)).data.data);await load();}catch(e){setError(e.response?.data?.message||'Unable to close ticket.');}finally{setBusy(false);}};
+  return <Stack spacing={2.5} sx={{ml:{sm:20}}}><Box><Typography variant="h3" fontWeight={950}>Support Tickets</Typography><Typography color="text.secondary">Report a problem and follow its progress.</Typography></Box>{notice&&<Alert severity="success">{notice}</Alert>}{error&&<Alert severity="error">{error}</Alert>}<Paper variant="outlined" sx={{p:{xs:2,md:3}}}><Typography variant="h6" fontWeight={900} sx={{mb:2}}>Create support request</Typography><Stack spacing={2}><TextField select required label="Category *" value={form.categoryId} onChange={e=>setForm({...form,categoryId:e.target.value})}>{categories.map(c=><MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</TextField><TextField required label="Subject *" value={form.subject} onChange={e=>setForm({...form,subject:e.target.value})} inputProps={{maxLength:240}}/><TextField required multiline minRows={4} label="Detailed description *" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/><Button variant="contained" disabled={busy} onClick={create}>{busy?<CircularProgress size={20}/>: 'Create ticket'}</Button></Stack></Paper><Typography variant="h5" fontWeight={900}>My tickets</Typography>{tickets.map(ticket=><Paper key={ticket.id} component="button" onClick={()=>open(ticket)} variant="outlined" sx={{p:2,textAlign:'left',bgcolor:'background.paper',border:'1px solid',borderColor:'divider',cursor:'pointer'}}><Stack direction="row" justifyContent="space-between"><Box><Typography fontWeight={900}>{ticket.ticketNumber}</Typography><Typography>{ticket.subject}</Typography><Typography variant="caption" color="text.secondary">Updated {new Date(ticket.updatedAt).toLocaleString()}</Typography></Box><Chip label={ticket.status.replaceAll('_',' ')}/></Stack></Paper>)}{!tickets.length&&<Typography color="text.secondary">No support tickets yet.</Typography>}<Dialog open={Boolean(selected)} onClose={()=>setSelected(null)} fullWidth><DialogTitle>{selected?.ticketNumber}</DialogTitle><DialogContent><Stack spacing={2} sx={{pt:1}}><Typography fontWeight={900}>{selected?.subject}</Typography><Chip sx={{alignSelf:'flex-start'}} label={selected?.status?.replaceAll('_',' ')}/><Paper variant="outlined" sx={{p:1.5,maxHeight:320,overflowY:'auto'}}>{(selected?.messages||[]).map(m=><Box key={m.id} sx={{p:1,mb:1,bgcolor:'action.hover'}}><Typography variant="caption" fontWeight={800}>{m.authorType}</Typography><Typography sx={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{m.body}</Typography></Box>)}</Paper>{!['closed','cancelled'].includes(selected?.status)&&<><TextField multiline minRows={3} required label="Reply *" value={reply} onChange={e=>setReply(e.target.value)}/><Button variant="contained" disabled={busy||!reply.trim()} onClick={send}>Send reply</Button></>}{selected?.status==='resolved'&&<Button color="success" variant="contained" disabled={busy} onClick={confirm}>Confirm problem is fixed</Button>}</Stack></DialogContent><DialogActions><Button onClick={()=>setSelected(null)}>Close</Button></DialogActions></Dialog></Stack>;
+}
 function PaymentBanner({ access }) { return access?.warning ? <Alert severity="warning" sx={{ mb: 2.5 }}>{access.warning}</Alert> : null; }
 
 function EnrollmentDashboardSections({ data }) {

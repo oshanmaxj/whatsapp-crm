@@ -1,6 +1,7 @@
 const studentPortalService = require('../services/studentPortal.service');
 const crypto = require('crypto');
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
+const supportTicketService = require('../services/supportTicket.service');
 
 exports.login = async (req, res, next) => { try { return ok(res, await studentPortalService.login(req.body, { requestId: req.get('x-request-id') || crypto.randomUUID() })); } catch (error) { next(error); } };
 exports.verifyOtp = async (req, res, next) => { try { return ok(res, await studentPortalService.verifyOtp(req.body)); } catch (error) { next(error); } };
@@ -23,3 +24,9 @@ exports.progress = async (req, res, next) => { try { return ok(res, await studen
 exports.complete = async (req, res, next) => { try { return ok(res, await studentPortalService.updateProgress(req.student, req.params.id, { ...req.body, isCompleted: true, watchedPercentage: 100 })); } catch (error) { next(error); } };
 exports.join = async (req, res, next) => { try { return ok(res, await studentPortalService.joinLiveClass(req.student, req.params.id, { ipAddress: req.ip, userAgent: req.get('user-agent') })); } catch (error) { next(error); } };
 exports.payments = async (req, res) => ok(res, req.studentPaymentAccess);
+exports.ticketCategories = async (req,res,next) => { try{return ok(res,await supportTicketService.categories(true));}catch(error){next(error);} };
+exports.listTickets = async (req,res,next) => { try{return ok(res,await supportTicketService.list(req.query,{student:req.student}));}catch(error){next(error);} };
+exports.createTicket = async (req,res,next) => { try{return ok(res,await supportTicketService.create(req.body,req.student),201);}catch(error){next(error);} };
+exports.getTicket = async (req,res,next) => { try{const context={student:req.student};const data=await supportTicketService.get(req.params.id,context);await supportTicketService.markRead(req.params.id,context);return ok(res,data);}catch(error){next(error);} };
+exports.replyTicket = async (req,res,next) => { try{return ok(res,await supportTicketService.reply(req.params.id,req.body,{student:req.student}),201);}catch(error){next(error);} };
+exports.confirmTicket = async (req,res,next) => { try{return ok(res,await supportTicketService.confirm(req.params.id,req.student));}catch(error){next(error);} };

@@ -122,6 +122,9 @@ const ConversionAttribution = require('./conversionAttribution.model');
 const CallQueue = require('./callQueue.model');
 const CallQueueEntry = require('./callQueueEntry.model');
 const CallCenterPresenceSession = require('./callCenterPresenceSession.model');
+const SupportTicket = require('./supportTicket.model');
+const SupportTicketCategory = require('./supportTicketCategory.model');
+const SupportTicketMessage = require('./supportTicketMessage.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -130,6 +133,9 @@ const models = {
   UserRole: UserRole(sequelize, Sequelize.DataTypes),
   RolePermission: RolePermission(sequelize, Sequelize.DataTypes),
   UserPermissionOverride: UserPermissionOverride(sequelize, Sequelize.DataTypes),
+  SupportTicket: SupportTicket(sequelize, Sequelize.DataTypes),
+  SupportTicketCategory: SupportTicketCategory(sequelize, Sequelize.DataTypes),
+  SupportTicketMessage: SupportTicketMessage(sequelize, Sequelize.DataTypes),
   Message: Message(sequelize, Sequelize.DataTypes),
   Contact: Contact(sequelize, Sequelize.DataTypes),
   LeadStatus: LeadStatus(sequelize, Sequelize.DataTypes),
@@ -478,6 +484,15 @@ models.AiAgent.hasMany(models.AiDecisionLog,{foreignKey:aiAgentForeignKey,as:'de
 models.Lead.hasMany(models.Followup, { foreignKey: 'lead_id', as: 'followups' });
 models.Contact.hasMany(models.Followup, { foreignKey: 'contact_id', as: 'followups' });
 models.User.hasMany(models.Followup, { foreignKey: 'assigned_to', as: 'assignedFollowups' });
+models.SupportTicket.belongsTo(models.Student, { foreignKey: 'student_id', as: 'student' });
+models.SupportTicket.belongsTo(models.StudentEnrollment, { foreignKey: 'enrollment_id', as: 'enrollment' });
+models.SupportTicket.belongsTo(models.Course, { foreignKey: 'course_id', as: 'course' });
+models.SupportTicket.belongsTo(models.Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
+models.SupportTicket.belongsTo(models.SupportTicketCategory, { foreignKey: 'category_id', as: 'category' });
+models.SupportTicket.belongsTo(models.User, { foreignKey: 'assigned_user_id', as: 'assignedUser' });
+models.SupportTicket.belongsTo(models.Role, { foreignKey: 'department_id', as: 'department' });
+models.SupportTicket.hasMany(models.SupportTicketMessage, { foreignKey: 'ticket_id', as: 'messages' });
+models.SupportTicketMessage.belongsTo(models.SupportTicket, { foreignKey: 'ticket_id', as: 'ticket' });
 
 Object.values(models)
   .filter((model) => typeof model.associate === 'function')

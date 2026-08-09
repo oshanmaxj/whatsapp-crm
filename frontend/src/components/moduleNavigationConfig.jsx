@@ -40,6 +40,7 @@ import HeadsetMicIcon from '@mui/icons-material/HeadsetMic';
 export const modules = [
   { id: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, permission: 'dashboard.view', routes: ['/dashboard'] },
   { id: 'chat', label: 'Inbox / Chat', path: '/chat', icon: <ChatBubbleOutlineIcon />, permission: 'inbox.view', routes: ['/chat', '/inbox'] },
+  { id: 'support-tickets', label: 'Support Tickets', path: '/support-tickets', icon: <HeadsetMicIcon />, permission: ['support_tickets.view_own','support_tickets.view_department','support_tickets.view_all'], routes: ['/support-tickets'] },
   { id: 'contacts', label: 'Contacts', path: '/contacts', icon: <ContactsIcon />, permission: 'contacts.view', routes: ['/contacts'] },
   { id: 'leads', label: 'Leads', path: '/leads', icon: <TrendingUpIcon />, permission: 'leads.view', routes: ['/leads'] },
   { id: 'call-center', label: 'Call Center', path: '/call-center', icon: <HeadsetMicIcon />, permission: ['callcenter.dashboard.view','calls.view.own','calls.view.team'], routes: ['/call-center'] },

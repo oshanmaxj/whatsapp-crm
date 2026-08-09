@@ -30,3 +30,9 @@ export const addStudentLessonComment = (id, payload) => portalApi.post(`/student
 export const updateStudentProgress = (id, payload) => portalApi.post(`/student-portal/lessons/${id}/progress`, payload);
 export const joinStudentLiveClass = (id) => portalApi.post(`/student-portal/lessons/${id}/join-live-class`);
 export const getStudentPayments = () => portalApi.get('/student-portal/payments');
+export const getStudentSupportCategories = () => portalApi.get('/student-portal/support/categories');
+export const listStudentSupportTickets = (params = {}) => portalApi.get('/student-portal/support/tickets', { params });
+export const createStudentSupportTicket = (payload) => portalApi.post('/student-portal/support/tickets', payload);
+export const getStudentSupportTicket = (id) => portalApi.get(`/student-portal/support/tickets/${id}`);
+export const replyStudentSupportTicket = (id, body) => portalApi.post(`/student-portal/support/tickets/${id}/replies`, { body });
+export const confirmStudentSupportTicket = (id) => portalApi.post(`/student-portal/support/tickets/${id}/confirm-resolved`);

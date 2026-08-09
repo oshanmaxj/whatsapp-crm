@@ -1,0 +1,10 @@
+const express=require('express'),controller=require('../controllers/supportTicket.controller'),auth=require('../middleware/auth.middleware'),permit=require('../middleware/permission.middleware');
+const router=express.Router();router.use(auth.authenticate);
+router.get('/dashboard',permit('support_tickets.view_reports'),controller.dashboard);
+router.get('/categories',controller.categories);
+router.get('/',controller.list);router.get('/:id',controller.get);
+router.post('/:id/replies',permit('support_tickets.reply'),controller.reply);
+router.post('/:id/internal-notes',permit('support_tickets.add_internal_note'),controller.note);
+router.post('/:id/assign',permit('support_tickets.assign'),controller.assign);
+router.post('/:id/status',controller.transition);
+module.exports=router;

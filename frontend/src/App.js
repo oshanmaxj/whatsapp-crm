@@ -54,8 +54,9 @@ import CallCenterPage from './pages/CallCenterPage';
 import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
 import {
   StudentCoursePage, StudentCoursesPage, StudentDashboardPage, StudentLessonPage, StudentLessonsPage, StudentLiveClassesPage, StudentLoginPage, StudentMaterialsPage,
-  StudentPaymentsPage, StudentPortalGuard, StudentPortalLayout, StudentProfilePage as StudentPortalProfilePage
+  StudentPaymentsPage, StudentPortalGuard, StudentPortalLayout, StudentProfilePage as StudentPortalProfilePage, StudentSupportTicketsPage
 } from './pages/StudentPortalPages';
+import SupportTicketsPage from './pages/SupportTicketsPage';
 
 function App() {
   const [darkMode, setDarkMode] = React.useState(() => localStorage.getItem('darkMode') === 'true');
@@ -102,6 +103,7 @@ function App() {
               <Route path="/student/materials" element={<StudentMaterialsPage />} />
               <Route path="/student/payments" element={<StudentPaymentsPage />} />
               <Route path="/student/profile" element={<StudentPortalProfilePage />} />
+              <Route path="/student/support" element={<StudentSupportTicketsPage />} />
             </Route>
           </Route>
           <Route element={<ProtectedRoute />}>
@@ -125,6 +127,7 @@ function App() {
             <Route path="/batches" element={permit('batches.view', <BatchesPage />)} />
             <Route path="/students" element={permit('students.view', <StudentsPage />)} />
             <Route path="/students/:id" element={permit('students.view', <StudentProfilePage />)} />
+            <Route path="/support-tickets" element={permit(['support_tickets.view_own','support_tickets.view_department','support_tickets.view_all'], <SupportTicketsPage />)} />
             <Route path="/fees" element={permit('fees.view', <FeesPage />)} />
             <Route path="/payment-verification" element={permit('payment-slips.view', <PaymentVerificationPage />)} />
             <Route path="/receipts" element={permit('receipts.view', <PaymentReceiptsPage />)} />

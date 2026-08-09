@@ -118,10 +118,14 @@ export function ConversationList({
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const loadMoreRef = useRef(null);
+  const scrollContainerRef = useRef(null);
   useEffect(() => {
     const node = loadMoreRef.current;
     if (!node || !hasMore || loadingMore) return undefined;
-    const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) onLoadMore?.(); }, { rootMargin: '200px' });
+    const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) onLoadMore?.(); }, {
+      root: scrollContainerRef.current,
+      rootMargin: '200px 0px'
+    });
     observer.observe(node);
     return () => observer.disconnect();
   }, [hasMore, loadingMore, onLoadMore]);
@@ -211,7 +215,7 @@ export function ConversationList({
         </Collapse>
       </Box>
       {loading && <LinearProgress />}
-      <List disablePadding sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <List ref={scrollContainerRef} disablePadding sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {safeArray(conversations).map((conversation) => (
           <ConversationItem
             key={conversation.id}

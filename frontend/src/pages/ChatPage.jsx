@@ -40,7 +40,7 @@ import {
   safeArray
 } from '../components/chat';
 
-function useDebouncedValue(value, delay = 250) {
+function useDebouncedValue(value, delay = 400) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebounced(value), delay);
@@ -95,6 +95,7 @@ function ChatPage() {
   const selectedRef = useRef(null);
   const seenSocketMessageIdsRef = useRef(new Set());
   const agentsRef = useRef([]);
+  const conversationsRef = useRef([]);
   const conversationsRequestRef = useRef(null);
   const detailsRequestRef = useRef(null);
   const unreadRequestRef = useRef(null);
@@ -161,6 +162,9 @@ function ChatPage() {
   useEffect(() => {
     agentsRef.current = agents;
   }, [agents]);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   const handleMarkPaymentSlip = async (message, alreadyDetected) => {
     if (alreadyDetected && message.paymentSlip?.id) {
@@ -210,7 +214,11 @@ function ChatPage() {
 
   const loadConversations = useCallback(async ({ silent = false, append = false } = {}) => {
     if (append && (loadingMoreRef.current || !nextCursorRef.current)) return;
-    if (!append) conversationsRequestRef.current?.abort();
+    if (!append) {
+      conversationsRequestRef.current?.abort();
+      nextCursorRef.current = null;
+      setHasMore(false);
+    }
     const controller = new AbortController();
     conversationsRequestRef.current = controller;
     if (append) { loadingMoreRef.current = true; setLoadingMore(true); } else if (!silent) setLoading(true);
@@ -422,8 +430,19 @@ function ChatPage() {
         }
         setConversation((current) => applyInteractionMessage(current, incoming));
       }
+      if (!conversationsRef.current.some((item) => String(item.id) === String(incoming.conversationId))) {
+        getConversation(incoming.conversationId).then(({ data }) => {
+          const fetched = data?.data;
+          if (!fetched) return;
+          setConversations((latest) => [
+            { ...fetched, lastMessage: incoming, lastMessageAt: incoming.createdAt || fetched.lastMessageAt },
+            ...safeArray(latest).filter((item) => String(item.id) !== String(fetched.id))
+          ]);
+        }).catch(() => {});
+      }
       setConversations((current) => {
-        const updated = safeArray(current).map((item) => (
+        const rows = safeArray(current);
+        const updated = rows.map((item) => (
           String(item.id) === String(incoming.conversationId)
             ? {
                 ...item,

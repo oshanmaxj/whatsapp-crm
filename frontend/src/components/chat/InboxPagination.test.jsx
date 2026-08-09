@@ -4,6 +4,8 @@ const path = require('path');
 test('conversation list uses observer pagination and explicit loading states', () => {
   const source = fs.readFileSync(path.join(__dirname, 'ConversationList.jsx'), 'utf8');
   expect(source).toContain('IntersectionObserver');
+  expect(source).toContain('root: scrollContainerRef.current');
+  expect(source).toContain("rootMargin: '200px 0px'");
   expect(source).toContain('Loading more…');
   expect(source).toContain('End of conversations');
   expect(source).toContain('Retry loading conversations');
@@ -15,6 +17,8 @@ test('chat page deduplicates cursor pages and resets through query-bound request
   expect(source).toContain('nextCursor');
   expect(source).toContain('loadOlderMessages');
   expect(source).toContain('AbortController');
+  expect(source).toContain('nextCursorRef.current = null');
+  expect(source).toContain('conversationsRef.current');
 });
 
 test('student profile header uses responsive grid without absolute positioning', () => {

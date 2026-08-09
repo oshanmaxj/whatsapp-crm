@@ -50,8 +50,9 @@ function decodeCursor(value) {
   }
   try {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (!parsed.t || !/^\d+$/.test(String(parsed.id))) throw new Error('invalid');
-    return { t: new Date(parsed.t), id: String(parsed.id) };
+    const timestamp = new Date(parsed.t);
+    if (!parsed.t || Number.isNaN(timestamp.getTime()) || !/^\d+$/.test(String(parsed.id))) throw new Error('invalid');
+    return { t: timestamp, id: String(parsed.id) };
   } catch (_) { throw Object.assign(new Error('Invalid conversation cursor.'), { status: 400, code: 'INBOX_CURSOR_INVALID' }); }
 }
 
@@ -243,6 +244,7 @@ class InboxService {
     }
     if (status) filters.status = status;
     if (whatsappAccountId) filters.whatsappAccountId = whatsappAccountId;
+    const permissionWhere = await conversationAccessService.scopedWhere(userOrId, {});
     const where = await conversationAccessService.scopedWhere(userOrId, filters);
     let cursorPredicate = null;
     if (cursor) {
@@ -257,9 +259,21 @@ class InboxService {
         ]
       };
     }
-    if (['inside', 'outside'].includes(messagingWindow)) {
+    if (['inside', 'outside', 'closing'].includes(messagingWindow)) {
       const exists = `EXISTS (SELECT 1 FROM messages mw WHERE mw.conversation_id = "Conversation"."id" AND mw.whatsapp_account_id = "Conversation"."whatsapp_account_id" AND mw.direction = 'inbound' AND mw.deleted_at IS NULL AND mw.created_at > NOW() - INTERVAL '24 hours')`;
-      where[Op.and] = [...(where[Op.and] || []), literal(messagingWindow === 'inside' ? exists : `NOT ${exists}`)];
+      const closing = `EXISTS (SELECT 1 FROM messages mw WHERE mw.conversation_id = "Conversation"."id" AND mw.whatsapp_account_id = "Conversation"."whatsapp_account_id" AND mw.direction = 'inbound' AND mw.deleted_at IS NULL AND mw.created_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW() - INTERVAL '23 hours')`;
+      where[Op.and] = [...(where[Op.and] || []), literal(
+        messagingWindow === 'inside' ? exists : messagingWindow === 'closing' ? closing : `NOT ${exists}`
+      )];
+    }
+    if (unread === 'true') {
+      where[Op.and] = [...(where[Op.and] || []), literal(`EXISTS (
+        SELECT 1 FROM messages unread_message
+        WHERE unread_message.conversation_id = "Conversation"."id"
+          AND unread_message.direction = 'inbound'
+          AND unread_message.is_read = false
+          AND unread_message.deleted_at IS NULL
+      )`)];
     }
 
     const contactWhere = {};
@@ -275,6 +289,7 @@ class InboxService {
         { phone: { [Op.iLike]: term } },
         { email: { [Op.iLike]: term } }, { whatsappId: { [Op.iLike]: `%${digits || searchValue}%` } },
         sequelize.where(fn('concat', col('contact.first_name'), ' ', col('contact.last_name')), { [Op.iLike]: term }),
+        ...(digits ? [literal(`regexp_replace(COALESCE("contact"."phone", ''), '[^0-9]', '', 'g') LIKE ${sequelize.escape(`%${digits}%`)}`)] : []),
         literal(`EXISTS (SELECT 1 FROM students search_student WHERE search_student.contact_id = "Conversation"."contact_id" AND (search_student.name ILIKE ${sequelize.escape(term)} OR search_student.student_no ILIKE ${sequelize.escape(term)} OR search_student.email ILIKE ${sequelize.escape(term)} OR search_student.phone ILIKE ${sequelize.escape(`%${digits || searchValue}%`)}))`)
       ];
     }
@@ -291,35 +306,32 @@ class InboxService {
       };
     });
     if (leadStatus === 'none') where.leadId = null;
-    const totalWhere = { ...where };
-    if (cursorPredicate) where[Op.and] = [...(where[Op.and] || []), cursorPredicate];
+    const filteredWhere = { ...where };
+    const pageWhere = { ...where };
+    if (cursorPredicate) pageWhere[Op.and] = [...(pageWhere[Op.and] || []), cursorPredicate];
     const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 100));
-    const [conversations, total] = await Promise.all([Conversation.findAll({
-      attributes: this.conversationAttributes(),
-      where,
-      include: includes,
+    const filteringIncludes = includes.filter((include) => include.required || (include.as === 'contact' && searchValue));
+    const effectiveLastMessageAt = literal('COALESCE("Conversation"."last_message_at", "Conversation"."updated_at", "Conversation"."created_at")');
+    const [pageRows, total, filteredTotal] = await Promise.all([Conversation.findAll({
+      attributes: ['id', [effectiveLastMessageAt, 'effectiveLastMessageAt']],
+      where: pageWhere,
+      include: filteringIncludes,
       order: [[literal('COALESCE("Conversation"."last_message_at", "Conversation"."updated_at", "Conversation"."created_at")'), 'DESC'], ['id', 'DESC']],
-      limit: limit + 1, distinct: true, subQuery: false
-    }), Conversation.count({ where: totalWhere, include: includes, distinct: true })]);
-    const hasMore = conversations.length > limit;
-    if (hasMore) conversations.length = limit;
-
-    const canonicalByIdentity = new Map();
-    for (const conversation of conversations.map(serializeConversation)) {
-      const normalizedPhone = conversation.normalizedPhone || normalizePhone(conversation.contact?.phone || conversation.contact?.whatsappId);
-      const identity = `${conversation.whatsappAccountId || 'default'}:${normalizedPhone || `conversation:${conversation.id}`}`;
-      const current = canonicalByIdentity.get(identity);
-      const rank = (item) => {
-        const value = ['open', 'pending', 'closed', 'archived'].indexOf(item.status);
-        return value === -1 ? 99 : value;
-      };
-      if (!current
-        || rank(conversation) < rank(current)
-        || (rank(conversation) === rank(current) && new Date(conversation.createdAt || 0) < new Date(current.createdAt || 0))) {
-        canonicalByIdentity.set(identity, conversation);
-      }
-    }
-    const serialized = [...canonicalByIdentity.values()];
+      limit: limit + 1,
+      subQuery: false
+    }), Conversation.count({ where: permissionWhere, distinct: true }), Conversation.count({
+      where: filteredWhere, include: filteringIncludes, distinct: true
+    })]);
+    const hasMore = pageRows.length > limit;
+    const returnedPageRows = pageRows.slice(0, limit);
+    const pageIds = returnedPageRows.map((row) => row.id);
+    const hydrated = pageIds.length ? await Conversation.findAll({
+      attributes: this.conversationAttributes(),
+      where: { id: { [Op.in]: pageIds } },
+      include: includes
+    }) : [];
+    const hydratedById = new Map(hydrated.map((row) => [String(row.id), row]));
+    const serialized = pageIds.map((id) => hydratedById.get(String(id))).filter(Boolean).map(serializeConversation);
     const conversationIds = serialized.map((conversation) => conversation.id).filter(Boolean);
     const latestByConversation = new Map();
 
@@ -343,26 +355,31 @@ class InboxService {
       lastMessage: latestByConversation.get(String(conversation.id)) || null
     }));
     const withInteractionRates = await this.attachInteractionRates(withLatestMessages);
-    const items = unread === 'true'
-      ? withInteractionRates.filter((item) => item.unreadCount > 0)
-      : withInteractionRates;
-    return { items, nextCursor: hasMore && items.length ? encodeCursor(items[items.length - 1]) : null, hasMore, total };
+    const items = withInteractionRates;
+    const cursorRow = returnedPageRows[returnedPageRows.length - 1];
+    return {
+      items,
+      nextCursor: hasMore && cursorRow ? encodeCursor({ id: cursorRow.id, lastMessageAt: cursorRow.get('effectiveLastMessageAt') }) : null,
+      hasMore,
+      total,
+      filteredTotal
+    };
   }
 
   async counts(query = {}, userOrId) {
-    const filters = { status: { [Op.ne]: 'archived' } };
-    if (query.whatsappAccountId) filters.whatsappAccountId = query.whatsappAccountId;
-    if (query.assignedUserId) filters.assignedUserId = query.assignedUserId;
-    if (query.assignedRoleId) filters.assignedRoleId = query.assignedRoleId;
-    const where = await conversationAccessService.scopedWhere(userOrId, filters);
-    const inside = literal(`EXISTS (SELECT 1 FROM messages counter_message WHERE counter_message.conversation_id = "Conversation"."id" AND counter_message.direction='inbound' AND counter_message.deleted_at IS NULL AND counter_message.created_at > NOW() - INTERVAL '24 hours')`);
-    const closing = literal(`EXISTS (SELECT 1 FROM messages counter_message WHERE counter_message.conversation_id = "Conversation"."id" AND counter_message.direction='inbound' AND counter_message.deleted_at IS NULL AND counter_message.created_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW() - INTERVAL '23 hours')`);
-    const [total, insideWindow, closingWithinHour] = await Promise.all([
-      Conversation.count({ where }),
-      Conversation.count({ where: { ...where, [Op.and]: [...(where[Op.and] || []), inside] } }),
-      Conversation.count({ where: { ...where, [Op.and]: [...(where[Op.and] || []), closing] } })
+    const { cursor, messagingWindow, limit, ...scopeQuery } = query;
+    const [all, inside, outside, closing] = await Promise.all([
+      this.listConversations({ ...scopeQuery, limit: 1 }, userOrId),
+      this.listConversations({ ...scopeQuery, messagingWindow: 'inside', limit: 1 }, userOrId),
+      this.listConversations({ ...scopeQuery, messagingWindow: 'outside', limit: 1 }, userOrId),
+      this.listConversations({ ...scopeQuery, messagingWindow: 'closing', limit: 1 }, userOrId)
     ]);
-    return { total, inside: insideWindow, outside: Math.max(0, total - insideWindow), closing: closingWithinHour };
+    return {
+      total: all.filteredTotal,
+      inside: inside.filteredTotal,
+      outside: outside.filteredTotal,
+      closing: closing.filteredTotal
+    };
   }
 
   async listAssignableUsers({ roleId = null, departmentId = null, includeAll = true } = {}) {

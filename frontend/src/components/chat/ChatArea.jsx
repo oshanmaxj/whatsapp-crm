@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Avatar, Box, Button, Chip, CircularProgress, Divider, IconButton, Menu, MenuItem,
+  Avatar, Box, Button, Chip, CircularProgress, Collapse, Divider, IconButton, Menu, MenuItem,
   ListItemText, Paper, Stack, TextField, Tooltip, Typography
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -18,6 +18,9 @@ import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded';
 import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined';
+import SchoolOutlinedIcon from '@mui/icons-material/SchoolOutlined';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { agentName, contactName, formatDateTime, formatTime, initials, safeArray } from './chatUtils';
 import InboxFlowDialog from './InboxFlowDialog';
 import AuthenticatedMedia from './AuthenticatedMedia';
@@ -255,6 +258,54 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
   );
 });
 
+function StudentDetailsContent({ student, onOpenStudent }) {
+  const activeEnrollments = safeArray(student?.enrollments).filter((item) => item.status === 'active');
+  return <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+    <Box sx={{ minWidth: 0 }}>
+      <Typography variant="body2" fontWeight={800} sx={{ overflowWrap: 'anywhere' }}>{student.fullName || 'Registered student'}</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+        {[student.registrationNumber, student.status].filter(Boolean).join(' · ')}
+      </Typography>
+    </Box>
+    {activeEnrollments.map((item) => <Box key={item.enrollmentId || `${item.courseId}-${item.batchId}`} sx={{ minWidth: 0 }}>
+      <Typography variant="caption" display="block" fontWeight={700} sx={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+        {[item.courseName, item.batchName].filter(Boolean).join(' · ') || 'Enrollment'}
+      </Typography>
+      <Typography variant="caption" display="block" color="text.secondary" sx={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+        {[item.status, item.paymentStatus].filter(Boolean).join(' · ')}
+      </Typography>
+    </Box>)}
+    {activeEnrollments.length === 0 && <Typography variant="caption" color="text.secondary">No active enrollment</Typography>}
+    {hasPermission('students.view') && <Button size="small" sx={{ alignSelf: 'flex-start' }} onClick={() => onOpenStudent?.(student.id)}>Open student profile</Button>}
+  </Stack>;
+}
+
+function MobileStudentDetails({ conversation, onOpenStudent }) {
+  const [expanded, setExpanded] = useState(false);
+  const panelId = `mobile-student-details-${conversation.id}`;
+  useEffect(() => setExpanded(false), [conversation.id]);
+  return <Box sx={{ mt: 0.5 }}>
+    <Box
+      component="button"
+      type="button"
+      aria-expanded={expanded}
+      aria-controls={panelId}
+      onClick={() => setExpanded((value) => !value)}
+      sx={{ width: '100%', minHeight: 40, maxHeight: 48, px: 1, py: 0.5, border: 0, borderRadius: 1, bgcolor: 'action.hover', color: 'text.primary', display: 'flex', alignItems: 'center', gap: 0.75, textAlign: 'left', cursor: 'pointer', '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 } }}
+    >
+      <SchoolOutlinedIcon color="primary" sx={{ fontSize: 19, flexShrink: 0 }} />
+      <Typography variant="caption" fontWeight={800} noWrap>Student details</Typography>
+      {conversation.student.registrationNumber && <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>· {conversation.student.registrationNumber}</Typography>}
+      {expanded ? <ExpandLessIcon sx={{ ml: 'auto', flexShrink: 0 }} /> : <ExpandMoreIcon sx={{ ml: 'auto', flexShrink: 0 }} />}
+    </Box>
+    <Collapse in={expanded} timeout="auto" unmountOnExit>
+      <Box id={panelId} sx={{ px: 1.25, py: 1, maxHeight: 'min(44vh, 360px)', overflowY: 'auto', overflowX: 'hidden', borderBottom: 1, borderColor: 'divider' }}>
+        <StudentDetailsContent student={conversation.student} onOpenStudent={onOpenStudent} />
+      </Box>
+    </Collapse>
+  </Box>;
+}
+
 export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, onOpenStudent, mobile }) {
   const contact = conversation?.contact;
   return (
@@ -282,7 +333,8 @@ export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, on
         </Box>
         <Tooltip title="Contact workspace"><IconButton onClick={onToggleWorkspace}><InfoOutlinedIcon /></IconButton></Tooltip>
       </Stack>
-      {conversation.student && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={0.75} alignItems={{ sm: 'center' }} sx={{ mt: 0.75, ml: { xs: mobile ? 5 : 0, sm: mobile ? 6.5 : 6.5 } }}>
+      {conversation.student && mobile && <MobileStudentDetails key={conversation.id} conversation={conversation} onOpenStudent={onOpenStudent} />}
+      {conversation.student && !mobile && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={0.75} alignItems={{ sm: 'center' }} sx={{ mt: 0.75, ml: 6.5 }}>
         <Typography variant="caption" fontWeight={800}>Student details</Typography>
         <Typography variant="caption" color="text.secondary">
           {conversation.student.registrationNumber} · {conversation.student.status} · {conversation.student.enrollments?.filter((item) => item.status === 'active').map((item) => [item.courseName, item.batchName, item.paymentStatus].filter(Boolean).join(' / ')).join(' · ') || 'No active enrollment'}

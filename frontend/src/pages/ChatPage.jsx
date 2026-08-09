@@ -128,7 +128,7 @@ function ChatPage() {
   const [windowNow, setWindowNow] = useState(() => Date.now());
   const [newMessage, setNewMessage] = useState('');
   const [noteText, setNoteText] = useState('');
-  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', leadStatus: '', unread: '', whatsappAccountId: '', messagingWindow: '' });
+  const [filters, setFilters] = useState({ search: '', assignedUserId: '', assignedRoleId: '', mine: '', leadStatus: '', unread: '', whatsappAccountId: '', messagingWindow: '', registeredStudentsOnly: '', courseId: '', batchId: '', enrollmentStatus: '' });
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -152,7 +152,11 @@ function ChatPage() {
     leadStatus: filters.leadStatus || undefined
     , whatsappAccountId: filters.whatsappAccountId || undefined,
     messagingWindow: filters.messagingWindow || undefined
-  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.leadStatus, filters.unread, filters.whatsappAccountId, filters.messagingWindow]);
+    , registeredStudentsOnly: filters.registeredStudentsOnly || undefined,
+    courseId: filters.courseId || undefined,
+    batchId: filters.batchId || undefined,
+    enrollmentStatus: filters.enrollmentStatus || undefined
+  }), [debouncedSearch, filters.assignedUserId, filters.assignedRoleId, filters.mine, filters.leadStatus, filters.unread, filters.whatsappAccountId, filters.messagingWindow, filters.registeredStudentsOnly, filters.courseId, filters.batchId, filters.enrollmentStatus]);
 
   const selectedConversation = conversation
     || safeArray(conversations).find((item) => String(item.id) === String(selected))
@@ -561,6 +565,25 @@ function ChatPage() {
         loadDetails(payload.conversationId, { silent: true });
       }
     };
+    const handleStudentIdentityUpdated = (payload = {}) => {
+      if (!payload.conversationId || !payload.displayName) return;
+      const [firstName, ...lastName] = String(payload.displayName).trim().split(/\s+/);
+      const patchIdentity = (item) => String(item?.id) === String(payload.conversationId)
+        ? { ...item, contact: { ...item.contact, firstName, lastName: lastName.join(' ') || null }, student: item.student ? { ...item.student, fullName: payload.displayName } : item.student }
+        : item;
+      setConversations((current) => safeArray(current).map(patchIdentity));
+      setConversation((current) => patchIdentity(current));
+      if (String(selectedRef.current) === String(payload.conversationId)) loadDetails(payload.conversationId, { silent: true });
+    };
+    const handleStudentEnrollmentUpdated = (payload = {}) => {
+      if (!payload.conversationId) return;
+      getConversation(payload.conversationId).then(({ data }) => {
+        const updated = data?.data;
+        if (!updated) return;
+        setConversations((current) => safeArray(current).map((item) => String(item.id) === String(updated.id) ? updated : item));
+        if (String(selectedRef.current) === String(updated.id)) setConversation(updated);
+      }).catch(() => {});
+    };
     socket.on('chat:message', handleNewMessage);
     socket.on('whatsapp.message.received', handleNewMessage);
     socket.on('message.created', handleNewMessage);
@@ -575,6 +598,8 @@ function ChatPage() {
     socket.on('conversation.merged', handleConversationMerged);
     socket.on('crm.labels.changed', handleLabelsChanged);
     socket.on('messaging_window_updated', handleMessagingWindow);
+    socket.on('student.identity.updated', handleStudentIdentityUpdated);
+    socket.on('student.enrollment.updated', handleStudentEnrollmentUpdated);
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('whatsapp.message.received', handleNewMessage);
@@ -590,6 +615,8 @@ function ChatPage() {
       socket.off('conversation.merged', handleConversationMerged);
       socket.off('crm.labels.changed', handleLabelsChanged);
       socket.off('messaging_window_updated', handleMessagingWindow);
+      socket.off('student.identity.updated', handleStudentIdentityUpdated);
+      socket.off('student.enrollment.updated', handleStudentEnrollmentUpdated);
     };
   }, [socket, loadConversations, loadDetails, refreshUnread, applyInteractionMessage]);
 
@@ -1016,6 +1043,7 @@ function ChatPage() {
             onBack={handleBack}
             onToggleWorkspace={() => setWorkspaceOpen((value) => !value)}
             onEdit={() => setWorkspaceOpen(true)}
+            onOpenStudent={(studentId) => navigate(`/students/${studentId}`)}
             replyToMessage={replyToMessage}
             onReply={(message) => setReplyToMessage(message)}
             onMarkPaymentSlip={handleMarkPaymentSlip}

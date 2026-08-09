@@ -255,7 +255,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
   );
 });
 
-export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, mobile }) {
+export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, onOpenStudent, mobile }) {
   const contact = conversation?.contact;
   return (
     <Box sx={{ px: { xs: 1.25, sm: 2 }, py: 1.25, borderBottom: (theme) => `1px solid ${theme.palette.divider}`, bgcolor: 'background.paper' }}>
@@ -282,6 +282,13 @@ export function ChatHeader({ conversation, onBack, onToggleWorkspace, onEdit, mo
         </Box>
         <Tooltip title="Contact workspace"><IconButton onClick={onToggleWorkspace}><InfoOutlinedIcon /></IconButton></Tooltip>
       </Stack>
+      {conversation.student && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={0.75} alignItems={{ sm: 'center' }} sx={{ mt: 0.75, ml: { xs: mobile ? 5 : 0, sm: mobile ? 6.5 : 6.5 } }}>
+        <Typography variant="caption" fontWeight={800}>Student details</Typography>
+        <Typography variant="caption" color="text.secondary">
+          {conversation.student.registrationNumber} · {conversation.student.status} · {conversation.student.enrollments?.filter((item) => item.status === 'active').map((item) => [item.courseName, item.batchName, item.paymentStatus].filter(Boolean).join(' / ')).join(' · ') || 'No active enrollment'}
+        </Typography>
+        {hasPermission('students.view') && <Button size="small" onClick={() => onOpenStudent?.(conversation.student.id)}>Open student profile</Button>}
+      </Stack>}
     </Box>
   );
 }
@@ -781,6 +788,7 @@ export function ChatArea({
   onBack,
   onToggleWorkspace,
   onEdit,
+  onOpenStudent,
   replyToMessage,
   onReply,
   onMarkPaymentSlip,
@@ -821,7 +829,7 @@ export function ChatArea({
     >
       {conversation && (
         <>
-          <ChatHeader conversation={conversation} onBack={onBack} onToggleWorkspace={onToggleWorkspace} onEdit={onEdit} mobile={mobile} />
+          <ChatHeader conversation={conversation} onBack={onBack} onToggleWorkspace={onToggleWorkspace} onEdit={onEdit} onOpenStudent={onOpenStudent} mobile={mobile} />
           <CustomerInfoBar conversation={conversation} />
         </>
       )}

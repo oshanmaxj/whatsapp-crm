@@ -26,6 +26,7 @@ const {
   User,
   WhatsAppAccount,
   ConversationAssignmentHistory
+  , Student, StudentEnrollment, StudentFee, Course, Batch
 } = require('../models');
 
 const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'media');
@@ -209,6 +210,32 @@ class InboxService {
     ];
   }
 
+  async attachStudentSummaries(conversations) {
+    const contactIds = [...new Set(conversations.map((row) => row.contactId).filter(Boolean).map(String))];
+    if (!contactIds.length) return conversations.map((row) => ({ ...row, student: null }));
+    const students = await Student.findAll({
+      where: { contactId: { [Op.in]: contactIds } }, attributes: ['id', 'studentNo', 'name', 'status', 'contactId'],
+      include: [
+        { model: StudentEnrollment, as: 'enrollments', required: false, attributes: ['id', 'courseId', 'batchId', 'enrollmentStatus'], include: [
+          { model: Course, as: 'course', required: false, attributes: ['id', 'name', 'code'] },
+          { model: Batch, as: 'batch', required: false, attributes: ['id', 'name', 'code'] }
+        ] },
+        { model: StudentFee, as: 'fees', required: false, attributes: ['id', 'enrollmentId', 'status'] }
+      ]
+    });
+    const studentByContact = new Map(students.map((student) => {
+      const data = student.toJSON();
+      const fees = new Map((data.fees || []).map((fee) => [String(fee.enrollmentId || ''), fee.status]));
+      const enrollments = (data.enrollments || []).sort((a, b) => Number(b.enrollmentStatus === 'active') - Number(a.enrollmentStatus === 'active')).map((enrollment) => ({
+        enrollmentId: enrollment.id, status: enrollment.enrollmentStatus, courseId: enrollment.courseId,
+        courseName: enrollment.course?.name || enrollment.course?.code || null, batchId: enrollment.batchId,
+        batchName: enrollment.batch?.name || enrollment.batch?.code || null, paymentStatus: fees.get(String(enrollment.id)) || null
+      }));
+      return [String(data.contactId), { id: data.id, registrationNumber: data.studentNo, fullName: data.name, status: data.status, contactId: data.contactId, enrollments }];
+    }));
+    return conversations.map((row) => ({ ...row, student: studentByContact.get(String(row.contactId)) || null }));
+  }
+
   async listConversations({
     search,
     assignedTo,
@@ -223,6 +250,10 @@ class InboxService {
     whatsappAccountId,
     leadStatus,
     messagingWindow,
+    registeredStudentsOnly,
+    courseId,
+    batchId,
+    enrollmentStatus,
     cursor,
     limit: requestedLimit = 100,
     q
@@ -276,26 +307,39 @@ class InboxService {
       )`)];
     }
 
-    const contactWhere = {};
     const rawSearch = String(q || search || '').trim();
     const rawDigits = rawSearch.replace(/\D/g, '');
     const searchValue = rawSearch.length >= 2 || rawDigits.length >= 5 ? rawSearch : '';
     if (searchValue) {
       const term = `%${searchValue}%`;
       const digits = searchValue.replace(/\D/g, '');
-      contactWhere[Op.or] = [
-        { firstName: { [Op.iLike]: term } },
-        { lastName: { [Op.iLike]: term } },
-        { phone: { [Op.iLike]: term } },
-        { email: { [Op.iLike]: term } }, { whatsappId: { [Op.iLike]: `%${digits || searchValue}%` } },
-        sequelize.where(fn('concat', col('contact.first_name'), ' ', col('contact.last_name')), { [Op.iLike]: term }),
-        ...(digits ? [literal(`regexp_replace(COALESCE("contact"."phone", ''), '[^0-9]', '', 'g') LIKE ${sequelize.escape(`%${digits}%`)}`)] : []),
-        literal(`EXISTS (SELECT 1 FROM students search_student WHERE search_student.contact_id = "Conversation"."contact_id" AND (search_student.name ILIKE ${sequelize.escape(term)} OR search_student.student_no ILIKE ${sequelize.escape(term)} OR search_student.email ILIKE ${sequelize.escape(term)} OR search_student.phone ILIKE ${sequelize.escape(`%${digits || searchValue}%`)}))`)
-      ];
+      const studentSearch = `EXISTS (SELECT 1 FROM students search_student
+        LEFT JOIN student_enrollments search_enrollment ON search_enrollment.student_id = search_student.id
+        LEFT JOIN courses search_course ON search_course.id = search_enrollment.course_id
+        LEFT JOIN batches search_batch ON search_batch.id = search_enrollment.batch_id
+        WHERE search_student.deleted_at IS NULL AND search_student.contact_id = "Conversation"."contact_id"
+          AND (search_student.name ILIKE ${sequelize.escape(term)} OR search_student.student_no ILIKE ${sequelize.escape(term)}
+            OR search_student.email ILIKE ${sequelize.escape(term)} OR search_course.name ILIKE ${sequelize.escape(term)}
+            OR search_course.code ILIKE ${sequelize.escape(term)} OR search_batch.name ILIKE ${sequelize.escape(term)}
+            OR search_batch.code ILIKE ${sequelize.escape(term)}))`;
+      const contactSearch = `EXISTS (SELECT 1 FROM contacts search_contact WHERE search_contact.id = "Conversation"."contact_id"
+        AND search_contact.deleted_at IS NULL AND (search_contact.first_name ILIKE ${sequelize.escape(term)}
+          OR search_contact.last_name ILIKE ${sequelize.escape(term)} OR search_contact.email ILIKE ${sequelize.escape(term)}
+          OR search_contact.phone ILIKE ${sequelize.escape(term)} OR search_contact.whatsapp_id ILIKE ${sequelize.escape(`%${digits || searchValue}%`)}
+          ${digits ? `OR regexp_replace(COALESCE(search_contact.phone, ''), '[^0-9]', '', 'g') LIKE ${sequelize.escape(`%${digits}%`)}` : ''}))`;
+      where[Op.and] = [...(where[Op.and] || []), literal(`(${contactSearch} OR ${studentSearch})`)];
+    }
+    if (registeredStudentsOnly === 'true' || courseId || batchId || enrollmentStatus) {
+      where[Op.and] = [...(where[Op.and] || []), literal(`EXISTS (SELECT 1 FROM students filter_student
+        LEFT JOIN student_enrollments filter_enrollment ON filter_enrollment.student_id = filter_student.id
+        WHERE filter_student.deleted_at IS NULL AND filter_student.contact_id = "Conversation"."contact_id"
+        ${courseId ? `AND filter_enrollment.course_id = ${sequelize.escape(courseId)}` : ''}
+        ${batchId ? `AND filter_enrollment.batch_id = ${sequelize.escape(batchId)}` : ''}
+        ${enrollmentStatus ? `AND filter_enrollment.enrollment_status = ${sequelize.escape(enrollmentStatus)}` : ''})`)];
     }
 
     const includes = this.conversationIncludes().map((include) => {
-      if (include.as === 'contact') return { ...include, where: contactWhere, required: !!searchValue };
+      if (include.as === 'contact') return include;
       if (include.as !== 'lead' || !leadStatus) return include;
       if (leadStatus === 'none') return { ...include, where: { id: null }, required: false };
       return {
@@ -310,7 +354,7 @@ class InboxService {
     const pageWhere = { ...where };
     if (cursorPredicate) pageWhere[Op.and] = [...(pageWhere[Op.and] || []), cursorPredicate];
     const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 100));
-    const filteringIncludes = includes.filter((include) => include.required || (include.as === 'contact' && searchValue));
+    const filteringIncludes = includes.filter((include) => include.required);
     const effectiveLastMessageAt = literal('COALESCE("Conversation"."last_message_at", "Conversation"."updated_at", "Conversation"."created_at")');
     const [pageRows, total, filteredTotal] = await Promise.all([Conversation.findAll({
       attributes: ['id', [effectiveLastMessageAt, 'effectiveLastMessageAt']],
@@ -355,7 +399,7 @@ class InboxService {
       lastMessage: latestByConversation.get(String(conversation.id)) || null
     }));
     const withInteractionRates = await this.attachInteractionRates(withLatestMessages);
-    const items = withInteractionRates;
+    const items = await this.attachStudentSummaries(withInteractionRates);
     const cursorRow = returnedPageRows[returnedPageRows.length - 1];
     return {
       items,
@@ -418,7 +462,8 @@ class InboxService {
       throw error;
     }
     const [withInteractionRate] = await this.attachInteractionRates([serializeConversation(conversation)]);
-    return withInteractionRate;
+    const [withStudent] = await this.attachStudentSummaries([withInteractionRate]);
+    return withStudent;
   }
 
   async updateConversation(id, payload, userId) {

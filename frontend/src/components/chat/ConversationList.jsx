@@ -79,6 +79,18 @@ export const ConversationItem = memo(function ConversationItem({ conversation, s
             </Box>
           )}
         </Stack>
+        {conversation.student && (
+          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.5, minWidth: 0 }}>
+            <Chip size="small" color="primary" label="Student" sx={{ height: 18, fontSize: 9 }} />
+            <Typography variant="caption" fontWeight={700} noWrap>{conversation.student.registrationNumber}</Typography>
+            {conversation.student.enrollments?.[0] && <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
+              · {[conversation.student.enrollments[0].courseName, conversation.student.enrollments[0].batchName].filter(Boolean).join(' · ')}
+            </Typography>}
+            {conversation.student.enrollments?.length > 1 && <Tooltip title={conversation.student.enrollments.map((item) => [item.courseName, item.batchName].filter(Boolean).join(' · ')).join('\n')}>
+              <Chip size="small" variant="outlined" label={`+${conversation.student.enrollments.length - 1} more`} sx={{ height: 18, fontSize: 9 }} />
+            </Tooltip>}
+          </Stack>
+        )}
         <Stack direction="row" alignItems="center" gap={0.75} sx={{ mt: 0.75 }}>
           <Tooltip title={windowOpen?'Customer messaging window is currently open.':'Only an approved template can be initiated outside the customer messaging window.'}><Chip size="small" label={windowOpen ? 'Open' : 'Outside window'} color={windowOpen ? 'success' : 'warning'} sx={{ height: 20, fontSize: 10 }} /></Tooltip>
           {conversation.whatsappAccount?.name && <Chip size="small" label={conversation.whatsappAccount.name} variant="outlined" sx={{ height: 20, fontSize: 10 }} />}
@@ -201,6 +213,12 @@ export function ConversationList({
               <MenuItem value="none">No lead/status</MenuItem>
             </Select>
           </FormControl>
+          <Button size="small" sx={{ mt: 0.5 }} variant={filters.registeredStudentsOnly === 'true' ? 'contained' : 'text'} onClick={() => onFiltersChange({ ...filters, registeredStudentsOnly: filters.registeredStudentsOnly === 'true' ? '' : 'true' })}>Registered students only</Button>
+          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+            <TextField size="small" label="Course ID" value={filters.courseId || ''} onChange={(event) => onFiltersChange({ ...filters, courseId: event.target.value })} />
+            <TextField size="small" label="Batch ID" value={filters.batchId || ''} onChange={(event) => onFiltersChange({ ...filters, batchId: event.target.value })} />
+          </Stack>
+          <FormControl size="small" fullWidth sx={{ mt: 1 }}><InputLabel>Enrollment status</InputLabel><Select label="Enrollment status" value={filters.enrollmentStatus || ''} onChange={(event) => onFiltersChange({ ...filters, enrollmentStatus: event.target.value })}><MenuItem value="">All</MenuItem><MenuItem value="active">Active</MenuItem><MenuItem value="completed">Completed</MenuItem><MenuItem value="suspended">Suspended</MenuItem><MenuItem value="cancelled">Cancelled</MenuItem></Select></FormControl>
           <Stack direction="row" spacing={0.5} flexWrap="wrap">
             <Button size="small" variant={filters.mine === 'role' ? 'contained' : 'text'} onClick={() => onFiltersChange({ ...filters, mine: filters.mine === 'role' ? '' : 'role', assignedRoleId: '' })}>My department chats</Button>
             <Button size="small" variant={filters.mine === 'assigned' ? 'contained' : 'text'} onClick={() => onFiltersChange({ ...filters, mine: filters.mine === 'assigned' ? '' : 'assigned', assignedUserId: '' })}>My assigned chats</Button>

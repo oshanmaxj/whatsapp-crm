@@ -39,6 +39,8 @@ const studentRegistrationNumberService = require('./studentRegistrationNumber.se
 const paymentReceiptService = require('./paymentReceipt.service');
 const paymentReceiptSettingsService = require('./paymentReceiptSettings.service');
 const canonicalWhatsappConversationService = require('./canonicalWhatsappConversation.service');
+const studentCanonicalIdentityService = require('./studentCanonicalIdentity.service');
+const { normalizeStudentName } = require('./studentCanonicalIdentity.service');
 
 function fullName(contact) {
   return [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || contact?.phone || 'Student';
@@ -659,6 +661,7 @@ class EducationService {
       originEvent: 'enrollment_creation',
       portalPassword: payload.portalPassword || ''
     }).catch((error) => logger.warn('enrollment_welcome_queue_failed', { enrollmentId: enrollment.id, error: error.message }));
+    await studentCanonicalIdentityService.publishStudentChanged(student.id).catch(() => null);
     return StudentEnrollment.findByPk(enrollment.id, {
       include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch', required: false }]
     });
@@ -688,6 +691,7 @@ class EducationService {
       enrolledAt: values.enrolledAt,
       completedAt: values.enrollmentStatus === 'completed' ? values.completedAt || new Date() : null
     });
+    await studentCanonicalIdentityService.publishStudentChanged(row.studentId).catch(() => null);
     return row.reload({ include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch', required: false }] });
   }
 
@@ -695,6 +699,7 @@ class EducationService {
     const row = await StudentEnrollment.findByPk(id);
     if (!row) throw Object.assign(new Error('Student enrollment not found'), { status: 404 });
     await row.update({ enrollmentStatus: 'cancelled', completedAt: null });
+    await studentCanonicalIdentityService.publishStudentChanged(row.studentId).catch(() => null);
     return { deleted: true, id: row.id, retainedForHistory: true };
   }
 
@@ -738,7 +743,7 @@ class EducationService {
   }
 
   async createStudent(payload, userId = null) {
-    const name = String(payload.name || '').trim();
+    const name = normalizeStudentName(payload.name);
     const phone = requireNormalizedPhone(payload.phone);
     const email = String(payload.email || '').trim() || null;
     const portalPassword = payload.studentPortalPassword ?? payload.portalPassword;
@@ -750,40 +755,39 @@ class EducationService {
       throw Object.assign(new Error('Student portal password must be at least 8 characters'), { status: 400 });
     }
 
-    let contactId = optionalId(payload.contactId);
-    if (!contactId) {
-      const [firstName, ...rest] = name.split(/\s+/).filter(Boolean);
-      let contact = await Contact.findOne({
-        where: { [Op.or]: [{ normalizedPhone: phone }, { phone }, { whatsappId: phone }] },
-        paranoid: false
-      });
-      if (contact?.deletedAt) {
-        await contact.restore();
-      }
-      if (!contact) {
-        contact = await Contact.create({
-          firstName: firstName || name,
-          lastName: rest.join(' ') || null,
-          phone,
-          normalizedPhone: phone,
-          email,
-          status: 'active'
-        });
-      } else if (email && contact.email !== email) {
-        await contact.update({ email });
-      }
-      contactId = contact.id;
-    }
-
     const generatedPortalPassword = portalPassword ? null : `Stu-${crypto.randomBytes(5).toString('base64url')}`;
     const initialEnrollments = this.normalizeEnrollments(payload);
     await this.validateEnrollments(initialEnrollments);
     const primaryEnrollment = initialEnrollments.find((item) => item.enrollmentStatus === 'active') || initialEnrollments[0];
-    const student = await sequelize.transaction(async (transaction) => {
+    const { student, identityResult } = await sequelize.transaction(async (transaction) => {
+      let contactId = optionalId(payload.contactId);
+      if (!contactId && payload.conversationId) {
+        const conversation = await Conversation.findByPk(payload.conversationId, { attributes: ['contactId'], transaction });
+        contactId = conversation?.contactId || null;
+      }
+      if (!contactId && payload.leadId) {
+        const lead = await Lead.findByPk(payload.leadId, { attributes: ['contactId'], transaction });
+        contactId = lead?.contactId || null;
+      }
+      let contact = contactId ? await Contact.findByPk(contactId, { transaction, lock: transaction.LOCK.UPDATE }) : null;
+      if (contactId && !contact) throw Object.assign(new Error('Linked contact not found.'), { status: 422, code: 'STUDENT_CONTACT_NOT_FOUND' });
+      if (!contact) {
+        const candidates = await Contact.findAll({
+          where: { [Op.or]: [{ normalizedPhone: phone }, { phone }, { whatsappId: phone }], ...(payload.whatsappAccountId ? { whatsappAccountId: payload.whatsappAccountId } : {}) },
+          paranoid: false, limit: 2, transaction, lock: transaction.LOCK.UPDATE
+        });
+        if (candidates.length > 1) throw Object.assign(new Error('Student contact identity is ambiguous.'), { status: 409, code: 'STUDENT_CONTACT_IDENTITY_AMBIGUOUS' });
+        contact = candidates[0] || null;
+      }
+      if (contact?.deletedAt) await contact.restore({ transaction });
+      if (!contact) {
+        const [firstName, ...rest] = name.split(' ');
+        contact = await Contact.create({ firstName, lastName: rest.join(' ') || null, phone, normalizedPhone: phone, email, status: 'active', whatsappAccountId: optionalId(payload.whatsappAccountId) }, { transaction });
+      }
       const generatedStudentNo = await studentRegistrationNumberService.next({ transaction });
-      return Student.create({
+      const createdStudent = await Student.create({
         studentNo: generatedStudentNo,
-        contactId,
+        contactId: contact.id,
         leadId: optionalId(payload.leadId),
         courseId: primaryEnrollment?.courseId || null,
         batchId: primaryEnrollment?.batchId || null,
@@ -796,7 +800,10 @@ class EducationService {
         notes: payload.notes || null,
         portalPasswordHash: portalPassword || generatedPortalPassword
       }, { transaction });
+      const synced = await studentCanonicalIdentityService.sync({ studentId: createdStudent.id, contactId: contact.id, leadId: payload.leadId, conversationId: payload.conversationId, whatsappAccountId: payload.whatsappAccountId, source: payload.source || 'student_registration', actorUserId: userId, transaction });
+      return { student: createdStudent, identityResult: synced };
     });
+    await studentCanonicalIdentityService.publish(identityResult).catch((error) => logger.warn('student_identity_socket_emit_failed', { studentId: student.id, error: error.message }));
     await this.markRelatedLeadRegistered({ student, payload, userId });
     await this.syncEnrollments(student, { enrollments: initialEnrollments }, userId);
     const createdEnrollments = await StudentEnrollment.findAll({ where: { studentId: student.id } });
@@ -822,6 +829,7 @@ class EducationService {
       originEvent: 'student_registration',
       portalPassword: portalPassword || generatedPortalPassword || ''
     }).catch((error) => logger.warn('enrollment_welcome_queue_failed', { enrollmentId: enrollment.id, error: error.message }))));
+    await studentCanonicalIdentityService.publishStudentChanged(student.id).catch(() => null);
     const created = serialize(await this.getStudent(student.id));
     await studentMessageAutomationService.dispatch('student_welcome', student.id, {
       eventId: `student:${student.id}`,
@@ -857,8 +865,16 @@ class EducationService {
     if ('courseId' in next) next.courseId = optionalId(next.courseId);
     if ('batchId' in next) next.batchId = optionalId(next.batchId);
     if ('leadId' in next) next.leadId = optionalId(next.leadId);
-    await row.update(next);
-    if (Object.prototype.hasOwnProperty.call(payload, 'enrollments')) await this.syncEnrollments(row, payload, userId);
+    if (Object.prototype.hasOwnProperty.call(next, 'name')) next.name = normalizeStudentName(next.name);
+    const identityResult = await sequelize.transaction(async (transaction) => {
+      await row.update(next, { transaction });
+      return studentCanonicalIdentityService.sync({ studentId: row.id, contactId: row.contactId, leadId: row.leadId, source: 'student_update', actorUserId: userId, transaction });
+    });
+    await studentCanonicalIdentityService.publish(identityResult).catch((error) => logger.warn('student_identity_socket_emit_failed', { studentId: row.id, error: error.message }));
+    if (Object.prototype.hasOwnProperty.call(payload, 'enrollments')) {
+      await this.syncEnrollments(row, payload, userId);
+      await studentCanonicalIdentityService.publishStudentChanged(row.id).catch(() => null);
+    }
     return this.getStudent(id);
   }
 

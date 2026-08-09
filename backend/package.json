@@ -21,6 +21,8 @@
     "accounting:verify:pre": "node src/scripts/verify_accounting_reset_pre.js",
     "accounting:verify:post": "node src/scripts/verify_accounting_reset_post.js",
     "repair:conversations": "node src/scripts/repair_duplicate_conversations.js",
+    "repair:student-contact-identity": "node src/scripts/repair_student_contact_identity.js",
+    "repair:student-contact-names": "node src/scripts/repair_student_contact_identity.js",
     "repair:payment-whatsapp-conversations": "node src/scripts/repair_duplicate_whatsapp_conversations.js",
     "backfill:inbound-whatsapp-conversations": "node src/scripts/backfill_inbound_whatsapp_conversations.js",
     "backfill:payment-receipts": "node src/scripts/backfill_payment_receipts.js",

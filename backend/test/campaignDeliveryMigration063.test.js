@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const base = {
-  message_queue: { id: 'bigint', status: 'USER-DEFINED', scheduled_at: 'timestamp with time zone', campaign_id: 'bigint', campaign_recipient_id: 'bigint' },
+  message_queue: { id: 'bigint', status: 'USER-DEFINED', scheduled_at: 'timestamp with time zone', processed_at: 'timestamp with time zone', attempts: 'integer', last_error: 'text', created_at: 'timestamp with time zone', updated_at: 'timestamp with time zone' },
   campaign_recipients: { id: 'bigint', campaign_id: 'bigint', status: 'USER-DEFINED', external_message_id: 'character varying' },
   campaigns: { id: 'bigint', status: 'USER-DEFINED' }
 };
@@ -27,7 +27,11 @@ function database(seed = {}) {
         const type = columns[table]?.[name];
         return [type ? [{ data_type: type, character_maximum_length: name === 'worker_id' ? 160 : null, is_nullable: 'YES', column_default: null }] : [], {}];
       }
-      if (/GROUP BY campaign_id,campaign_recipient_id/.test(sql)) return [state.duplicates, {}];
+      if (/JOIN \(SELECT campaign_id,campaign_recipient_id FROM message_queue/.test(sql)) return [state.duplicates, {}];
+      if (/^UPDATE message_queue SET status='cancelled'/.test(sql.trim())) {
+        state.superseded = [...(state.superseded || []), ...options.replacements.ids];
+        return [[], {}];
+      }
       if (/FROM pg_indexes/.test(sql)) {
         const definition = indexes[options.replacements.name];
         return [definition ? [{ indexdef: definition }] : [], {}];
@@ -37,12 +41,13 @@ function database(seed = {}) {
         const type = alter[3].startsWith('TIMESTAMPTZ') ? 'timestamp with time zone'
           : alter[3].startsWith('VARCHAR') ? 'character varying'
             : alter[3].startsWith('JSONB') ? 'jsonb'
-              : alter[3].startsWith('INTEGER') ? 'integer' : 'text';
+              : alter[3].startsWith('INTEGER') ? 'integer'
+                : alter[3].startsWith('BIGINT') ? 'bigint' : 'text';
         columns[alter[1]][alter[2]] = type;
         return [[], {}];
       }
       if (/CREATE UNIQUE INDEX message_queue_campaign_recipient_unique/.test(sql)) {
-        indexes.message_queue_campaign_recipient_unique = 'CREATE UNIQUE INDEX message_queue_campaign_recipient_unique ON public.message_queue USING btree (campaign_id, campaign_recipient_id) WHERE ((campaign_id IS NOT NULL) AND (campaign_recipient_id IS NOT NULL))';
+        indexes.message_queue_campaign_recipient_unique = "CREATE UNIQUE INDEX message_queue_campaign_recipient_unique ON public.message_queue USING btree (campaign_id, campaign_recipient_id) WHERE ((campaign_id IS NOT NULL) AND (campaign_recipient_id IS NOT NULL) AND (status <> 'cancelled'))";
         return [[], {}];
       }
       if (/CREATE INDEX message_queue_claimable_idx/.test(sql)) {
@@ -76,16 +81,42 @@ test('migration 063 completes from a partially migrated compatible schema withou
   assert.equal(db.state.operations.some(sql => /ADD COLUMN "claimed_at"/.test(sql)), false);
 });
 
-test('migration 063 reports duplicate idempotency keys before DDL and rolls back immediately', async () => {
-  const db = database({ duplicates: [{ campaign_id: '8', campaign_recipient_id: '11', job_count: 2 }] });
-  await assert.rejects(migration.up(db.q), error => {
-    assert.equal(error.code, 'MIGRATION_DUPLICATES_FOUND');
-    assert.equal(error.migrationOperation, 'check duplicate campaign delivery jobs');
-    return true;
-  });
-  assert.equal(db.state.commits, 0);
+test('migration 063 reconciles duplicate unsent jobs without deleting history', async () => {
+  const db = database({ duplicates: [
+    { id: '20', campaign_id: '8', campaign_recipient_id: '11', status: 'queued', external_message_id: null },
+    { id: '21', campaign_id: '8', campaign_recipient_id: '11', status: 'queued', external_message_id: null }
+  ] });
+  await migration.up(db.q);
+  assert.deepEqual(db.state.superseded, ['21']);
+  assert.equal(db.state.commits, 1);
+});
+
+test('migration 063 preserves sent evidence and supersedes an unsent duplicate', async () => {
+  const db = database({ duplicates: [
+    { id: '30', campaign_id: '9', campaign_recipient_id: '12', status: 'sent', external_message_id: 'wamid.one' },
+    { id: '31', campaign_id: '9', campaign_recipient_id: '12', status: 'queued', external_message_id: null }
+  ] });
+  await migration.up(db.q);
+  assert.deepEqual(db.state.superseded, ['31']);
+});
+
+test('migration 063 rolls back conflicting submitted duplicates for manual review', async () => {
+  const db = database({ duplicates: [
+    { id: '40', campaign_id: '10', campaign_recipient_id: '13', status: 'sent', external_message_id: 'wamid.one' },
+    { id: '41', campaign_id: '10', campaign_recipient_id: '13', status: 'sent', external_message_id: 'wamid.two' }
+  ] });
+  await assert.rejects(migration.up(db.q), error => error.code === 'MIGRATION_DUPLICATES_AMBIGUOUS');
   assert.equal(db.state.rollbacks, 1);
-  assert.equal(db.state.operations.some(sql => /^ALTER TABLE/.test(sql)), false);
+  assert.equal(db.state.superseded, undefined);
+});
+
+test('migration 063 cancels all queued duplicates when the recipient already has send evidence', async () => {
+  const db = database({ duplicates: [
+    { id: '50', campaign_id: '11', campaign_recipient_id: '14', status: 'queued', external_message_id: null, recipient_status: 'sent', recipient_external_message_id: 'wamid.recipient' },
+    { id: '51', campaign_id: '11', campaign_recipient_id: '14', status: 'retrying', external_message_id: null, recipient_status: 'sent', recipient_external_message_id: 'wamid.recipient' }
+  ] });
+  await migration.up(db.q);
+  assert.deepEqual(db.state.superseded, ['50', '51']);
 });
 
 test('migration 063 rejects incompatible partial columns rather than altering production data', async () => {

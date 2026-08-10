@@ -78,24 +78,30 @@ function originalDatabaseError(error) {
   return current || error;
 }
 
+function firstDatabaseError(error) {
+  const candidates = [error?.migrationFirstError, error, error?.original, error?.parent, error?.cause].filter(Boolean);
+  return candidates.find(candidate => candidate.code && candidate.code !== '25P02') || originalDatabaseError(error);
+}
+
 async function runMigration(filename, migration, queryInterface) {
   console.log(`Running migration: ${filename}`);
   try {
     await migration.up(queryInterface, Sequelize);
     console.log(`Completed migration: ${filename}`);
   } catch (error) {
-    const original = originalDatabaseError(error);
-    console.error('Migration failed and its current transaction was rolled back.', {
+    const original = firstDatabaseError(error);
+    console.error('Migration failed; no further migration SQL will be issued.', {
       migration: filename,
       operation: error.migrationOperation || 'migration up',
-      message: original.message || error.message,
-      sqlState: original.code || error.original?.code || error.parent?.code || null,
-      sql: original.sql || error.sql || error.original?.sql || error.parent?.sql || null,
+      firstMessage: original.message || error.message,
+      firstSqlState: original.code || error.original?.code || error.parent?.code || null,
+      firstSql: original.sql || error.sql || error.original?.sql || error.parent?.sql || null,
       table: original.table || null,
       column: original.column || null,
       constraint: original.constraint || null,
       duplicates: error.migrationDuplicates || null,
-      orphans: error.migrationOrphans || null
+      orphans: error.migrationOrphans || null,
+      rollbackStatus: 'migration owns rollback; see operation log'
     });
     throw error;
   }

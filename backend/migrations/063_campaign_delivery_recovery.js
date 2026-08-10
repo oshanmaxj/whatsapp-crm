@@ -3,7 +3,7 @@ const MIGRATION = '063_campaign_delivery_recovery.js';
 
 const REQUIRED_TABLES = ['message_queue', 'campaign_recipients', 'campaigns'];
 const REQUIRED_BASE_COLUMNS = {
-  message_queue: ['id', 'status', 'scheduled_at', 'campaign_id', 'campaign_recipient_id'],
+  message_queue: ['id', 'status', 'scheduled_at', 'processed_at', 'attempts', 'last_error', 'created_at', 'updated_at'],
   campaign_recipients: ['id', 'campaign_id', 'status', 'external_message_id'],
   campaigns: ['id', 'status']
 };
@@ -12,6 +12,10 @@ const NEW_COLUMNS = [
   ['message_queue', 'locked_at', 'TIMESTAMPTZ', ['timestamp with time zone']],
   ['message_queue', 'worker_id', 'VARCHAR(160)', ['character varying']],
   ['message_queue', 'error_details', 'JSONB', ['jsonb']],
+  ['message_queue', 'next_attempt_at', 'TIMESTAMPTZ', ['timestamp with time zone']],
+  ['message_queue', 'external_message_id', 'VARCHAR(255)', ['character varying']],
+  ['message_queue', 'campaign_id', 'BIGINT', ['bigint']],
+  ['message_queue', 'campaign_recipient_id', 'BIGINT', ['bigint']],
   ['campaign_recipients', 'failed_at', 'TIMESTAMPTZ', ['timestamp with time zone']],
   ['campaign_recipients', 'error_details', 'JSONB', ['jsonb']],
   ['campaigns', 'started_at', 'TIMESTAMPTZ', ['timestamp with time zone']],
@@ -69,6 +73,31 @@ async function addOrValidateColumn(q, table, name, definition, expectedTypes, tr
   await q.sequelize.query(`ALTER TABLE "${table}" ADD COLUMN "${name}" ${definition}`, { transaction });
 }
 
+function classifyDuplicateGroup(rows) {
+  const externalIds = [...new Set(rows.flatMap(row => [row.external_message_id, row.recipient_external_message_id]).filter(Boolean))];
+  if (externalIds.length > 1) return { classification: 'manual_review_conflicting_external_ids', ambiguous: true };
+  const submitted = rows.filter(row => row.external_message_id);
+  const sentRows = rows.filter(row => row.status === 'sent').sort((a, b) => Number(a.id) - Number(b.id));
+  if (externalIds.length === 1 && submitted.length === 0) return sentRows.length ? {
+    classification: 'recipient_sent_evidence', ambiguous: false, canonicalId: sentRows[0].id,
+    supersededIds: rows.filter(row => row.id !== sentRows[0].id).map(row => row.id)
+  } : { classification: 'recipient_sent_evidence', ambiguous: false, canonicalId: null, supersededIds: rows.map(row => row.id) };
+  const recipientTerminal = rows.some(row => ['sent', 'delivered', 'read', 'replied', 'converted'].includes(row.recipient_status));
+  if (!externalIds.length && recipientTerminal) return sentRows.length ? {
+    classification: 'recipient_terminal_evidence', ambiguous: false, canonicalId: sentRows[0].id,
+    supersededIds: rows.filter(row => row.id !== sentRows[0].id).map(row => row.id)
+  } : { classification: 'recipient_terminal_evidence', ambiguous: false, canonicalId: null, supersededIds: rows.map(row => row.id) };
+  const ranked = [...rows].sort((a, b) => {
+    const score = row => row.external_message_id ? 0 : row.status === 'sent' ? 1 : row.status === 'processing' ? 2 : 3;
+    return score(a) - score(b) || Number(a.id) - Number(b.id);
+  });
+  return {
+    classification: externalIds.length === 1 ? 'sent_evidence_plus_duplicates'
+      : rows.some(row => row.status === 'processing') ? 'processing_plus_unsent_duplicates' : 'all_unsent_duplicates',
+    ambiguous: false, canonicalId: ranked[0].id, supersededIds: ranked.slice(1).map(row => row.id)
+  };
+}
+
 module.exports.up = async (q) => {
   const transaction = await q.sequelize.transaction();
   try {
@@ -88,29 +117,57 @@ module.exports.up = async (q) => {
       }
     });
 
-    const [duplicates] = await operation('check duplicate campaign delivery jobs', () => q.sequelize.query(`SELECT campaign_id,campaign_recipient_id,COUNT(*)::integer AS job_count
-      FROM message_queue WHERE campaign_id IS NOT NULL AND campaign_recipient_id IS NOT NULL
-      GROUP BY campaign_id,campaign_recipient_id HAVING COUNT(*) > 1 ORDER BY campaign_id,campaign_recipient_id LIMIT 25`, { transaction }));
-    if (duplicates.length) throw Object.assign(new Error('Duplicate campaign delivery jobs prevent creation of the idempotency index. No data was changed.'), {
-      code: 'MIGRATION_DUPLICATES_FOUND', migrationOperation: 'check duplicate campaign delivery jobs', migrationDuplicates: duplicates
-    });
-
     for (const [table, name, definition, types] of NEW_COLUMNS) {
       await operation(`ensure column ${table}.${name}`, () => addOrValidateColumn(q, table, name, definition, types, transaction));
     }
+
+    const [duplicateRows] = await operation('inspect duplicate campaign delivery jobs', () => q.sequelize.query(`SELECT
+        mq.id,mq.campaign_id,mq.campaign_recipient_id,mq.status,mq.external_message_id,mq.attempts,
+        mq.scheduled_at,mq.processed_at,mq.claimed_at,mq.locked_at,mq.worker_id,mq.created_at,mq.updated_at,mq.last_error,
+        cr.status AS recipient_status,cr.external_message_id AS recipient_external_message_id
+      FROM message_queue mq LEFT JOIN campaign_recipients cr ON cr.id=mq.campaign_recipient_id
+      JOIN (SELECT campaign_id,campaign_recipient_id FROM message_queue
+        WHERE campaign_id IS NOT NULL AND campaign_recipient_id IS NOT NULL
+        GROUP BY campaign_id,campaign_recipient_id HAVING COUNT(*) > 1) duplicate
+        ON duplicate.campaign_id=mq.campaign_id AND duplicate.campaign_recipient_id=mq.campaign_recipient_id
+      ORDER BY mq.campaign_id,mq.campaign_recipient_id,mq.id`, { transaction }));
+    const groups = new Map();
+    for (const row of duplicateRows) {
+      const key = `${row.campaign_id}:${row.campaign_recipient_id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+    const classifications = [...groups.entries()].map(([key, rows]) => ({ key, rows, ...classifyDuplicateGroup(rows) }));
+    const ambiguous = classifications.filter(group => group.ambiguous).map(group => ({
+      campaignId: group.rows[0].campaign_id, campaignRecipientId: group.rows[0].campaign_recipient_id,
+      queueIds: group.rows.map(row => row.id), externalMessageIds: [...new Set(group.rows.map(row => row.external_message_id).filter(Boolean))],
+      classification: group.classification
+    }));
+    if (ambiguous.length) throw Object.assign(new Error('Conflicting submitted campaign jobs require manual review. No data was changed.'), {
+      code: 'MIGRATION_DUPLICATES_AMBIGUOUS', migrationOperation: 'classify duplicate campaign delivery jobs', migrationDuplicates: ambiguous
+    });
+    await operation('supersede unambiguous duplicate campaign delivery jobs', async () => {
+      for (const group of classifications) if (group.supersededIds.length) {
+        await q.sequelize.query(`UPDATE message_queue SET status='cancelled',worker_id=NULL,locked_at=NULL,
+          last_error='SUPERSEDED_DUPLICATE_CAMPAIGN_JOB',updated_at=NOW() WHERE id IN (:ids)`, {
+          replacements: { ids: group.supersededIds }, transaction
+        });
+        console.log(`[${MIGRATION}] reconciled duplicate group ${group.key} as ${group.classification}; preserved queue ${group.canonicalId || 'none (recipient already terminal)'}; superseded ${group.supersededIds.length}`);
+      }
+    });
 
     await operation('ensure unique campaign recipient delivery index', async () => {
       const existing = await index(q, 'message_queue_campaign_recipient_unique', transaction);
       if (existing) {
         const normalized = existing.indexdef.toLowerCase().replace(/\s+/g, ' ');
-        if (!normalized.includes('unique index') || !normalized.includes('(campaign_id, campaign_recipient_id)')) {
+        if (!normalized.includes('unique index') || !normalized.includes('(campaign_id, campaign_recipient_id)') || !normalized.includes("status <> 'cancelled'")) {
           throw Object.assign(new Error('message_queue_campaign_recipient_unique exists with an incompatible definition'), { code: 'MIGRATION_SCHEMA_MISMATCH' });
         }
         return;
       }
       await q.sequelize.query(`CREATE UNIQUE INDEX message_queue_campaign_recipient_unique
         ON message_queue(campaign_id,campaign_recipient_id)
-        WHERE campaign_id IS NOT NULL AND campaign_recipient_id IS NOT NULL`, { transaction });
+        WHERE campaign_id IS NOT NULL AND campaign_recipient_id IS NOT NULL AND status <> 'cancelled'`, { transaction });
     });
 
     await operation('ensure claimable queue index', async () => {
@@ -126,4 +183,4 @@ module.exports.up = async (q) => {
 };
 
 module.exports.down = async () => {};
-module.exports._test = { tableNames, column, index, addOrValidateColumn };
+module.exports._test = { tableNames, column, index, addOrValidateColumn, classifyDuplicateGroup };

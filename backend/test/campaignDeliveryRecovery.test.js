@@ -20,6 +20,15 @@ test('stale claims are lease-recoverable and sent evidence is excluded', () => {
   assert.match(queueSource, /lockedAt: \{ \[Op\.lt\]: staleBefore \}/);
   assert.match(campaignSource, /externalMessageId: null/);
   assert.match(campaignSource, /\['sent', 'delivered', 'read', 'replied', 'converted'\]/);
+  assert.match(queueSource, /if \(row\.externalMessageId\)/);
+  assert.match(queueSource, /externalMessageId: null/);
+});
+
+test('each queue claim is isolated and a failed job cannot poison the next claim transaction', () => {
+  assert.match(queueSource, /for \(let index = 0; index < limit; index \+= 1\)/);
+  assert.match(queueSource, /const row = await sequelize\.transaction/);
+  assert.match(queueSource, /results\.push\(await this\.processOne\(row\)\)/);
+  assert.match(queueSource, /catch \(error\)/);
 });
 
 test('429 and Meta 5xx are retryable while permanent 400 is terminal', () => {

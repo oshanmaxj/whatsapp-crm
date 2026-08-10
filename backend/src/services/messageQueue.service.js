@@ -89,6 +89,7 @@ class MessageQueueService {
         const claimed = await MessageQueue.findOne({
           where: {
             scheduledAt: { [Op.lte]: now },
+            externalMessageId: null,
             [Op.or]: [
               { status: { [Op.in]: ['queued', 'retrying'] } },
               { status: 'processing', externalMessageId: null, [Op.or]: [{ lockedAt: null }, { lockedAt: { [Op.lt]: staleBefore } }] }
@@ -111,6 +112,10 @@ class MessageQueueService {
   }
 
   async processOne(row) {
+    if (row.externalMessageId) {
+      await row.update({ status: 'sent', processedAt: row.processedAt || new Date(), lockedAt: null, workerId: null });
+      return row;
+    }
     if (row.status !== 'processing') await row.update({ status: 'processing', attempts: row.attempts + 1, claimedAt: new Date(), lockedAt: new Date(), workerId: WORKER_ID });
     if (row.campaignId) await Campaign.update(
       { status: 'Processing', startedAt: sequelize.literal('COALESCE(started_at, NOW())'), lastProgressAt: new Date() },

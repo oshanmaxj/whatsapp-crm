@@ -44,3 +44,16 @@ test('inbound button replies display title and keep payload out of the main bubb
   expect(html).toContain('Pay');
   expect(html).not.toContain('flowbtn_machine_identifier');
 });
+
+test('template bubbles show rendered content and retain the template name as metadata', () => {
+  const html = renderBubble({
+    direction: 'outbound', type: 'template', messageType: 'broadcast',
+    templateName: 'reminder_b', text: 'reminder_b',
+    templateDisplay: { name: 'reminder_b', text: 'Hello Piyumika, your seminar starts at 8:30 PM.\n\nAcademy\n\nConfirm · Details' }
+  });
+  expect(html).toContain('Hello Piyumika, your seminar starts at 8:30 PM.');
+  expect(html).toContain('Academy');
+  expect(html).toContain('Confirm · Details');
+  expect(html).toContain('Template:');
+  expect(html).toContain('reminder_b');
+});

@@ -4,6 +4,7 @@ const { sequelize, Campaign, CampaignEvent, CampaignRecipient, Conversation, Mes
 const whatsappService = require('./whatsapp.service');
 const outboundHistoryService = require('./outboundHistory.service');
 const logger = require('../config/logger');
+const { renderTemplateSnapshot } = require('./templateMessage.service');
 
 const RATE_LIMIT_PER_TICK = Number(process.env.QUEUE_RATE_LIMIT_PER_TICK || 5);
 const LEASE_MS = Math.max(30000, Number(process.env.QUEUE_PROCESSING_LEASE_MS || 300000));
@@ -263,7 +264,7 @@ class MessageQueueService {
             type: row.messageType === 'template' ? 'template' : 'text',
             messageType: 'broadcast',
             text: row.messageType === 'template'
-              ? templatePreview(campaign?.messageBody, queuePayload.components)
+              ? renderTemplateSnapshot(queuePayload.templateSnapshot) || templatePreview(campaign?.messageBody, queuePayload.components)
               : queuePayload.text || queuePayload.message || campaign?.messageBody || null,
             templateName: queuePayload.templateName || campaign?.templateName || null,
             campaignId: row.campaignId,
@@ -274,8 +275,18 @@ class MessageQueueService {
               source: 'broadcast',
               queueId: row.id,
               whatsapp: response,
-              template: row.messageType === 'template' ? queuePayload : null
+              template: row.messageType === 'template' ? queuePayload : null,
+              templateSnapshot: row.messageType === 'template' ? queuePayload.templateSnapshot || null : null
             }
+          });
+          if (row.messageType === 'template') logger.info('campaign_template_delivery_recorded', {
+            campaignId: row.campaignId,
+            campaignRecipientId: row.campaignRecipientId,
+            queueId: row.id,
+            templateName: queuePayload.templateName || campaign?.templateName || null,
+            messageType: row.messageType,
+            metaMessageId: externalMessageId || null,
+            responseStatus: response?.messages?.[0]?.message_status || response?.status || 'accepted'
           });
         } catch (historyError) {
           logger.warn('broadcast_chat_history_processing_failed', {

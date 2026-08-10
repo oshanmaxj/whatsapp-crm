@@ -121,7 +121,7 @@ function messageBadges(message) {
 
 function messageBodyText(message) {
   const reply = message.interactiveReply || message.rawPayload?.interactiveReply;
-  const text = reply?.title || message.body || message.text || message.templateName || '';
+  const text = reply?.title || message.templateDisplay?.text || message.body || message.text || message.templateName || '';
   const messageType = message.messageType || message.message_type;
   const interactiveType = message.interactiveType || message.interactive_type;
   const isInteractiveReply = messageType === 'button_reply'
@@ -239,6 +239,11 @@ export const MessageBubble = memo(function MessageBubble({ message, onMediaLoad,
         {bodyText && (
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.45 }}>
             {bodyText}
+          </Typography>
+        )}
+        {message.type === 'template' && message.templateName && bodyText !== message.templateName && (
+          <Typography variant="caption" sx={{ display: 'block', mt: 0.45, color: 'text.secondary' }}>
+            Template: {message.templateName}
           </Typography>
         )}
         <InteractiveContent message={message} />

@@ -31,6 +31,8 @@ function mediaFromMessage(json, raw) {
   };
 }
 
+const { renderTemplateSnapshot, snapshotFromRaw, resolveText } = require('./templateMessage.service');
+
 function normalizeMessagePresentation(message) {
   const json = message?.toJSON ? message.toJSON() : { ...(message || {}) };
   if (!json) return json;
@@ -40,7 +42,14 @@ function normalizeMessagePresentation(message) {
     kind: json.interactiveType || 'button', body: json.text || null,
     footer: raw.footer || null, header: raw.header || null, buttons: raw.buttons
   } : null);
-  let body = interactiveReply?.title || json.text || null;
+  const templateSnapshot = snapshotFromRaw(raw);
+  const renderedTemplate = json.type === 'template' ? renderTemplateSnapshot(templateSnapshot) : null;
+  const storedTextIsOnlyName = json.type === 'template' && json.templateName && json.text === json.templateName;
+  const legacyBodyParameters = (raw.template?.components || []).find((row) => String(row?.type || '').toLowerCase() === 'body')?.parameters || [];
+  const reconstructedLegacyText = json.type === 'template' && !storedTextIsOnlyName
+    ? resolveText(json.text, legacyBodyParameters)
+    : null;
+  let body = interactiveReply?.title || renderedTemplate || reconstructedLegacyText || (storedTextIsOnlyName ? null : json.text) || json.templateName || null;
   if (interactiveReply?.title && typeof body === 'string') body = interactiveReply.title;
   const media = mediaFromMessage(json, raw);
   const caption = media && ['image', 'video', 'document'].includes(media.type) ? (raw.media?.caption ?? json.text ?? null) : null;
@@ -52,7 +61,8 @@ function normalizeMessagePresentation(message) {
     fileName: media?.filename || null,
     fileSize: media?.size || null,
     duration: media?.duration || null,
-    interactive, interactiveReply
+    interactive, interactiveReply, templateSnapshot,
+    templateDisplay: json.type === 'template' ? { name: json.templateName || templateSnapshot?.name || null, text: body } : null
   };
 }
 

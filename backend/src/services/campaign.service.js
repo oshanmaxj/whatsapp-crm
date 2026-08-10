@@ -22,6 +22,7 @@ const whatsappTemplateService = require('./whatsappTemplate.service');
 const interactiveMediaService = require('./interactiveMedia.service');
 const { normalizePhone } = require('../utils/phone');
 const logger = require('../config/logger');
+const { createTemplateSnapshot } = require('./templateMessage.service');
 const messagingWindowService = require('./messagingWindow.service');
 
 function fullName(person) {
@@ -479,6 +480,10 @@ class CampaignService {
               templateName: template.name,
               language: template.language,
               components: templateComponents(template, campaign, recipient, resolvedHeader),
+              templateSnapshot: createTemplateSnapshot(
+                template,
+                templateComponents(template, campaign, recipient, resolvedHeader)
+              ),
               templateHeaderType: template.headerType,
               headerMedia: campaign.headerMedia,
               log: true

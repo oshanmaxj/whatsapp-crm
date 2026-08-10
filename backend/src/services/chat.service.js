@@ -7,7 +7,9 @@ const { normalizePhone: normalizeWhatsAppNumber } = require('../utils/phone');
 const { Op } = require('sequelize');
 const interactiveMediaService = require('./interactiveMedia.service');
 const { normalizeMessagePresentation } = require('./messagePresentation.service');
+const { createTemplateSnapshot, renderTemplateSnapshot } = require('./templateMessage.service');
 const crypto = require('crypto');
+const logger = require('../config/logger');
 
 function messageCursor(row) {
   const payload = Buffer.from(JSON.stringify({ t: row.createdAt, id: String(row.id) })).toString('base64url');
@@ -331,6 +333,8 @@ class ChatService {
       throw error;
     }
     components = validateTemplateComponents(template, components);
+    const templateSnapshot = createTemplateSnapshot(template, components);
+    const renderedTemplate = renderTemplateSnapshot(templateSnapshot);
 
     conversationId = conversation.id;
     const runtimeConfig = await whatsappService.getRuntimeConfig(conversation.whatsappAccountId);
@@ -342,7 +346,7 @@ class ChatService {
       direction: 'outbound',
       type: 'template',
       templateName: template.name,
-      text: template.body,
+      text: renderedTemplate || template.body || template.name,
       fromNumber: runtimeConfig.phoneNumberId || null,
       toNumber,
       status: 'pending',
@@ -350,7 +354,7 @@ class ChatService {
       replyToWhatsappMessageId: replyContext.replyToWhatsappMessageId,
       statusUpdatedAt: new Date(),
       isRead: true,
-      rawPayload: { template: { name: template.name, language: template.language, components } }
+      rawPayload: { template: { name: template.name, language: template.language, components }, templateSnapshot }
       , whatsappAccountId: conversation.whatsappAccountId || null
     });
 
@@ -364,12 +368,20 @@ class ChatService {
         log: false,
         whatsappAccountId: conversation.whatsappAccountId
       });
+      logger.info('inbox_template_delivery_recorded', {
+        campaignRecipientId: null,
+        queueId: null,
+        templateName: template.name,
+        messageType: 'template',
+        metaMessageId: whatsappResponse?.id || null,
+        responseStatus: whatsappResponse?.messages?.[0]?.message_status || whatsappResponse?.status || 'accepted'
+      });
       await message.update({
         whatsappMessageId: whatsappResponse?.id || null,
         status: 'sent',
         statusUpdatedAt: new Date(),
         rawPayload: {
-          template: { name: template.name, language: template.language, components },
+          template: { name: template.name, language: template.language, components }, templateSnapshot,
           whatsapp: whatsappResponse
         }
       });
@@ -386,7 +398,7 @@ class ChatService {
         errorCode: whatsappError?.code == null ? null : String(whatsappError.code),
         errorSubcode: whatsappError?.error_subcode == null ? null : String(whatsappError.error_subcode),
         errorMessage: safeMessage,
-        rawPayload: { template: { name: template.name, language: template.language, category: template.category, components }, selectedWhatsappAccountId: conversation.whatsappAccountId, failedAt: new Date().toISOString(), nonRetryable: String(whatsappError?.code || '') === '131048', whatsappError: { code: whatsappError?.code || null, error_subcode: whatsappError?.error_subcode || null, message: safeMessage } }
+        rawPayload: { template: { name: template.name, language: template.language, category: template.category, components }, templateSnapshot, selectedWhatsappAccountId: conversation.whatsappAccountId, failedAt: new Date().toISOString(), nonRetryable: String(whatsappError?.code || '') === '131048', whatsappError: { code: whatsappError?.code || null, error_subcode: whatsappError?.error_subcode || null, message: safeMessage } }
       }).catch(() => {});
       error.message = safeMessage;
       error.code = String(whatsappError?.code || error.code || 'TEMPLATE_SEND_FAILED');

@@ -37,6 +37,7 @@ function database(seed = {}) {
       if (/JOIN \(SELECT campaign_id,campaign_recipient_id FROM message_queue/.test(sql)) return [state.duplicates, {}];
       if (/^UPDATE message_queue SET status='cancelled'/.test(sql.trim())) {
         state.superseded = [...(state.superseded || []), ...options.replacements.ids];
+        state.duplicates.forEach(row => { if (options.replacements.ids.map(String).includes(String(row.id))) row.status = 'cancelled'; });
         return [[], {}];
       }
       if (/FROM pg_indexes/.test(sql)) {
@@ -121,8 +122,8 @@ test('migration 063 completes from a partially migrated compatible schema withou
 
 test('migration 063 reconciles duplicate unsent jobs without deleting history', async () => {
   const db = database({ duplicates: [
-    { id: '20', campaign_id: '8', campaign_recipient_id: '11', status: 'queued', external_message_id: null },
-    { id: '21', campaign_id: '8', campaign_recipient_id: '11', status: 'queued', external_message_id: null }
+    { id: '20', campaign_id: '8', campaign_recipient_id: '11', status: 'queued', external_message_id: null, recipient_queue_id: '20' },
+    { id: '21', campaign_id: '8', campaign_recipient_id: '11', status: 'queued', external_message_id: null, recipient_queue_id: '20' }
   ] });
   await migration.up(db.q);
   assert.deepEqual(db.state.superseded, ['21']);
@@ -131,8 +132,8 @@ test('migration 063 reconciles duplicate unsent jobs without deleting history', 
 
 test('migration 063 preserves sent evidence and supersedes an unsent duplicate', async () => {
   const db = database({ duplicates: [
-    { id: '30', campaign_id: '9', campaign_recipient_id: '12', status: 'sent', external_message_id: 'wamid.one' },
-    { id: '31', campaign_id: '9', campaign_recipient_id: '12', status: 'queued', external_message_id: null }
+    { id: '30', campaign_id: '9', campaign_recipient_id: '12', status: 'sent', external_message_id: 'wamid.one', recipient_queue_id: '30' },
+    { id: '31', campaign_id: '9', campaign_recipient_id: '12', status: 'queued', external_message_id: null, recipient_queue_id: '30' }
   ] });
   await migration.up(db.q);
   assert.deepEqual(db.state.superseded, ['31']);
@@ -140,21 +141,68 @@ test('migration 063 preserves sent evidence and supersedes an unsent duplicate',
 
 test('migration 063 rolls back conflicting submitted duplicates for manual review', async () => {
   const db = database({ duplicates: [
-    { id: '40', campaign_id: '10', campaign_recipient_id: '13', status: 'sent', external_message_id: 'wamid.one' },
-    { id: '41', campaign_id: '10', campaign_recipient_id: '13', status: 'sent', external_message_id: 'wamid.two' }
+    { id: '40', campaign_id: '10', campaign_recipient_id: '13', status: 'sent', external_message_id: 'wamid.one', recipient_queue_id: '40' },
+    { id: '41', campaign_id: '10', campaign_recipient_id: '13', status: 'sent', external_message_id: 'wamid.two', recipient_queue_id: '40' }
   ] });
   await assert.rejects(migration.up(db.q), error => error.code === 'MIGRATION_DUPLICATES_AMBIGUOUS');
   assert.equal(db.state.rollbacks, 1);
   assert.equal(db.state.superseded, undefined);
 });
 
-test('migration 063 cancels all queued duplicates when the recipient already has send evidence', async () => {
+test('migration 063 preserves the mapped canonical row when recipient send evidence exists', async () => {
   const db = database({ duplicates: [
-    { id: '50', campaign_id: '11', campaign_recipient_id: '14', status: 'queued', external_message_id: null, recipient_status: 'sent', recipient_external_message_id: 'wamid.recipient' },
-    { id: '51', campaign_id: '11', campaign_recipient_id: '14', status: 'retrying', external_message_id: null, recipient_status: 'sent', recipient_external_message_id: 'wamid.recipient' }
+    { id: '50', campaign_id: '11', campaign_recipient_id: '14', status: 'sent', external_message_id: null, recipient_status: 'sent', recipient_external_message_id: 'wamid.recipient', recipient_queue_id: '50' },
+    { id: '51', campaign_id: '11', campaign_recipient_id: '14', status: 'retrying', external_message_id: null, recipient_status: 'sent', recipient_external_message_id: 'wamid.recipient', recipient_queue_id: '50' }
   ] });
   await migration.up(db.q);
-  assert.deepEqual(db.state.superseded, ['50', '51']);
+  assert.deepEqual(db.state.superseded, ['51']);
+});
+
+test('canonical live row plus cancelled history with a different external ID is already resolved and rerunnable', async () => {
+  const rows = [
+    { id: '60', campaign_id: '6', campaign_recipient_id: '10', status: 'sent', external_message_id: 'wamid.canonical', recipient_queue_id: '60' },
+    { id: '61', campaign_id: '6', campaign_recipient_id: '10', status: 'cancelled', external_message_id: 'wamid.historical', recipient_queue_id: '60' }
+  ];
+  const db = database({ duplicates: rows });
+  await migration.up(db.q);
+  await migration.up(db.q);
+  assert.equal(db.state.superseded, undefined);
+  assert.equal(db.state.commits, 2);
+  assert.deepEqual(rows.map(row => [row.id, row.status, row.external_message_id]), [
+    ['60', 'sent', 'wamid.canonical'], ['61', 'cancelled', 'wamid.historical']
+  ]);
+});
+
+test('canonical queue_id pointing to a cancelled row fails safely', async () => {
+  const db = database({ duplicates: [
+    { id: '70', campaign_id: '6', campaign_recipient_id: '11', status: 'cancelled', external_message_id: 'wamid.old', recipient_queue_id: '70' },
+    { id: '71', campaign_id: '6', campaign_recipient_id: '11', status: 'queued', external_message_id: null, recipient_queue_id: '70' }
+  ] });
+  await assert.rejects(migration.up(db.q), error => error.code === 'MIGRATION_DUPLICATES_AMBIGUOUS' && error.migrationDuplicates[0].classification === 'manual_review_canonical_is_cancelled');
+  assert.equal(db.state.rollbacks, 1);
+});
+
+test('canonical queue_id outside its duplicate group fails safely', async () => {
+  const db = database({ duplicates: [
+    { id: '80', campaign_id: '6', campaign_recipient_id: '13', status: 'queued', external_message_id: null, recipient_queue_id: '999' },
+    { id: '81', campaign_id: '6', campaign_recipient_id: '13', status: 'cancelled', external_message_id: 'wamid.old', recipient_queue_id: '999' }
+  ] });
+  await assert.rejects(migration.up(db.q), error => error.code === 'MIGRATION_DUPLICATES_AMBIGUOUS' && error.migrationDuplicates[0].classification === 'manual_review_canonical_outside_duplicate_group');
+});
+
+test('missing canonical queue_id fails without guessing', async () => {
+  const db = database({ duplicates: [
+    { id: '90', campaign_id: '6', campaign_recipient_id: '15', status: 'queued', external_message_id: null, recipient_queue_id: null },
+    { id: '91', campaign_id: '6', campaign_recipient_id: '15', status: 'cancelled', external_message_id: 'wamid.old', recipient_queue_id: null }
+  ] });
+  await assert.rejects(migration.up(db.q), error => error.code === 'MIGRATION_DUPLICATES_AMBIGUOUS' && error.migrationDuplicates[0].classification === 'manual_review_missing_canonical_mapping');
+});
+
+test('partial unique index permits cancelled history but guards one non-cancelled job', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../migrations/063_campaign_delivery_recovery.js'), 'utf8');
+  assert.match(source, /CREATE UNIQUE INDEX message_queue_campaign_recipient_unique/);
+  assert.match(source, /status <> 'cancelled'/);
+  assert.doesNotMatch(source, /DELETE FROM message_queue|external_message_id\s*=\s*NULL/i);
 });
 
 test('migration 063 rejects incompatible partial columns rather than altering production data', async () => {

@@ -81,27 +81,18 @@ async function addOrValidateColumn(q, table, name, definition, expectedTypes, tr
 }
 
 function classifyDuplicateGroup(rows) {
-  const externalIds = [...new Set(rows.flatMap(row => [row.external_message_id, row.recipient_external_message_id]).filter(Boolean))];
-  if (externalIds.length > 1) return { classification: 'manual_review_conflicting_external_ids', ambiguous: true };
-  const submitted = rows.filter(row => row.external_message_id);
-  const sentRows = rows.filter(row => row.status === 'sent').sort((a, b) => Number(a.id) - Number(b.id));
-  if (externalIds.length === 1 && submitted.length === 0) return sentRows.length ? {
-    classification: 'recipient_sent_evidence', ambiguous: false, canonicalId: sentRows[0].id,
-    supersededIds: rows.filter(row => row.id !== sentRows[0].id).map(row => row.id)
-  } : { classification: 'recipient_sent_evidence', ambiguous: false, canonicalId: null, supersededIds: rows.map(row => row.id) };
-  const recipientTerminal = rows.some(row => ['sent', 'delivered', 'read', 'replied', 'converted'].includes(row.recipient_status));
-  if (!externalIds.length && recipientTerminal) return sentRows.length ? {
-    classification: 'recipient_terminal_evidence', ambiguous: false, canonicalId: sentRows[0].id,
-    supersededIds: rows.filter(row => row.id !== sentRows[0].id).map(row => row.id)
-  } : { classification: 'recipient_terminal_evidence', ambiguous: false, canonicalId: null, supersededIds: rows.map(row => row.id) };
-  const ranked = [...rows].sort((a, b) => {
-    const score = row => row.external_message_id ? 0 : row.status === 'sent' ? 1 : row.status === 'processing' ? 2 : 3;
-    return score(a) - score(b) || Number(a.id) - Number(b.id);
-  });
+  const mappedIds = [...new Set(rows.map(row => row.recipient_queue_id).filter(value => value !== null && value !== undefined).map(String))];
+  if (mappedIds.length !== 1) return { classification: mappedIds.length ? 'manual_review_conflicting_canonical_mappings' : 'manual_review_missing_canonical_mapping', ambiguous: true };
+  const canonical = rows.find(row => String(row.id) === mappedIds[0]);
+  if (!canonical) return { classification: 'manual_review_canonical_outside_duplicate_group', ambiguous: true };
+  if (canonical.status === 'cancelled') return { classification: 'manual_review_canonical_is_cancelled', ambiguous: true };
+  const liveRows = rows.filter(row => row.status !== 'cancelled');
+  const liveExternalIds = [...new Set(liveRows.map(row => row.external_message_id).filter(Boolean))];
+  if (liveExternalIds.length > 1) return { classification: 'manual_review_conflicting_live_external_ids', ambiguous: true };
+  const supersededIds = liveRows.filter(row => String(row.id) !== mappedIds[0]).map(row => row.id);
   return {
-    classification: externalIds.length === 1 ? 'sent_evidence_plus_duplicates'
-      : rows.some(row => row.status === 'processing') ? 'processing_plus_unsent_duplicates' : 'all_unsent_duplicates',
-    ambiguous: false, canonicalId: ranked[0].id, supersededIds: ranked.slice(1).map(row => row.id)
+    classification: supersededIds.length ? 'canonical_mapping_with_unresolved_live_duplicates' : 'canonical_mapping_already_resolved',
+    ambiguous: false, canonicalId: canonical.id, supersededIds
   };
 }
 
@@ -131,7 +122,7 @@ module.exports.up = async (q) => {
     const [duplicateRows] = await operation('inspect duplicate campaign delivery jobs', () => q.sequelize.query(`SELECT
         mq.id,mq.campaign_id,mq.campaign_recipient_id,mq.status,mq.external_message_id,mq.attempts,
         mq.scheduled_at,mq.processed_at,mq.claimed_at,mq.locked_at,mq.worker_id,mq.created_at,mq.updated_at,mq.last_error,
-        cr.status AS recipient_status,cr.external_message_id AS recipient_external_message_id
+        cr.status AS recipient_status,cr.external_message_id AS recipient_external_message_id,cr.queue_id AS recipient_queue_id
       FROM message_queue mq LEFT JOIN campaign_recipients cr ON cr.id=mq.campaign_recipient_id
       JOIN (SELECT campaign_id,campaign_recipient_id FROM message_queue
         WHERE campaign_id IS NOT NULL AND campaign_recipient_id IS NOT NULL
@@ -148,7 +139,7 @@ module.exports.up = async (q) => {
     const ambiguous = classifications.filter(group => group.ambiguous).map(group => ({
       campaignId: group.rows[0].campaign_id, campaignRecipientId: group.rows[0].campaign_recipient_id,
       queueIds: group.rows.map(row => row.id), externalMessageIds: [...new Set(group.rows.map(row => row.external_message_id).filter(Boolean))],
-      classification: group.classification
+      recipientQueueId: group.rows[0].recipient_queue_id || null, classification: group.classification
     }));
     if (ambiguous.length) throw Object.assign(new Error('Conflicting submitted campaign jobs require manual review. No data was changed.'), {
       code: 'MIGRATION_DUPLICATES_AMBIGUOUS', migrationOperation: 'classify duplicate campaign delivery jobs', migrationDuplicates: ambiguous

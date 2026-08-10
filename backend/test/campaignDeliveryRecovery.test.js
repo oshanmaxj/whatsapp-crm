@@ -41,7 +41,8 @@ test('Meta error persistence is structured and sanitized', () => {
 test('migration is bounded, rerunnable, and adds campaign progress plus idempotency fields', () => {
   assert.match(migrationSource, /lock_timeout/);
   assert.match(migrationSource, /statement_timeout/);
-  assert.match(migrationSource, /ADD COLUMN IF NOT EXISTS claimed_at/);
+  assert.match(migrationSource, /'claimed_at', 'TIMESTAMPTZ'/);
+  assert.match(migrationSource, /information_schema\.columns/);
   assert.match(migrationSource, /message_queue_campaign_recipient_unique/);
   assert.match(migrationSource, /last_progress_at/);
   assert.match(migrationSource, /completed_at/);

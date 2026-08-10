@@ -64,6 +64,7 @@ const campaignDeliveryRecoveryMigration = require('../../migrations/063_campaign
 const onboardingInboxPaginationMigration = require('../../migrations/061_onboarding_inbox_pagination');
 const studentSupportTicketsMigration = require('../../migrations/062_student_support_tickets');
 const campaignTemplateHeadersMigration = require('../../migrations/047_campaign_template_headers');
+const MIGRATION_RUNNER_LOCK = 570000;
 
 function originalDatabaseError(error) {
   let current = error;
@@ -101,8 +102,7 @@ async function runMigration(filename, migration, queryInterface) {
 }
 
 async function columnExists(queryInterface, tableName, columnName) {
-  const tableDesc = await queryInterface.describeTable(tableName).catch(() => null);
-  if (!tableDesc) return false;
+  const tableDesc = await queryInterface.describeTable(tableName);
   return Object.prototype.hasOwnProperty.call(tableDesc, columnName);
 }
 
@@ -113,17 +113,14 @@ async function safeAddColumn(queryInterface, tableName, columnName, definition) 
     return;
   }
 
-  try {
-    console.log(`Adding column ${tableName}.${columnName}`);
-    await queryInterface.addColumn(tableName, columnName, definition);
-    console.log(`Added: ${tableName}.${columnName}`);
-  } catch (err) {
-    console.error(`Failed to add ${tableName}.${columnName}:`, err.message || err);
-  }
+  console.log(`Adding column ${tableName}.${columnName}`);
+  try { await queryInterface.addColumn(tableName, columnName, definition); }
+  catch (error) { error.migrationOperation = `add column ${tableName}.${columnName}`; throw error; }
+  console.log(`Added: ${tableName}.${columnName}`);
 }
 
 async function indexExists(queryInterface, tableName, indexName) {
-  const indexes = await queryInterface.showIndex(tableName).catch(() => []);
+  const indexes = await queryInterface.showIndex(tableName);
   return indexes.some((index) => index.name === indexName);
 }
 
@@ -135,20 +132,28 @@ async function safeAddIndex(queryInterface, tableName, fields, options = {}) {
     return;
   }
 
-  try {
-    console.log(`Adding index ${indexName}`);
-    await queryInterface.addIndex(tableName, fields, { ...options, name: indexName });
-    console.log(`Added: index ${indexName}`);
-  } catch (err) {
-    console.error(`Failed to add index ${indexName}:`, err.message || err);
-  }
+  console.log(`Adding index ${indexName}`);
+  try { await queryInterface.addIndex(tableName, fields, { ...options, name: indexName }); }
+  catch (error) { error.migrationOperation = `add index ${indexName}`; throw error; }
+  console.log(`Added: index ${indexName}`);
 }
 
 async function run() {
+  let runnerLockTransaction = null;
   try {
     console.log('Connecting to database...');
     await sequelize.authenticate();
-    console.log('Connected. Running migrations...');
+    console.log('Connected. Confirming no other migration runner is active...');
+    runnerLockTransaction = await sequelize.transaction();
+    const [lockRows] = await sequelize.query('SELECT pg_try_advisory_xact_lock(:lock) AS acquired', {
+      replacements: { lock: MIGRATION_RUNNER_LOCK }, transaction: runnerLockTransaction
+    });
+    if (lockRows[0]?.acquired !== true) {
+      throw Object.assign(new Error('Another migration runner already holds the project migration lock. No migrations were started.'), {
+        code: 'MIGRATION_RUNNER_ACTIVE'
+      });
+    }
+    console.log('Migration runner lock acquired. Running migrations...');
 
     const queryInterface = sequelize.getQueryInterface();
 
@@ -324,8 +329,15 @@ async function run() {
     await safeAddIndex(queryInterface, 'role_permissions', ['permission_id']);
 
     console.log('Migrations complete.');
+    await runnerLockTransaction.commit();
+    runnerLockTransaction = null;
     process.exit(0);
   } catch (err) {
+    if (runnerLockTransaction && !runnerLockTransaction.finished) {
+      await runnerLockTransaction.rollback().catch((lockError) => {
+        console.error('Failed to release migration runner lock transaction cleanly:', lockError.message);
+      });
+    }
     console.error('Migration runner failed:', err);
     process.exit(1);
   }

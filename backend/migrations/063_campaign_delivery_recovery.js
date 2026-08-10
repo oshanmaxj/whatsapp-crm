@@ -1,3 +1,4 @@
+const { QueryTypes } = require('sequelize');
 const LOCK = 570063;
 const MIGRATION = '063_campaign_delivery_recovery.js';
 
@@ -34,11 +35,17 @@ function operation(name, fn) {
 }
 
 async function tableNames(q, transaction) {
-  const [rows] = await q.sequelize.query(`SELECT table_name FROM information_schema.tables
-    WHERE table_schema=current_schema() AND table_name IN (:tables)`, {
-    replacements: { tables: REQUIRED_TABLES }, transaction
+  const rows = await q.sequelize.query(`SELECT
+      to_regclass('message_queue') AS message_queue,
+      to_regclass('campaign_recipients') AS campaign_recipients,
+      to_regclass('campaigns') AS campaigns`, {
+    type: QueryTypes.SELECT, transaction
   });
-  return new Set(rows.map(row => row.table_name));
+  if (!Array.isArray(rows) || rows.length !== 1 || !rows[0] || typeof rows[0] !== 'object') {
+    throw Object.assign(new Error('Unexpected result shape while resolving required campaign tables'), { code: 'MIGRATION_RESULT_SHAPE_INVALID' });
+  }
+  const row = rows[0];
+  return new Set(REQUIRED_TABLES.filter(name => row[name] !== null && row[name] !== undefined));
 }
 
 async function column(q, table, name, transaction) {

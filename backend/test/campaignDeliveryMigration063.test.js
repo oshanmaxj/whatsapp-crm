@@ -21,7 +21,14 @@ function database(seed = {}) {
     async query(sql, options = {}) {
       state.operations.push(sql.replace(/\s+/g, ' ').trim());
       if (/^SET LOCAL|pg_advisory_xact_lock/.test(sql)) return [[], {}];
-      if (/FROM information_schema\.tables/.test(sql)) return [Object.keys(columns).map(table_name => ({ table_name })), {}];
+      if (/to_regclass\('message_queue'\)/.test(sql)) {
+        assert.equal(options.type, require('sequelize').QueryTypes.SELECT);
+        return [{
+          message_queue: seed.missingTables?.includes('message_queue') ? null : 'message_queue',
+          campaign_recipients: seed.missingTables?.includes('campaign_recipients') ? null : 'campaign_recipients',
+          campaigns: seed.missingTables?.includes('campaigns') ? null : 'campaigns'
+        }];
+      }
       if (/FROM information_schema\.columns/.test(sql)) {
         const { table, name } = options.replacements;
         const type = columns[table]?.[name];
@@ -68,6 +75,37 @@ test('migration 063 creates a clean schema and is safe on a second consecutive r
   assert.equal(db.state.rollbacks, 0);
   assert.equal(db.state.columns.message_queue.claimed_at, 'timestamp with time zone');
   assert.match(db.state.indexes.message_queue_campaign_recipient_unique, /UNIQUE INDEX/);
+});
+
+test('required table detection parses QueryTypes.SELECT to_regclass rows in public search path', async () => {
+  const calls = [];
+  const q = { sequelize: { query: async (sql, options) => {
+    calls.push({ sql, options });
+    return [{ message_queue: 'message_queue', campaign_recipients: 'campaign_recipients', campaigns: 'campaigns' }];
+  } } };
+  const names = await migration._test.tableNames(q, {});
+  assert.deepEqual([...names], ['message_queue', 'campaign_recipients', 'campaigns']);
+  assert.equal(calls[0].options.type, require('sequelize').QueryTypes.SELECT);
+  assert.match(calls[0].sql, /to_regclass\('message_queue'\)/);
+  assert.doesNotMatch(calls[0].sql, /information_schema\.tables|current_schema/);
+});
+
+test('required table detection reports only a genuinely missing relation', async () => {
+  const db = database({ missingTables: ['campaign_recipients'] });
+  await assert.rejects(migration.up(db.q), error => {
+    assert.equal(error.code, 'MIGRATION_SCHEMA_MISMATCH');
+    assert.match(error.message, /campaign_recipients/);
+    assert.doesNotMatch(error.message, /message_queue,|campaigns/);
+    return true;
+  });
+  assert.equal(db.state.rollbacks, 1);
+});
+
+test('required relation lookup is compatible with current_schema public and search_path "$user", public', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../migrations/063_campaign_delivery_recovery.js'), 'utf8');
+  assert.match(source, /to_regclass\('message_queue'\)/);
+  assert.match(source, /QueryTypes\.SELECT/);
+  assert.doesNotMatch(source, /table_schema=current_schema\(\).*table_name IN/s);
 });
 
 test('migration 063 completes from a partially migrated compatible schema without overwriting data', async () => {

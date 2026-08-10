@@ -59,6 +59,12 @@ class CampaignController {
   async analytics(req, res, next) {
     try { await campaignService.getCampaign(req.params.id, req.user?.id); return res.json({ success: true, data: await campaignService.getAnalytics(req.params.id) }); } catch (err) { next(err); }
   }
+  async retryEligible(req, res, next) {
+    try {
+      await campaignService.getCampaign(req.params.id, req.user?.id);
+      return res.json({ success: true, data: await campaignService.retryEligible(req.params.id) });
+    } catch (err) { next(err); }
+  }
   async previewAudience(req, res, next) {
     try {
       const options = req.method === 'POST' ? req.body : req.query;

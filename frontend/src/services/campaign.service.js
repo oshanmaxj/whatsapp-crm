@@ -10,6 +10,7 @@ export const scheduleCampaign = (id, scheduledAt) => api.post(`/campaigns/${id}/
 export const importCampaignRecipients = (id, payload) => api.post(`/campaigns/${id}/recipients/import`, payload);
 export const cancelCampaign = (id) => api.post(`/campaigns/${id}/cancel`);
 export const getCampaignAnalytics = (id) => api.get(`/campaigns/${id}/analytics`);
+export const retryEligibleCampaignRecipients = (id) => api.post(`/campaigns/${id}/retry-eligible`);
 export const previewAudience = (params = {}) => api.get('/campaigns/audience/preview', { params });
 export const previewBroadcastAudience = (payload = {}) => api.post('/campaigns/audience/preview', payload);
 export const getCampaignAudienceOptions = () => api.get('/campaigns/audience/options');

@@ -1,10 +1,13 @@
+const os = require('os');
 const { Op } = require('sequelize');
-const { Campaign, CampaignEvent, CampaignRecipient, Conversation, MessageQueue, Notification, StudentAutomationDispatch } = require('../models');
+const { sequelize, Campaign, CampaignEvent, CampaignRecipient, Conversation, MessageQueue, Notification, StudentAutomationDispatch } = require('../models');
 const whatsappService = require('./whatsapp.service');
 const outboundHistoryService = require('./outboundHistory.service');
 const logger = require('../config/logger');
 
 const RATE_LIMIT_PER_TICK = Number(process.env.QUEUE_RATE_LIMIT_PER_TICK || 5);
+const LEASE_MS = Math.max(30000, Number(process.env.QUEUE_PROCESSING_LEASE_MS || 300000));
+const WORKER_ID = `${os.hostname()}:${process.pid}:${process.env.NODE_APP_INSTANCE || '0'}`;
 const PERMANENT_TEMPLATE_CODES = new Set([132000, 132001, 132005, 132007, 132012, 132015, 132016]);
 
 function campaignFailure(error) {
@@ -19,6 +22,18 @@ function campaignFailure(error) {
   };
 }
 
+function sanitizedError(error) {
+  const meta = error.response?.data?.error || error.whatsappApiResponse?.error || {};
+  return {
+    httpStatus: Number(error.response?.status || error.status || 0) || null,
+    metaCode: Number(meta.code) || null,
+    errorSubcode: Number(meta.error_subcode) || null,
+    title: String(meta.error_user_title || '').slice(0, 160) || null,
+    message: String(meta.error_user_msg || meta.message || error.message || 'WhatsApp delivery failed').slice(0, 500),
+    fbtraceId: String(meta.fbtrace_id || '').slice(0, 160) || null
+  };
+}
+
 function templatePreview(body, components = []) {
   const parameters = components.find((component) => component.type === 'body')?.parameters || [];
   return String(body || '').replace(/\{\{\s*(\d+)\s*\}\}/g, (match, index) => {
@@ -29,7 +44,7 @@ function templatePreview(body, components = []) {
 
 class MessageQueueService {
   async enqueue(payload, createdBy = null) {
-    return MessageQueue.create({
+    const values = {
       channel: payload.channel || 'whatsapp',
       messageType: payload.messageType || 'text',
       toNumber: payload.to || payload.toNumber,
@@ -43,7 +58,14 @@ class MessageQueueService {
       conversationId: payload.conversationId || payload.payload?.conversationId || null,
       contactId: payload.contactId || payload.payload?.contactId || null,
       createdBy
-    });
+    };
+    if (values.campaignId && values.campaignRecipientId) {
+      const [row] = await MessageQueue.findOrCreate({
+        where: { campaignId: values.campaignId, campaignRecipientId: values.campaignRecipientId }, defaults: values
+      });
+      return row;
+    }
+    return MessageQueue.create(values);
   }
 
   async list(query = {}) {
@@ -62,13 +84,24 @@ class MessageQueueService {
     const results = [];
     for (let index = 0; index < limit; index += 1) {
       const row = await sequelize.transaction(async (transaction) => {
+        const now = new Date();
+        const staleBefore = new Date(now.getTime() - LEASE_MS);
         const claimed = await MessageQueue.findOne({
-          where: { status: { [Op.in]: ['queued', 'retrying'] }, scheduledAt: { [Op.lte]: new Date() } },
+          where: {
+            scheduledAt: { [Op.lte]: now },
+            [Op.or]: [
+              { status: { [Op.in]: ['queued', 'retrying'] } },
+              { status: 'processing', externalMessageId: null, [Op.or]: [{ lockedAt: null }, { lockedAt: { [Op.lt]: staleBefore } }] }
+            ]
+          },
           order: [['priority', 'ASC'], ['scheduled_at', 'ASC']], transaction,
           lock: transaction.LOCK.UPDATE, skipLocked: true
         });
         if (!claimed) return null;
-        await claimed.update({ status: 'processing', attempts: claimed.attempts + 1 }, { transaction });
+        await claimed.update({
+          status: 'processing', attempts: claimed.attempts + 1,
+          claimedAt: now, lockedAt: now, workerId: WORKER_ID
+        }, { transaction });
         return claimed;
       });
       if (!row) break;
@@ -78,8 +111,11 @@ class MessageQueueService {
   }
 
   async processOne(row) {
-    if (row.status !== 'processing') await row.update({ status: 'processing', attempts: row.attempts + 1 });
-    if (row.campaignId) await Campaign.update({ status: 'Processing' }, { where: { id: row.campaignId, status: 'Scheduled' } });
+    if (row.status !== 'processing') await row.update({ status: 'processing', attempts: row.attempts + 1, claimedAt: new Date(), lockedAt: new Date(), workerId: WORKER_ID });
+    if (row.campaignId) await Campaign.update(
+      { status: 'Processing', startedAt: sequelize.literal('COALESCE(started_at, NOW())'), lastProgressAt: new Date() },
+      { where: { id: row.campaignId, status: { [Op.in]: ['Scheduled', 'Processing'] } } }
+    );
     let preparedHistory = null;
     let deliveredMessageId = null;
     let deliveryResponse = null;
@@ -144,7 +180,7 @@ class MessageQueueService {
         status: 'sent',
         processedAt: new Date(),
         externalMessageId,
-        lastError: null
+        lastError: null, errorDetails: null, lockedAt: null, workerId: null
       });
       if (preparedHistory) {
         await outboundHistoryService.complete(preparedHistory, {
@@ -257,7 +293,7 @@ class MessageQueueService {
             queueId: row.id, conversationId: preparedHistory.conversation.id, message: historyError.message
           }));
         }
-        await row.update({ status: 'sent', processedAt: new Date(), externalMessageId: deliveredMessageId, lastError: null });
+        await row.update({ status: 'sent', processedAt: new Date(), externalMessageId: deliveredMessageId, lastError: null, errorDetails: null, lockedAt: null, workerId: null });
         const deliveredPayload = row.payload || {};
         if (deliveredPayload.automationDispatchId) {
           await StudentAutomationDispatch.update({ status: 'accepted', whatsappMessageId: deliveredMessageId, acceptedAt: new Date(), attempts: row.attempts }, { where: { id: deliveredPayload.automationDispatchId } }).catch(() => null);
@@ -266,10 +302,14 @@ class MessageQueueService {
       }
       if (preparedHistory) await outboundHistoryService.fail(preparedHistory, error).catch(() => null);
       const classified = campaignFailure(error);
+      const details = sanitizedError(error);
       const hasAttempts = !classified.permanent && row.attempts < row.maxAttempts;
       await row.update({
         status: hasAttempts ? 'retrying' : 'failed',
         lastError: classified.message,
+        errorDetails: details,
+        lockedAt: null,
+        workerId: null,
         nextAttemptAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : null,
         scheduledAt: hasAttempts ? new Date(Date.now() + row.attempts * 60000) : row.scheduledAt
       });
@@ -289,13 +329,15 @@ class MessageQueueService {
       if (row.campaignRecipientId && !hasAttempts) {
         await CampaignRecipient.update({
           status: 'failed',
-          errorMessage: classified.message
+          errorMessage: classified.message,
+          errorDetails: details,
+          failedAt: new Date()
         }, { where: { id: row.campaignRecipientId } });
         await CampaignEvent.create({
           campaignId: row.campaignId,
           recipientId: row.campaignRecipientId,
           eventType: 'failed',
-          payload: { queueId: row.id, error: classified.message, permanent: classified.permanent }
+          payload: { queueId: row.id, error: details, permanent: classified.permanent }
         });
         await this.refreshCampaignStatus(row.campaignId);
       }
@@ -326,24 +368,30 @@ class MessageQueueService {
 
   async refreshCampaignStatus(campaignId) {
     if (!campaignId) return;
-    const [remaining, sent, failed] = await Promise.all([
+    const [remaining, sent, failed, total] = await Promise.all([
       CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['pending', 'queued'] } } }),
       CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['sent', 'delivered', 'read', 'replied', 'converted'] } } }),
-      CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['failed', 'unreachable', 'skipped'] } } })
+      CampaignRecipient.count({ where: { campaignId, status: { [Op.in]: ['failed', 'unreachable', 'skipped'] } } }),
+      CampaignRecipient.count({ where: { campaignId } })
     ]);
-    if (remaining > 0) return;
+    const progress = { totalRecipients: total, lastProgressAt: new Date() };
+    if (remaining > 0) { await Campaign.update(progress, { where: { id: campaignId } }); return; }
     await Campaign.update({
+      ...progress,
       status: sent > 0 && failed > 0 ? 'Completed with failures' : (sent > 0 ? 'Completed' : (failed > 0 ? 'Completed with failures' : 'Completed')),
-      sentAt: new Date()
+      sentAt: new Date(), completedAt: new Date()
     }, { where: { id: campaignId } });
   }
 
   start(intervalMs = Number(process.env.QUEUE_WORKER_INTERVAL_MS || 15000)) {
     if (this.timer) return;
-    this.timer = setInterval(() => this.processDue().catch((error) => logger.error('queue_worker_failed', error)), intervalMs);
+    logger.info('queue_worker_started', { workerId: WORKER_ID, intervalMs, leaseMs: LEASE_MS });
+    this.processDue().catch((error) => logger.error('queue_worker_failed', { workerId: WORKER_ID, message: error.message, stack: error.stack }));
+    this.timer = setInterval(() => this.processDue().catch((error) => logger.error('queue_worker_failed', { workerId: WORKER_ID, message: error.message, stack: error.stack })), intervalMs);
   }
 }
 
 module.exports = new MessageQueueService();
 module.exports.MessageQueueService = MessageQueueService;
 module.exports.campaignFailure = campaignFailure;
+module.exports.sanitizedError = sanitizedError;

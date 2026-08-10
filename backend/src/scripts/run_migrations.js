@@ -60,6 +60,7 @@ const reminderReplyPolicyMigration = require('../../migrations/057_reminder_repl
 const messagingWindowCampaignAudienceMigration = require('../../migrations/058_messaging_window_campaign_audience');
 const accountingReportingEpochMigration = require('../../migrations/059_accounting_reporting_epoch');
 const deliveryJobHardeningMigration = require('../../migrations/060_delivery_job_hardening');
+const campaignDeliveryRecoveryMigration = require('../../migrations/063_campaign_delivery_recovery');
 const onboardingInboxPaginationMigration = require('../../migrations/061_onboarding_inbox_pagination');
 const studentSupportTicketsMigration = require('../../migrations/062_student_support_tickets');
 const campaignTemplateHeadersMigration = require('../../migrations/047_campaign_template_headers');
@@ -269,6 +270,7 @@ async function run() {
     await runMigration('058_messaging_window_campaign_audience.js', messagingWindowCampaignAudienceMigration, queryInterface);
     await runMigration('059_accounting_reporting_epoch.js', accountingReportingEpochMigration, queryInterface);
     await runMigration('060_delivery_job_hardening.js', deliveryJobHardeningMigration, queryInterface);
+    await runMigration('063_campaign_delivery_recovery.js', campaignDeliveryRecoveryMigration, queryInterface);
     await runMigration('061_onboarding_inbox_pagination.js', onboardingInboxPaginationMigration, queryInterface);
     await runMigration('062_student_support_tickets.js', studentSupportTicketsMigration, queryInterface);
     console.log('Applied: reminder reply policy');

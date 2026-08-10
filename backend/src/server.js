@@ -51,7 +51,8 @@ const startServer = async () => {
     server.listen(PORT, () => {
       logger.info('server_started', { port: PORT });
     });
-    messageQueueService.start();
+    if (process.env.QUEUE_WORKER_ENABLED !== 'false') messageQueueService.start();
+    else logger.warn('queue_worker_disabled', { reason: 'QUEUE_WORKER_ENABLED=false' });
     paymentSlipQueueService.start();
     flowService.start();
     pipelineService.start();

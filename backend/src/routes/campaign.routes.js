@@ -19,5 +19,6 @@ router.post('/:id/schedule', campaignController.schedule.bind(campaignController
 router.post('/:id/recipients/import', express.text({ type: ['text/csv', 'text/plain', 'application/csv'] }), campaignController.importRecipients.bind(campaignController));
 router.post('/:id/cancel', campaignController.cancel.bind(campaignController));
 router.get('/:id/analytics', campaignController.analytics.bind(campaignController));
+router.post('/:id/retry-eligible', campaignController.retryEligible.bind(campaignController));
 
 module.exports = router;

@@ -13,6 +13,8 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'pending'
     },
     errorMessage: { type: DataTypes.STRING(255), allowNull: true },
+    errorDetails: { type: DataTypes.JSONB, allowNull: true },
+    failedAt: { type: DataTypes.DATE, allowNull: true },
     queueId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     externalMessageId: { type: DataTypes.STRING(255), allowNull: true },
     variableData: { type: DataTypes.JSON, allowNull: false, defaultValue: {} },

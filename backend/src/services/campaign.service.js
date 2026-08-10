@@ -12,6 +12,7 @@ const {
   MessageTemplate,
   Role,
   User,
+  WhatsAppAccount,
   WhatsAppTemplate
 } = require('../models');
 const messageQueueService = require('./messageQueue.service');
@@ -382,7 +383,9 @@ class CampaignService {
   async ensureRecipients(campaign) {
     const existing = await CampaignRecipient.findAll({ where: { campaignId: campaign.id } });
     if (existing.length) return existing;
-    const audience = await this.previewAudience({ audienceType: campaign.audienceType, filters: campaign.filters, messagingWindow: campaign.filters?.messagingWindow, whatsappAccountId: campaign.whatsappAccountId, limit: 10000 });
+    // Persist the complete intended audience. The worker records recipients outside an
+    // explicitly selected 24-hour audience as skipped instead of silently dropping them.
+    const audience = await this.previewAudience({ audienceType: campaign.audienceType, filters: { ...campaign.filters, messagingWindow: 'all' }, messagingWindow: 'all', whatsappAccountId: campaign.whatsappAccountId, limit: 10000 });
     for (const item of audience.recipients) {
       await CampaignRecipient.findOrCreate({
         where: { campaignId: campaign.id, phone: normalizePhone(item.phone) },
@@ -404,6 +407,14 @@ class CampaignService {
   async queueCampaign(id, { scheduledAt = null } = {}) {
     const campaign = await this.getCampaign(id);
     if (campaign.status === 'Cancelled') throw Object.assign(new Error('Cancelled campaigns cannot be sent'), { status: 409 });
+    const account = await WhatsAppAccount.findOne({ where: {
+      id: campaign.whatsappAccountId, status: 'active', sendEnabled: true
+    } });
+    if (!account?.phoneNumberId || !account?.accessTokenEncrypted) {
+      throw Object.assign(new Error('The campaign WhatsApp account is inactive, disconnected, or not send-enabled'), {
+        status: 422, code: 'WHATSAPP_ACCOUNT_NOT_SENDABLE'
+      });
+    }
     if (campaign.whatsappAccountId) await whatsappTemplateService.sync(campaign.whatsappAccountId);
     const template = campaign.whatsappTemplateId
       ? await this.approvedTemplate(campaign.whatsappTemplateId, campaign.whatsappAccountId)
@@ -510,7 +521,12 @@ class CampaignService {
     const isFuture = runAt.getTime() > Date.now() + 1000;
     await campaign.update({
       status: isFuture ? 'Scheduled' : 'Processing',
-      scheduledAt: isFuture ? runAt : campaign.scheduledAt
+      scheduledAt: isFuture ? runAt : campaign.scheduledAt,
+      totalRecipients: recipients.length,
+      startedAt: isFuture ? campaign.startedAt : (campaign.startedAt || new Date()),
+      lastProgressAt: new Date(),
+      completedAt: null,
+      lastError: null
     });
     return { campaign: await this.getCampaign(id), queued, skipped };
   }
@@ -542,23 +558,71 @@ class CampaignService {
     });
     const counts = rows.reduce((acc, row) => ({ ...acc, [row.status]: Number(row.count) }), {});
     const totalRecipients = Object.values(counts).reduce((sum, value) => sum + value, 0);
-    const queued = counts.queued || 0;
+    const persistedQueued = counts.queued || 0;
     const sent = (counts.sent || 0) + (counts.delivered || 0) + (counts.read || 0) + (counts.replied || 0) + (counts.converted || 0);
     const delivered = (counts.delivered || 0) + (counts.read || 0) + (counts.replied || 0) + (counts.converted || 0);
     const read = (counts.read || 0) + (counts.replied || 0) + (counts.converted || 0);
     const failed = (counts.failed || 0) + (counts.unreachable || 0);
     const skipped = counts.skipped || 0;
+    const processing = await require('../models').MessageQueue.count({ where: { campaignId: id, status: 'processing' } });
+    const queued = Math.max(0, persistedQueued - processing);
+    const queueRows = await require('../models').MessageQueue.findAll({
+      where: { campaignId: id },
+      attributes: ['id', 'status', 'attempts', 'maxAttempts', 'claimedAt', 'lockedAt', 'workerId', 'nextAttemptAt', 'lastError', 'errorDetails'],
+      order: [['updated_at', 'DESC']], limit: 25
+    });
+    const mostRecentError = queueRows.find((row) => row.lastError);
     const rate = (value, base = totalRecipients) => base ? Math.round((value / base) * 10000) / 100 : 0;
     return {
       campaign,
-      totals: { totalRecipients, queued, sent, delivered, read, failed, skipped },
+      totals: { totalRecipients, queued, processing, sent, delivered, read, failed, skipped },
       rates: { deliveryRate: rate(delivered, sent), readRate: rate(read, delivered), failureRate: rate(failed) },
       byStatus: counts,
+      lastProgressAt: campaign.lastProgressAt,
+      mostRecentError: mostRecentError ? { message: mostRecentError.lastError, ...(mostRecentError.errorDetails || {}) } : null,
+      workerInactive: campaign.status === 'Processing' && (!campaign.lastProgressAt || Date.now() - new Date(campaign.lastProgressAt).getTime() > Number(process.env.CAMPAIGN_STALL_WARNING_MS || 600000)),
+      queue: queueRows,
       failureReport: await CampaignRecipient.findAll({
         where: { campaignId: id, status: { [Op.in]: ['failed', 'unreachable', 'skipped'] } },
         order: [['updated_at', 'DESC']]
       })
     };
+  }
+
+  async retryEligible(id) {
+    const campaign = await this.getCampaign(id);
+    if (campaign.status === 'Cancelled') throw Object.assign(new Error('Cancelled campaigns cannot be retried'), { status: 409 });
+    const staleBefore = new Date(Date.now() - Math.max(30000, Number(process.env.QUEUE_PROCESSING_LEASE_MS || 300000)));
+    const transaction = await sequelize.transaction();
+    try {
+      const jobs = await require('../models').MessageQueue.findAll({
+        where: {
+          campaignId: id,
+          externalMessageId: null,
+          [Op.or]: [
+            { status: { [Op.in]: ['failed', 'retrying'] } },
+            { status: 'processing', [Op.or]: [{ lockedAt: null }, { lockedAt: { [Op.lt]: staleBefore } }] }
+          ]
+        },
+        transaction, lock: transaction.LOCK.UPDATE, skipLocked: true
+      });
+      let requeued = 0;
+      for (const job of jobs) {
+        const recipient = await CampaignRecipient.findByPk(job.campaignRecipientId, { transaction, lock: transaction.LOCK.UPDATE });
+        if (!recipient || ['sent', 'delivered', 'read', 'replied', 'converted'].includes(recipient.status) || recipient.externalMessageId) continue;
+        await job.update({ status: 'queued', scheduledAt: new Date(), nextAttemptAt: null, claimedAt: null, lockedAt: null, workerId: null }, { transaction });
+        await recipient.update({ status: 'queued', errorMessage: null, errorDetails: null, failedAt: null }, { transaction });
+        requeued += 1;
+      }
+      await campaign.update({
+        status: requeued ? 'Processing' : campaign.status,
+        lastProgressAt: new Date(), completedAt: requeued ? null : campaign.completedAt,
+        lastError: null
+      }, { transaction });
+      await CampaignEvent.create({ campaignId: id, eventType: 'queued', payload: { action: 'retry_requested', requeued, inspected: jobs.length } }, { transaction });
+      await transaction.commit();
+      return { inspected: jobs.length, requeued, skipped: jobs.length - requeued };
+    } catch (error) { await transaction.rollback(); throw error; }
   }
 }
 

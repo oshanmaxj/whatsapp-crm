@@ -11,7 +11,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import {
   createCampaign, deleteCampaign, getCampaignAnalytics, getCampaigns, importCampaignRecipients, updateCampaign,
-  getCampaignAudienceOptions, previewBroadcastAudience, scheduleCampaign, sendCampaign, uploadCampaignHeaderMedia
+  getCampaignAudienceOptions, previewBroadcastAudience, retryEligibleCampaignRecipients, scheduleCampaign, sendCampaign, uploadCampaignHeaderMedia
 } from '../services/campaign.service';
 import { getContacts } from '../services/contact.service';
 import { listWhatsAppTemplates, syncWhatsAppTemplates } from '../services/whatsappTemplate.service';
@@ -94,6 +94,16 @@ function CampaignsPage() {
   };
 
   useEffect(() => { load(); }, [selectedAccountId]);
+  useEffect(() => {
+    if (!analyticsOpen || !analytics?.campaign?.id || analytics.campaign.status !== 'Processing') return undefined;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await getCampaignAnalytics(analytics.campaign.id);
+        setAnalytics(response.data.data);
+      } catch (_) { /* keep the last persisted snapshot visible */ }
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [analyticsOpen, analytics?.campaign?.id, analytics?.campaign?.status]);
 
   const openWizard = () => {
     setForm({ ...blankForm(), whatsappAccountId: selectedAccountId });
@@ -229,6 +239,20 @@ function CampaignsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const retryStuck = async (campaign) => {
+    if (!window.confirm(`Retry only stale or failed recipients for "${campaign.name}"? Already-sent recipients will not be requeued.`)) return;
+    try {
+      setSaving(true);
+      const response = await retryEligibleCampaignRecipients(campaign.id);
+      const result = response.data.data;
+      setSuccess(`${result.requeued} recipient(s) safely requeued; ${result.skipped} ineligible recipient(s) skipped.`);
+      const refreshed = await getCampaignAnalytics(campaign.id);
+      setAnalytics(refreshed.data.data);
+      await load();
+    } catch (err) { setError(apiMessage(err, 'Unable to retry eligible recipients.')); }
+    finally { setSaving(false); }
   };
 
   const remove = async (campaign) => {
@@ -403,7 +427,7 @@ function CampaignsPage() {
 
     <Dialog open={wizardOpen} onClose={() => !saving && setWizardOpen(false)} maxWidth="md" fullWidth><DialogTitle>Create Broadcast</DialogTitle><DialogContent><Stepper activeStep={step} alternativeLabel sx={{ py: 2 }}>{steps.map((label) => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}</Stepper><Box sx={{ py: 2, minHeight: 300 }}>{renderStep()}</Box></DialogContent><DialogActions><Button onClick={() => setWizardOpen(false)} disabled={saving}>Cancel</Button>{step > 0 && <Button onClick={() => { setError(''); setStep((current) => current - 1); }} disabled={saving}>Back</Button>}{step < steps.length - 1 ? <Button variant="contained" onClick={next} disabled={saving}>{saving ? 'Checking...' : 'Next'}</Button> : <><Button onClick={() => confirm(true)} disabled={saving}>Save Draft</Button><Button variant="contained" onClick={() => confirm(false)} disabled={saving}>{saving ? 'Queueing...' : form.sendMode === 'schedule' ? 'Confirm Schedule' : 'Confirm & Send'}</Button></>}</DialogActions></Dialog>
 
-    <Dialog open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} maxWidth="md" fullWidth><DialogTitle>Campaign Analytics</DialogTitle><DialogContent>{analytics && <Stack spacing={2}><Typography variant="h6" fontWeight={850}>{analytics.campaign?.name}</Typography><Grid container spacing={2}>{Object.entries(analytics.totals || {}).map(([key, value]) => <Grid item xs={6} md={4} key={key}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="h5" fontWeight={900}>{value}</Typography><Typography color="text.secondary">{key.replaceAll(/([A-Z])/g, ' $1')}</Typography></Paper></Grid>)}</Grid><Stack direction="row" spacing={1}>{Object.entries(analytics.rates || {}).map(([key, value]) => <Chip key={key} color="primary" variant="outlined" label={`${key.replaceAll(/([A-Z])/g, ' $1')}: ${Number(value).toFixed(1)}%`} />)}</Stack><Typography fontWeight={850}>Failed recipients</Typography>{analytics.failureReport?.length ? <Table size="small"><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Phone</TableCell><TableCell>Reason</TableCell></TableRow></TableHead><TableBody>{analytics.failureReport.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.phone}</TableCell><TableCell>{item.errorMessage || item.status}</TableCell></TableRow>)}</TableBody></Table> : <Alert severity="success">No failed recipients.</Alert>}{analytics.failureReport?.length > 0 && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(analytics.campaign?.whatsappTemplate?.headerType) && <Button component="label" variant="outlined" disabled={saving}>Correct Header Media<input hidden type="file" accept={analytics.campaign.whatsappTemplate.headerType === 'IMAGE' ? 'image/jpeg,image/png' : analytics.campaign.whatsappTemplate.headerType === 'VIDEO' ? 'video/mp4,video/3gpp' : 'application/pdf'} onChange={repairFailedHeader} /></Button>}</Stack>}</DialogContent><DialogActions>{analytics?.failureReport?.length > 0 && analytics?.campaign?.headerMedia?.mediaId && <Button variant="contained" disabled={saving} onClick={async () => { await retryOrSend(analytics.campaign); setAnalyticsOpen(false); }}>Retry Failed</Button>}<Button onClick={() => setAnalyticsOpen(false)}>Close</Button></DialogActions></Dialog>
+    <Dialog open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} maxWidth="md" fullWidth><DialogTitle>Campaign Analytics</DialogTitle><DialogContent>{analytics && <Stack spacing={2}><Typography variant="h6" fontWeight={850}>{analytics.campaign?.name}</Typography>{analytics.workerInactive && <Alert severity="warning">Worker inactive or no persisted progress for at least 10 minutes. Inspect the worker logs, then use Retry stuck/failed recipients.</Alert>}{analytics.mostRecentError && <Alert severity="error">Most recent error: {analytics.mostRecentError.message}{analytics.mostRecentError.metaCode ? ` (Meta ${analytics.mostRecentError.metaCode}${analytics.mostRecentError.errorSubcode ? `/${analytics.mostRecentError.errorSubcode}` : ''})` : ''}</Alert>}<Typography variant="body2" color="text.secondary">Last progress: {formatDate(analytics.lastProgressAt)}</Typography><Grid container spacing={2}>{Object.entries(analytics.totals || {}).map(([key, value]) => <Grid item xs={6} md={4} key={key}><Paper variant="outlined" sx={{ p: 2 }}><Typography variant="h5" fontWeight={900}>{value}</Typography><Typography color="text.secondary">{key.replaceAll(/([A-Z])/g, ' $1')}</Typography></Paper></Grid>)}</Grid><Stack direction="row" spacing={1}>{Object.entries(analytics.rates || {}).map(([key, value]) => <Chip key={key} color="primary" variant="outlined" label={`${key.replaceAll(/([A-Z])/g, ' $1')}: ${Number(value).toFixed(1)}%`} />)}</Stack><Typography fontWeight={850}>Failed recipients</Typography>{analytics.failureReport?.length ? <Table size="small"><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Phone</TableCell><TableCell>Reason</TableCell></TableRow></TableHead><TableBody>{analytics.failureReport.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.phone}</TableCell><TableCell>{item.errorMessage || item.status}</TableCell></TableRow>)}</TableBody></Table> : <Alert severity="success">No failed recipients.</Alert>}{analytics.failureReport?.length > 0 && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(analytics.campaign?.whatsappTemplate?.headerType) && <Button component="label" variant="outlined" disabled={saving}>Correct Header Media<input hidden type="file" accept={analytics.campaign.whatsappTemplate.headerType === 'IMAGE' ? 'image/jpeg,image/png' : analytics.campaign.whatsappTemplate.headerType === 'VIDEO' ? 'video/mp4,video/3gpp' : 'application/pdf'} onChange={repairFailedHeader} /></Button>}</Stack>}</DialogContent><DialogActions>{analytics?.campaign && <Button variant="contained" disabled={saving} onClick={() => retryStuck(analytics.campaign)}>Retry stuck/failed recipients</Button>}<Button onClick={() => setAnalyticsOpen(false)}>Close</Button></DialogActions></Dialog>
   </Stack>;
 }
 

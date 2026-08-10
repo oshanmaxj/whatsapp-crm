@@ -25,6 +25,11 @@ module.exports = (sequelize, DataTypes) => {
     mediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     scheduledAt: { type: DataTypes.DATE, allowNull: true },
     sentAt: { type: DataTypes.DATE, allowNull: true },
+    startedAt: { type: DataTypes.DATE, allowNull: true },
+    lastProgressAt: { type: DataTypes.DATE, allowNull: true },
+    completedAt: { type: DataTypes.DATE, allowNull: true },
+    lastError: { type: DataTypes.TEXT, allowNull: true },
+    totalRecipients: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     createdBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true }
   }, {
     tableName: 'campaigns',

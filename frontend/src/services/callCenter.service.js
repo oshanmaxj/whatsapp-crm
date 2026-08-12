@@ -8,6 +8,7 @@ export const getCallQueue=()=>api.get('/call-center/queue');
 export const searchCallCenterLeads=params=>api.get('/call-center/leads/search',{params});
 export const addCallQueueEntries=payload=>api.post('/call-center/queue/entries',payload);
 export const bulkAddCallQueueEntries=payload=>api.post('/call-center/queue/entries/bulk',payload);
+export const bulkRemoveCallQueueEntries=payload=>api.post('/call-center/queue/bulk-remove',payload);
 export const bulkAssignCallCenterLeads=payload=>api.post('/call-center/leads/bulk-assign',payload);
 export const bulkAssignMatchingCallCenterLeads=payload=>api.post('/call-center/leads/bulk-assign/matching',payload);
 export const updateCallQueueEntry=(id,payload)=>api.patch(`/call-center/queue/entries/${id}`,payload);

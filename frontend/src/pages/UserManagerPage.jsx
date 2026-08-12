@@ -3,11 +3,13 @@ import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, MenuItem,
   FormControlLabel, Paper, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography
 } from '@mui/material';
+import Autocomplete from '@mui/material/Autocomplete';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import PersonOffIcon from '@mui/icons-material/PersonOff';
 import { createUser, deactivateUser, getRoles, getUsers, resetUserPassword, updateUser } from '../services/userManagement.service';
+import { getWhatsAppAccounts } from '../services/whatsappAccount.service';
 
 const blankForm = () => ({
   name: '',
@@ -16,6 +18,8 @@ const blankForm = () => ({
   password: '',
   roleId: '',
   receiveAssignmentNotifications: true,
+  allWhatsappAccounts: true,
+  whatsappAccountIds: [],
   status: 'active'
 });
 const roleLabels = {
@@ -50,6 +54,7 @@ function requestErrorMessage(error, fallback) {
 function UserManagerPage() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [whatsappAccounts, setWhatsappAccounts] = useState([]);
   const [editing, setEditing] = useState(undefined);
   const [form, setForm] = useState(blankForm);
   const [resetTarget, setResetTarget] = useState(null);
@@ -61,9 +66,10 @@ function UserManagerPage() {
   const roleOptions = useMemo(() => roles, [roles]);
 
   const load = async () => {
-    const [usersRes, rolesRes] = await Promise.all([getUsers(), getRoles()]);
+    const [usersRes, rolesRes, accountsRes] = await Promise.all([getUsers(), getRoles(), getWhatsAppAccounts()]);
     setUsers(usersRes.data.data || []);
     setRoles(rolesRes.data.data || []);
+    setWhatsappAccounts((accountsRes.data.data || []).filter(account => account.status === 'active'));
   };
 
   useEffect(() => { load().catch((err) => setError(err.response?.data?.message || 'Unable to load users.')); }, []);
@@ -85,6 +91,8 @@ function UserManagerPage() {
       password: '',
       roleId: role?.id || '',
       receiveAssignmentNotifications: user.receiveAssignmentNotifications !== false,
+      allWhatsappAccounts: user.allWhatsappAccounts !== false,
+      whatsappAccountIds: (user.whatsappAccounts || []).map(account => Number(account.id)),
       status: user.status || 'active'
     });
   };
@@ -98,6 +106,7 @@ function UserManagerPage() {
     if (!editing && !form.password) return setError('Password is required.');
     if (!editing && form.password.length < 6) return setError('Password must be at least 6 characters.');
     if (!form.roleId) return setError('Department is required.');
+    if (!form.allWhatsappAccounts && !form.whatsappAccountIds.length) return setError('Select at least one allowed WhatsApp number.');
 
     try {
       setSaving(true);
@@ -191,6 +200,19 @@ function UserManagerPage() {
               {!editing && <Grid item xs={12}><TextField name="user_agent_new_password" autoComplete="new-password" label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} fullWidth /></Grid>}
               <Grid item xs={12} md={6}><TextField select label="Department" value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })} fullWidth>{roleOptions.map((role) => <MenuItem key={role.id} value={role.id}>{roleLabel(role.name)}</MenuItem>)}</TextField></Grid>
               <Grid item xs={12} md={6}><TextField select label="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} fullWidth>{['active', 'inactive', 'suspended', 'pending'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField></Grid>
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={<Switch checked={form.allWhatsappAccounts} onChange={(e) => setForm({ ...form, allWhatsappAccounts: e.target.checked, whatsappAccountIds: e.target.checked ? [] : form.whatsappAccountIds })} />}
+                  label="Allow all WhatsApp numbers"
+                />
+                {!form.allWhatsappAccounts && <Autocomplete
+                  multiple disableCloseOnSelect options={whatsappAccounts}
+                  value={whatsappAccounts.filter(account => form.whatsappAccountIds.includes(Number(account.id)))}
+                  onChange={(_, value) => setForm({ ...form, whatsappAccountIds: value.map(account => Number(account.id)) })}
+                  getOptionLabel={(account) => `${account.name || 'WhatsApp'} — ${account.phoneNumber || 'No phone number'}`}
+                  renderInput={(params) => <TextField {...params} label="Allowed WhatsApp Numbers" placeholder="Search name or phone number" helperText="This is enforced by the server for Inbox, leads, Call Center, and messaging." />}
+                />}
+              </Grid>
               <Grid item xs={12}>
                 <FormControlLabel
                   control={<Switch checked={form.receiveAssignmentNotifications} onChange={(e) => setForm({ ...form, receiveAssignmentNotifications: e.target.checked })} />}

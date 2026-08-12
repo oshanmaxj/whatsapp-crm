@@ -15,6 +15,7 @@ exports.searchLeads=(q,r,n)=>queue.search(q.query,q.user).then(x=>ok(r,x)).catch
 exports.personalQueue=(q,r,n)=>queue.list(q.user).then(x=>ok(r,x)).catch(n);
 exports.addQueueEntries=(q,r,n)=>queue.add(q.body.leadIds,q.user,{source:q.body.source,sourceFilter:q.body.sourceFilter,operationId:q.body.operationId,requestId:context(q).requestId}).then(x=>ok(r,x,201)).catch(n);
 exports.bulkAddQueueEntries=(q,r,n)=>queue.addMatching(q.body.filters||{},q.user,{operationId:q.body.operationId,requestId:context(q).requestId}).then(x=>ok(r,x,201)).catch(n);
+exports.bulkRemoveQueueEntries=(q,r,n)=>queue.bulkRemove(q.body.queueEntryIds,q.user,{requestId:context(q).requestId}).then(x=>ok(r,x)).catch(n);
 exports.bulkAssign=(q,r,n)=>bulkAssignment.ids(q.body,q.user).then(x=>ok(r,x,q.body.dryRun?200:201)).catch(n);
 exports.bulkAssignMatching=(q,r,n)=>bulkAssignment.matching(q.body,q.user).then(x=>ok(r,x,q.body.dryRun?200:201)).catch(n);
 exports.updateQueueEntry=(q,r,n)=>queue.update(q.params.id,q.body,q.user).then(x=>ok(r,x)).catch(n);

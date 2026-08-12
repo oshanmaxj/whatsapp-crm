@@ -4,8 +4,14 @@ const { Role, User, WhatsAppAccount } = require('../models');
 class WhatsAppAccountAccessService {
   async userContext(userId) {
     const user = await User.findByPk(userId, {
-      attributes: ['id', 'isSystemAdmin'],
+      attributes: ['id', 'isSystemAdmin', 'allWhatsappAccounts'],
       include: [{
+        model: WhatsAppAccount,
+        as: 'whatsappAccounts',
+        attributes: ['id'],
+        through: { attributes: [] },
+        required: false
+      }, {
         model: Role,
         as: 'roles',
         attributes: ['id', 'name'],
@@ -23,15 +29,15 @@ class WhatsAppAccountAccessService {
     if (!user) throw Object.assign(new Error('User not found'), { status: 401 });
     const isAdmin = user.isSystemAdmin
       || (user.roles || []).some((role) => String(role.name).toLowerCase() === 'admin');
-    const accountIds = [...new Set((user.roles || [])
-      .flatMap((role) => role.whatsappAccounts || [])
-      .map((account) => String(account.id)))];
-    return { user, isAdmin, accountIds };
+    const userAccountIds = [...new Set((user.whatsappAccounts || []).map(account => String(account.id)))];
+    const roleAccountIds = [...new Set((user.roles || []).flatMap(role => role.whatsappAccounts || []).map(account => String(account.id)))];
+    const unrestricted = isAdmin || user.allWhatsappAccounts !== false;
+    return { user, isAdmin, unrestricted, accountIds: unrestricted ? [] : userAccountIds, roleAccountIds };
   }
 
   async accessibleIds(userId) {
     const context = await this.userContext(userId);
-    return context.isAdmin ? null : context.accountIds;
+    return context.unrestricted ? null : context.accountIds;
   }
 
   async whereForUser(userId, field = 'whatsappAccountId') {

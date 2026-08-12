@@ -76,6 +76,7 @@ const PaymentSlip = require('./paymentSlip.model');
 const PaymentSlipDetectionJob = require('./paymentSlipDetectionJob.model');
 const WhatsAppAccount = require('./whatsappAccount.model');
 const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
+const UserWhatsAppAccount = require('./userWhatsappAccount.model');
 const WhatsAppRoutingRule = require('./whatsappRoutingRule.model');
 const WhatsAppRoutingRuleAgent = require('./whatsappRoutingRuleAgent.model');
 const WhatsAppRoutingUnassigned = require('./whatsappRoutingUnassigned.model');
@@ -210,6 +211,7 @@ const models = {
   PaymentSlipDetectionJob: PaymentSlipDetectionJob(sequelize, Sequelize.DataTypes),
   WhatsAppAccount: WhatsAppAccount(sequelize, Sequelize.DataTypes),
   RoleWhatsAppAccount: RoleWhatsAppAccount(sequelize, Sequelize.DataTypes),
+  UserWhatsAppAccount: UserWhatsAppAccount(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingRule: WhatsAppRoutingRule(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingRuleAgent: WhatsAppRoutingRuleAgent(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingUnassigned: WhatsAppRoutingUnassigned(sequelize, Sequelize.DataTypes),
@@ -266,6 +268,18 @@ models.WhatsAppAccount.belongsToMany(models.Role, {
   as: 'roles',
   foreignKey: 'whatsappAccountId',
   otherKey: 'roleId'
+});
+models.User.belongsToMany(models.WhatsAppAccount, {
+  through: models.UserWhatsAppAccount,
+  as: 'whatsappAccounts',
+  foreignKey: 'userId',
+  otherKey: 'whatsappAccountId'
+});
+models.WhatsAppAccount.belongsToMany(models.User, {
+  through: models.UserWhatsAppAccount,
+  as: 'allowedUsers',
+  foreignKey: 'whatsappAccountId',
+  otherKey: 'userId'
 });
 models.WhatsAppAccount.hasMany(models.WhatsAppRoutingRule, { foreignKey: 'whatsappAccountId', as: 'routingRules' });
 models.WhatsAppRoutingRule.belongsTo(models.WhatsAppAccount, { foreignKey: 'whatsappAccountId', as: 'whatsappAccount' });

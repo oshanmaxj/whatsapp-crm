@@ -293,7 +293,10 @@ class UserService {
   async getUsers(query = {}) {
     const users = await User.findAll({
       where: query,
-      include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }],
+      include: [
+        { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
+        { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false }
+      ],
       order: [['createdAt', 'DESC']]
     });
     return users.map(serializeUser);
@@ -301,7 +304,10 @@ class UserService {
 
   async getUserById(id, transaction = null) {
     const user = await User.findByPk(id, {
-      include: [{ model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] }],
+      include: [
+        { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
+        { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false }
+      ],
       transaction
     });
     return serializeUser(user);
@@ -355,12 +361,17 @@ class UserService {
           passwordHash: payload.password,
           status: payload.status || 'active',
           isSystemAdmin: String(role.name).toLowerCase() === 'admin'
+          ,allWhatsappAccounts: payload.allWhatsappAccounts !== false
         }, { transaction });
 
         await UserRole.create({
           userId: Number(user.id),
           roleId: Number(role.id)
         }, { transaction });
+        if (payload.allWhatsappAccounts === false) {
+          const accounts = await this.resolveWhatsAppAccounts(payload.whatsappAccountIds || [], transaction);
+          await user.setWhatsappAccounts(accounts, { transaction });
+        }
         createdUser = await this.getUserById(user.id, transaction);
         if (!createdUser) throw new Error('Unable to load created user');
       });
@@ -390,6 +401,7 @@ class UserService {
         delete updates.role;
         delete updates.roles;
         delete updates.password;
+        delete updates.whatsappAccountIds;
         if (payload.name && !payload.firstName && !payload.lastName) {
           const [firstName, ...rest] = String(payload.name).trim().split(/\s+/).filter(Boolean);
           updates.firstName = firstName || null;
@@ -407,6 +419,12 @@ class UserService {
         }
 
         await user.update(updates, { transaction });
+        if (payload.allWhatsappAccounts !== undefined || payload.whatsappAccountIds !== undefined) {
+          const all = payload.allWhatsappAccounts !== false;
+          const accounts = all ? [] : await this.resolveWhatsAppAccounts(payload.whatsappAccountIds || [], transaction);
+          await user.update({ allWhatsappAccounts: all }, { transaction });
+          await user.setWhatsappAccounts(accounts, { transaction });
+        }
         const roleReference = payload.roleId ?? payload.role;
         if (roleReference !== undefined && roleReference !== null && roleReference !== '') {
           const role = await this.resolveRole(roleReference, transaction);

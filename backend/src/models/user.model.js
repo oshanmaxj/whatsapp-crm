@@ -41,6 +41,12 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: false
     },
+    allWhatsappAccounts: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+      field: 'all_whatsapp_accounts'
+    },
     receiveAssignmentNotifications: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

@@ -9,6 +9,8 @@ function userPayload(formData, { includePassword = false } = {}) {
     roleId: Number(formData.roleId),
     status: formData.status || 'active',
     receiveAssignmentNotifications: formData.receiveAssignmentNotifications !== false
+    ,allWhatsappAccounts: formData.allWhatsappAccounts !== false
+    ,whatsappAccountIds: formData.allWhatsappAccounts === false ? (formData.whatsappAccountIds || []).map(Number) : []
   };
   const phone = String(formData.phone || '').trim();
   if (phone) payload.phone = phone;

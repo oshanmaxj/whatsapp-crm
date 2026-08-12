@@ -40,15 +40,16 @@ function createService(dependencies = {}) {
   }
 
   const roleInclude = () => ({ model: db.Role, as: 'roles', through: { attributes: [] }, include: [{ model: db.WhatsAppAccount, as: 'whatsappAccounts', through: { attributes: [] }, required: false }, { model: db.Permission, as: 'permissions', through: { attributes: [] }, required: false }] });
+  const userAccountInclude = () => ({ model: db.WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id'], through: { attributes: [] }, required: false });
   async function evaluate(rule, { transaction, now = new Date(), includeFallbackDepartment = false, fallbackAgentOnly = false } = {}) {
-    let memberships = fallbackAgentOnly ? [] : await db.WhatsAppRoutingRuleAgent.findAll({ where: { routingRuleId: rule.id }, include: [{ model: db.User, as: 'agent', include: [roleInclude()] }], order: [['priority', 'DESC'], ['agentId', 'ASC']], transaction });
+    let memberships = fallbackAgentOnly ? [] : await db.WhatsAppRoutingRuleAgent.findAll({ where: { routingRuleId: rule.id }, include: [{ model: db.User, as: 'agent', include: [roleInclude(),userAccountInclude()] }], order: [['priority', 'DESC'], ['agentId', 'ASC']], transaction });
     if (fallbackAgentOnly && rule.fallbackAgentId) {
-      const agent = await db.User.findByPk(rule.fallbackAgentId, { include: [roleInclude()], transaction });
+      const agent = await db.User.findByPk(rule.fallbackAgentId, { include: [roleInclude(),userAccountInclude()], transaction });
       if (agent) memberships = [{ agentId: agent.id, agent, isEnabled: true, weight: 1, priority: 0, maxOpenChats: null }];
     }
     if (includeFallbackDepartment && rule.fallbackDepartmentId) {
       const departmentUsers = await db.User.findAll({ attributes: ['id'], include: [{ model: db.Role, as: 'roles', where: { id: rule.fallbackDepartmentId }, through: { attributes: [] }, attributes: [] }], transaction });
-      const users = departmentUsers.length ? await db.User.findAll({ where: { id: { [Op.in]: departmentUsers.map((user) => user.id) } }, include: [roleInclude()], transaction }) : [];
+      const users = departmentUsers.length ? await db.User.findAll({ where: { id: { [Op.in]: departmentUsers.map((user) => user.id) } }, include: [roleInclude(),userAccountInclude()], transaction }) : [];
       memberships = users.map((agent) => ({ agentId: agent.id, agent, isEnabled: true, weight: 1, priority: 0, maxOpenChats: null }));
     }
     const loads = await workload(memberships.map((item) => item.agentId), transaction);
@@ -65,8 +66,8 @@ function createService(dependencies = {}) {
       const capacity = membership.maxOpenChats ?? rule.maxOpenChatsPerAgent;
       if (capacity != null && load.openChats >= Number(capacity)) reasons.push('capacity_reached');
       if (rule.departmentId && !(agent?.roles || []).some((role) => id(role.id) === id(rule.departmentId))) reasons.push('department_mismatch');
-      const mappedAccounts = (agent?.roles || []).flatMap((role) => role.whatsappAccounts || []);
-      if (mappedAccounts.length && !mappedAccounts.some((account) => id(account.id) === id(rule.whatsappAccountId))) reasons.push('account_access_denied');
+      const mappedAccounts = agent?.whatsappAccounts || [];
+      if (agent && !agent.isSystemAdmin && agent.allWhatsappAccounts === false && !mappedAccounts.some((account) => id(account.id) === id(rule.whatsappAccountId))) reasons.push('account_access_denied');
       const result = { agentId: membership.agentId, name: userName(agent), department: agent?.roles?.[0]?.name || null, availability: agent?.isAvailable !== false, capacity: capacity ?? null, weight: Number(membership.weight || 1), priority: Number(membership.priority || 0), ...load };
       if (reasons.length) excluded.push({ ...result, reasons }); else eligible.push(result);
     }
@@ -126,7 +127,7 @@ function createService(dependencies = {}) {
           const fullyEligible = evaluation.eligible.some((item) => id(item.agentId) === id(agent?.id));
           const unavailableForMinutes = sticky.lastMessageAt ? (Date.now() - new Date(sticky.lastMessageAt).getTime()) / 60000 : Number.POSITIVE_INFINITY;
           const timeoutPending = rule.reassignIfUnavailable && rule.reassignAfterMinutes != null && unavailableForMinutes < Number(rule.reassignAfterMinutes);
-          if (agent && (!rule.reassignIfUnavailable || fullyEligible || timeoutPending)) {
+          if (agent && fullyEligible && (!rule.reassignIfUnavailable || timeoutPending || fullyEligible)) {
             await assignment.assignAgent({ leadId, conversationId, ownerId: agent.id, source: 'incoming_whatsapp', reason: 'Sticky WhatsApp ownership', transaction });
             return { matchedRule: rule, selectedAgent: { agentId: agent.id, name: userName(agent) }, eligibleAgents: [], excludedAgents: [], strategy: rule.assignmentStrategy, fallbackUsed: false, source: 'sticky' };
           }
@@ -144,8 +145,7 @@ function createService(dependencies = {}) {
         evaluation = { eligible: [...evaluation.eligible, ...fallback.eligible], excluded: [...evaluation.excluded, ...fallback.excluded] };
       }
       if (!selected && rule.allowGlobalFallback) {
-        const result = await globalAssignment.assignLead(leadId, null, { source: 'incoming_whatsapp', note: 'Explicit global WhatsApp routing fallback', transaction });
-        selected = result.assignee ? { agentId: result.assignee.id, name: userName(result.assignee) } : null; fallbackUsed = Boolean(selected);
+        evaluation.excluded.push({ agentId: null, reasons: ['global_fallback_blocked_by_whatsapp_access_boundary'] });
       } else if (selected) {
         await assignment.assignAgent({ leadId, conversationId, ownerId: selected.agentId, source: 'incoming_whatsapp', reason: `WhatsApp routing: ${rule.name}`, transaction });
       }

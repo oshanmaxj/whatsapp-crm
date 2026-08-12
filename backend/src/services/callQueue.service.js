@@ -158,8 +158,28 @@ class CallQueueService{
 
  async list(actor){
   if(!can(actor,'call_queue.view_own'))throw fail('CALL_QUEUE_FORBIDDEN','Queue view permission is required.',403);
-  const queue=await this.queue(actor),entries=await db.CallQueueEntry.findAll({where:{queueId:queue.id,status:{[Op.in]:activeStatuses}},include:[{model:db.Lead,as:'lead',include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'},{model:db.LeadSource,as:'source'},{model:db.User,as:'owner',attributes:['id','firstName','lastName']}]}],order:[['priority','DESC'],['position','ASC']]});
+  const queue=await this.queue(actor),accountWhere=await require('./whatsappAccountAccess.service').whereForUser(actor.id,'whatsappAccountId'),entries=await db.CallQueueEntry.findAll({where:{queueId:queue.id,status:{[Op.in]:activeStatuses}},include:[{model:db.Lead,as:'lead',required:true,where:accountWhere,include:[{model:db.Contact,as:'contact'},{model:db.LeadStatus,as:'status'},{model:db.LeadSource,as:'source'},{model:db.User,as:'owner',attributes:['id','firstName','lastName']}]}],order:[['priority','DESC'],['position','ASC']]});
   return{queue:{...queue.toJSON(),activeCount:entries.length},entries:await Promise.all(entries.map(row=>this.publicEntry(row,actor)))};
+ }
+ async bulkRemove(queueEntryIds,actor,{requestId=null}={}){
+  if(!can(actor,'call_queue.bulk_remove'))throw fail('CALL_QUEUE_FORBIDDEN','Bulk queue removal permission is required.',403);
+  const submitted=Array.isArray(queueEntryIds)?queueEntryIds:[],normalized=submitted.map(Number).filter(Number.isInteger),ids=[...new Set(normalized)];
+  if(!ids.length)throw fail('VALIDATION_FAILED','Select at least one queue entry.',422,{queueEntryIds:'Select at least one queue entry.'});
+  if(ids.length>1000)throw fail('VALIDATION_FAILED','No more than 1,000 queue entries may be removed at once.',422,{queueEntryIds:'Select no more than 1,000 queue entries.'});
+  const ownQueue=await this.queue(actor),rows=await db.CallQueueEntry.findAll({where:{id:{[Op.in]:ids}},include:[{model:db.CallQueue,as:'queue',attributes:['id','agentUserId']},{model:db.Lead,as:'lead',attributes:['id','whatsappAccountId']} ]});
+  const byId=new Map(rows.map(row=>[String(row.id),row])),failures=[],removable=[];let skippedCount=normalized.length-ids.length;
+  for(const id of ids){
+   const row=byId.get(String(id));
+   if(!row||['removed','completed'].includes(row.status)){skippedCount++;continue;}
+   if(String(row.queueId)!==String(ownQueue.id)||String(row.queue?.agentUserId)!==String(actor.id)){failures.push({queueEntryId:id,code:'FORBIDDEN',message:'You cannot manage this queue entry.'});continue;}
+   try{await require('./whatsappAccountAccess.service').assertAccess(row.lead?.whatsappAccountId,actor.id);removable.push(row);}catch(error){failures.push({queueEntryId:id,code:'FORBIDDEN',message:'You cannot manage this queue entry.'});}
+  }
+  const removedIds=[];
+  if(removable.length)await db.sequelize.transaction(async transaction=>{
+   for(const row of removable){const[changed]=await db.CallQueueEntry.update({status:'removed',completedAt:new Date()},{where:{id:row.id,queueId:ownQueue.id,status:{[Op.in]:activeStatuses}},transaction});if(changed)removedIds.push(Number(row.id));else skippedCount++;}
+   await audit.record({userId:actor.id,action:'CALL_QUEUE_BULK_REMOVED',entityType:'call_queue',entityId:ownQueue.id,changes:{requestedCount:submitted.length,removedIds,requestId},required:true,transaction});
+  });
+  return{requestedCount:submitted.length,removedCount:removedIds.length,skippedCount,failures,removedIds};
  }
  async conversations(lead,actor){const rows=await db.Conversation.findAll({where:{[Op.or]:[{leadId:lead.id},{leadId:null,contactId:lead.contactId}]},include:[{model:db.WhatsAppAccount,as:'whatsappAccount',attributes:['id','name','phoneNumber']},{model:db.User,as:'assignedUser',attributes:['id','firstName','lastName']}],order:[['last_message_at','DESC']]});const allowed=[];for(const row of rows){try{await conversationAccess.assertConversationAccess(row.id,actor.id);allowed.push(row);}catch(error){if(error.status!==403)throw error;}}return allowed.map(row=>({id:row.id,status:row.status,whatsappAccountId:row.whatsappAccountId,whatsappAccount:row.whatsappAccount?{id:row.whatsappAccount.id,name:row.whatsappAccount.name,phoneNumber:row.whatsappAccount.phoneNumber}:null,assignedAgent:row.assignedUser?{id:row.assignedUser.id,name:[row.assignedUser.firstName,row.assignedUser.lastName].filter(Boolean).join(' ')}:null,lastMessageAt:row.lastMessageAt,lastMessagePreview:String(row.lastMessage||'').slice(0,120)}));}
  async publicEntry(row,actor){const value=row.toJSON(),lead=row.lead,calls=await db.CallActivity.findAll({where:{leadId:row.leadId,endedAt:{[Op.ne]:null}},order:[['started_at','DESC']],attributes:['disposition','endedAt'],limit:50}),conversations=lead?await this.conversations(lead,actor):[];value.metrics={attempts:calls.length,lastResult:calls[0]?.disposition||null,lastContactedAt:calls[0]?.endedAt||null};value.conversations=conversations;if(value.lead)value.lead.labels=await require('./leadLabel.service').getForLead(row.leadId);return value;}

@@ -12,6 +12,8 @@ exports.updateUserSchema = Joi.object({
   status: Joi.string().valid('active', 'inactive', 'suspended', 'pending').optional(),
   receiveAssignmentNotifications: Joi.boolean().optional(),
   isSystemAdmin: Joi.boolean().optional()
+  ,allWhatsappAccounts: Joi.boolean().optional()
+  ,whatsappAccountIds: Joi.array().items(Joi.number().integer().positive()).unique().optional()
 });
 
 exports.createUserSchema = Joi.object({
@@ -25,6 +27,8 @@ exports.createUserSchema = Joi.object({
   role: Joi.alternatives(Joi.string(), Joi.number()).optional(),
   receiveAssignmentNotifications: Joi.boolean().default(true),
   status: Joi.string().valid('active', 'inactive', 'suspended', 'pending').default('active')
+  ,allWhatsappAccounts: Joi.boolean().default(true)
+  ,whatsappAccountIds: Joi.array().items(Joi.number().integer().positive()).unique().optional()
 }).or('roleId', 'role');
 
 exports.resetPasswordSchema = Joi.object({

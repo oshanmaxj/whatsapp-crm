@@ -3,15 +3,12 @@ const { FacebookComment, Contact, User } = require('../models');
 const facebookConversationIdentityService = require('./facebookConversationIdentity.service');
 const facebookPageAccessService = require('./facebookPageAccess.service');
 const facebookPageService = require('./facebookPage.service');
+const facebookSettingsService = require('./facebookSettings.service');
 const leadService = require('./lead.service');
 const socketService = require('./socket.service');
 const logger = require('../config/logger');
 
 const GRAPH_API_BASE_URL = 'https://graph.facebook.com';
-
-function graphApiVersion() {
-  return process.env.FACEBOOK_GRAPH_API_VERSION || 'v21.0';
-}
 
 class FacebookCommentService {
   async ingestComment({ facebookPageId, metaCommentId, metaPostId, parentCommentId, psid, displayName, message, createdTime }) {
@@ -88,8 +85,9 @@ class FacebookCommentService {
     if (comment.replied) return comment;
 
     const config = await facebookPageService.runtimeConfig(comment.facebookPageId, userId);
+    const { graphApiVersion } = await facebookSettingsService.getRuntimeConfig();
     try {
-      await axios.post(`${GRAPH_API_BASE_URL}/${graphApiVersion()}/${comment.metaCommentId}/comments`, null, {
+      await axios.post(`${GRAPH_API_BASE_URL}/${graphApiVersion}/${comment.metaCommentId}/comments`, null, {
         params: { message, access_token: config.pageAccessToken },
         timeout: 15000
       });

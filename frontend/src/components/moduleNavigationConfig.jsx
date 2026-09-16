@@ -119,6 +119,7 @@ export const modules = [
       { label: 'Company Profile', path: '/settings?tab=company', icon: <BusinessIcon />, permission: 'settings.view', tab: 'company' },
       { label: 'Branding', path: '/settings?tab=branding', icon: <SettingsIcon />, permission: 'settings.view', tab: 'branding' },
       { label: 'WhatsApp API', path: '/settings?tab=whatsapp', icon: <WhatsAppIcon />, permission: 'settings.view', tab: 'whatsapp' },
+      { label: 'Facebook Integration', path: '/settings?tab=facebook', icon: <FacebookIcon />, permission: 'settings.view', tab: 'facebook' },
       { label: 'SMTP Email', path: '/settings?tab=smtp', icon: <EmailIcon />, permission: 'settings.view', tab: 'smtp' },
       { label: 'Security & Session', path: '/settings?tab=security', icon: <SecurityIcon />, permission: 'settings.view', tab: 'security' },
       { label: 'Backup', path: '/settings?tab=backup', icon: <BackupIcon />, permission: 'settings.view', tab: 'backup' },

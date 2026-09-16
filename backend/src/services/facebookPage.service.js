@@ -3,13 +3,10 @@ const crypto = require('crypto');
 const { Op } = require('sequelize');
 const { FacebookPage } = require('../models');
 const facebookPageAccessService = require('./facebookPageAccess.service');
+const facebookSettingsService = require('./facebookSettings.service');
 const logger = require('../config/logger');
 
 const GRAPH_API_BASE_URL = 'https://graph.facebook.com';
-
-function graphApiVersion() {
-  return process.env.FACEBOOK_GRAPH_API_VERSION || 'v21.0';
-}
 
 function encryptionKey() {
   const source = process.env.APP_SETTINGS_ENCRYPTION_KEY || process.env.JWT_REFRESH_SECRET || process.env.JWT_ACCESS_SECRET || '';
@@ -66,9 +63,10 @@ function graphFailure(error, fallback) {
 
 class FacebookPageService {
   async graphRequest(config, method, objectId, edge = '', params = undefined, data = undefined) {
+    const { graphApiVersion } = await facebookSettingsService.getRuntimeConfig();
     return axios.request({
       method,
-      url: `${GRAPH_API_BASE_URL}/${graphApiVersion()}/${objectId}${edge}`,
+      url: `${GRAPH_API_BASE_URL}/${graphApiVersion}/${objectId}${edge}`,
       params: { access_token: config.pageAccessToken, ...(params || {}) },
       ...(data === undefined ? {} : { data }),
       timeout: 15000

@@ -6,6 +6,7 @@ const controller = require('../src/controllers/facebookWebhook.controller');
 const models = require('../src/models');
 const facebookMessengerService = require('../src/services/facebookMessenger.service');
 const facebookCommentService = require('../src/services/facebookComment.service');
+const facebookSettingsService = require('../src/services/facebookSettings.service');
 
 function fakeRes() {
   const res = { statusCode: null, body: null };
@@ -19,7 +20,7 @@ function sign(secret, body) {
   return `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
 }
 
-async function withMocks({ page, webhookEventCreateImpl, messengerImpl, commentImpl }, callback) {
+async function withMocks({ page, webhookEventCreateImpl, messengerImpl, commentImpl, config = {} }, callback) {
   const originals = {
     findOne: models.FacebookPage.findOne,
     weCreate: models.FacebookWebhookEvent.create,
@@ -27,8 +28,7 @@ async function withMocks({ page, webhookEventCreateImpl, messengerImpl, commentI
     fcUpdate: models.FacebookComment.update,
     handleInbound: facebookMessengerService.handleInboundMessagingEvent,
     ingestComment: facebookCommentService.ingestComment,
-    appSecret: process.env.FACEBOOK_APP_SECRET,
-    verifyToken: process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN
+    getRuntimeConfig: facebookSettingsService.getRuntimeConfig
   };
   models.FacebookPage.findOne = async ({ where }) => (page && where.pageId === page.pageId ? page : null);
   models.FacebookWebhookEvent.create = webhookEventCreateImpl || (async () => ({}));
@@ -36,6 +36,7 @@ async function withMocks({ page, webhookEventCreateImpl, messengerImpl, commentI
   models.FacebookComment.update = async () => [1];
   facebookMessengerService.handleInboundMessagingEvent = messengerImpl || (async () => null);
   facebookCommentService.ingestComment = commentImpl || (async () => ({ comment: {}, created: true }));
+  facebookSettingsService.getRuntimeConfig = async () => ({ appId: '', appSecret: '', webhookVerifyToken: '', graphApiVersion: 'v21.0', ...config });
   try {
     return await callback();
   } finally {
@@ -45,38 +46,69 @@ async function withMocks({ page, webhookEventCreateImpl, messengerImpl, commentI
     models.FacebookComment.update = originals.fcUpdate;
     facebookMessengerService.handleInboundMessagingEvent = originals.handleInbound;
     facebookCommentService.ingestComment = originals.ingestComment;
-    if (originals.appSecret === undefined) delete process.env.FACEBOOK_APP_SECRET; else process.env.FACEBOOK_APP_SECRET = originals.appSecret;
-    if (originals.verifyToken === undefined) delete process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN; else process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN = originals.verifyToken;
+    facebookSettingsService.getRuntimeConfig = originals.getRuntimeConfig;
   }
 }
 
-test('GET verification rejects when no verify token is configured', async () => {
-  delete process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN;
-  const res = fakeRes();
-  await controller.verifyWebhook({ query: {} }, res);
-  assert.equal(res.statusCode, 503);
+async function withVerifyConfig(config, callback) {
+  const original = facebookSettingsService.getRuntimeConfig;
+  facebookSettingsService.getRuntimeConfig = async () => ({ appId: '', appSecret: '', webhookVerifyToken: '', graphApiVersion: 'v21.0', ...config });
+  try {
+    return await callback();
+  } finally {
+    facebookSettingsService.getRuntimeConfig = original;
+  }
+}
+
+test('GET verification rejects when no verify token is configured (neither settings nor env)', async () => {
+  await withVerifyConfig({ webhookVerifyToken: '' }, async () => {
+    const res = fakeRes();
+    await controller.verifyWebhook({ query: {} }, res);
+    assert.equal(res.statusCode, 503);
+  });
 });
 
-test('GET verification echoes the challenge for a matching token', async () => {
-  process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN = 'secret-verify-token';
-  const res = fakeRes();
-  await controller.verifyWebhook({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': 'secret-verify-token', 'hub.challenge': 'CHALLENGE123' } }, res);
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.body, 'CHALLENGE123');
+test('GET verification echoes the challenge for a matching token resolved from the centralized config', async () => {
+  await withVerifyConfig({ webhookVerifyToken: 'secret-verify-token' }, async () => {
+    const res = fakeRes();
+    await controller.verifyWebhook({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': 'secret-verify-token', 'hub.challenge': 'CHALLENGE123' } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body, 'CHALLENGE123');
+  });
 });
 
 test('GET verification rejects a mismatched token', async () => {
-  process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN = 'secret-verify-token';
-  const res = fakeRes();
-  await controller.verifyWebhook({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': 'wrong', 'hub.challenge': 'X' } }, res);
-  assert.equal(res.statusCode, 403);
+  await withVerifyConfig({ webhookVerifyToken: 'secret-verify-token' }, async () => {
+    const res = fakeRes();
+    await controller.verifyWebhook({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': 'wrong', 'hub.challenge': 'X' } }, res);
+    assert.equal(res.statusCode, 403);
+  });
+});
+
+test('GET verification never logs the received or stored token', async () => {
+  const logger = require('../src/config/logger');
+  const originalWarn = logger.warn;
+  const originalInfo = logger.info;
+  const seen = [];
+  logger.warn = (...args) => seen.push(args);
+  logger.info = (...args) => seen.push(args);
+  try {
+    await withVerifyConfig({ webhookVerifyToken: 'secret-verify-token' }, async () => {
+      await controller.verifyWebhook({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': 'wrong-guess', 'hub.challenge': 'X' } }, fakeRes());
+    });
+  } finally {
+    logger.warn = originalWarn;
+    logger.info = originalInfo;
+  }
+  const serialized = JSON.stringify(seen);
+  assert.equal(serialized.includes('secret-verify-token'), false);
+  assert.equal(serialized.includes('wrong-guess'), false);
 });
 
 test('POST rejects an invalid X-Hub-Signature-256 and never touches inbound processing', async () => {
-  process.env.FACEBOOK_APP_SECRET = 'app-secret-value';
   const page = { id: 1, pageId: 'PAGE_SIG_TEST', active: true };
   let called = false;
-  await withMocks({ page, messengerImpl: async () => { called = true; } }, async () => {
+  await withMocks({ page, config: { appSecret: 'app-secret-value' }, messengerImpl: async () => { called = true; } }, async () => {
     const body = { object: 'page', entry: [{ id: 'PAGE_SIG_TEST', messaging: [{ sender: { id: 'psid1' }, message: { mid: 'mid1', text: 'hi' } }] }] };
     const rawBody = Buffer.from(JSON.stringify(body));
     const req = { body, rawBody, headers: { 'x-hub-signature-256': 'sha256=deadbeef' } };
@@ -87,11 +119,10 @@ test('POST rejects an invalid X-Hub-Signature-256 and never touches inbound proc
   });
 });
 
-test('POST accepts a valid X-Hub-Signature-256 and processes the message', async () => {
-  process.env.FACEBOOK_APP_SECRET = 'app-secret-value';
+test('POST accepts a valid X-Hub-Signature-256 (App Secret resolved from centralized config) and processes the message', async () => {
   const page = { id: 2, pageId: 'PAGE_SIG_OK', active: true };
   let called = false;
-  await withMocks({ page, messengerImpl: async () => { called = true; } }, async () => {
+  await withMocks({ page, config: { appSecret: 'app-secret-value' }, messengerImpl: async () => { called = true; } }, async () => {
     const body = { object: 'page', entry: [{ id: 'PAGE_SIG_OK', messaging: [{ sender: { id: 'psid1' }, message: { mid: 'mid-ok', text: 'hi' } }] }] };
     const rawBody = Buffer.from(JSON.stringify(body));
     const req = { body, rawBody, headers: { 'x-hub-signature-256': sign('app-secret-value', rawBody) } };
@@ -103,7 +134,6 @@ test('POST accepts a valid X-Hub-Signature-256 and processes the message', async
 });
 
 test('POST always acknowledges 200 quickly even without a configured app secret (logs a warning instead of failing)', async () => {
-  delete process.env.FACEBOOK_APP_SECRET;
   const page = { id: 3, pageId: 'PAGE_NO_SECRET', active: true };
   await withMocks({ page }, async () => {
     const body = { object: 'page', entry: [{ id: 'PAGE_NO_SECRET', messaging: [{ sender: { id: 'psid1' }, message: { mid: 'mid-2', text: 'hi' } }] }] };
@@ -115,7 +145,6 @@ test('POST always acknowledges 200 quickly even without a configured app secret 
 });
 
 test('duplicate webhook delivery (same messaging mid) is processed only once', async () => {
-  delete process.env.FACEBOOK_APP_SECRET;
   const page = { id: 4, pageId: 'PAGE_DEDUP', active: true };
   const claimedKeys = new Set();
   let processedCount = 0;
@@ -136,7 +165,6 @@ test('duplicate webhook delivery (same messaging mid) is processed only once', a
 });
 
 test('a malformed nested messaging item does not prevent sibling items in the same batch from being processed', async () => {
-  delete process.env.FACEBOOK_APP_SECRET;
   const page = { id: 5, pageId: 'PAGE_ISOLATION', active: true };
   const processed = [];
   const messengerImpl = async (_page, item) => {
@@ -174,12 +202,13 @@ test('an unknown Page ID is skipped safely without crashing the request', async 
 
 test('a non-Page object is ignored without processing', async () => {
   const res = fakeRes();
-  await controller.processWebhook({ body: { object: 'instagram', entry: [] }, rawBody: Buffer.from('{}'), headers: {} }, res);
+  await withMocks({ page: null }, async () => {
+    await controller.processWebhook({ body: { object: 'instagram', entry: [] }, rawBody: Buffer.from('{}'), headers: {} }, res);
+  });
   assert.equal(res.statusCode, 200);
 });
 
 test('feed comment change is routed to comment ingestion, deduplicated by comment id + verb', async () => {
-  delete process.env.FACEBOOK_APP_SECRET;
   const page = { id: 6, pageId: 'PAGE_COMMENT', active: true };
   const claimedKeys = new Set();
   let ingestCount = 0;

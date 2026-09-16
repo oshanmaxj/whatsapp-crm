@@ -6,11 +6,15 @@ import {
   TableContainer, TableHead, TableRow, TextField, Tooltip, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import AutorenewIcon from '@mui/icons-material/Autorenew';
 import BackupIcon from '@mui/icons-material/Backup';
 import BusinessIcon from '@mui/icons-material/Business';
+import CancelIcon from '@mui/icons-material/Cancel';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import EmailIcon from '@mui/icons-material/Email';
+import FacebookIcon from '@mui/icons-material/Facebook';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SaveIcon from '@mui/icons-material/Save';
 import SecurityIcon from '@mui/icons-material/Security';
@@ -30,6 +34,12 @@ import {
   testWhatsappConnection,
   testWhatsappSend
 } from '../services/whatsappConnect.service';
+import {
+  getFacebookSettings,
+  saveFacebookSettings,
+  generateFacebookVerifyToken,
+  testFacebookConfiguration
+} from '../services/facebookSettings.service';
 import { API_BASE_URL } from '../config/apiConfig';
 
 function JsonField({ value, onChange, minRows = 4 }) {
@@ -160,6 +170,13 @@ export function ProductionSettingsPage() {
   const [company, setCompany] = useState({ name: '', phone: '', email: '', address: '', website: '', logoUrl: '' });
   const [branding, setBranding] = useState({ primaryColor: '#25d366', sidebarColor: '#0b1f1a', logoUrl: '', darkModeDefault: false });
   const [whatsapp, setWhatsapp] = useState({ accessToken: '', phoneNumberId: '', businessAccountId: '', verifyToken: '', webhookUrl: '' });
+  const [facebook, setFacebook] = useState({ appId: '', appSecretConfigured: false, webhookVerifyTokenConfigured: false, graphApiVersion: 'v21.0', callbackUrl: '' });
+  const [facebookForm, setFacebookForm] = useState({ appId: '', appSecret: '', webhookVerifyToken: '', graphApiVersion: 'v21.0' });
+  const [replacingFacebookSecret, setReplacingFacebookSecret] = useState(false);
+  const [replacingFacebookToken, setReplacingFacebookToken] = useState(false);
+  const [revealedFacebookToken, setRevealedFacebookToken] = useState('');
+  const [facebookTestResult, setFacebookTestResult] = useState(null);
+  const [facebookBusy, setFacebookBusy] = useState(false);
   const [smtp, setSmtp] = useState({ host: '', port: 587, username: '', password: '', secure: false, fromEmail: '', fromName: '' });
   const [security, setSecurity] = useState({ timeoutMinutes: 120, passwordMinLength: 6, requireStrongPassword: false, loginHistoryEnabled: true });
   const [assignmentNotificationsEnabled, setAssignmentNotificationsEnabled] = useState(true);
@@ -185,10 +202,11 @@ export function ProductionSettingsPage() {
     setLoading(true);
     setError('');
     try {
-      const [settingsRes, backupsRes, whatsappRes] = await Promise.all([
+      const [settingsRes, backupsRes, whatsappRes, facebookRes] = await Promise.all([
         getSettings(),
         getBackups(),
-        getWhatsappSettings().catch(() => ({ data: { data: {} } }))
+        getWhatsappSettings().catch(() => ({ data: { data: {} } })),
+        getFacebookSettings().catch(() => ({ data: { data: {} } }))
       ]);
       const map = settingMap(settingsRes.data.data || []);
       const companyProfile = map['company.profile'] || {};
@@ -238,6 +256,21 @@ export function ProductionSettingsPage() {
       });
       setAssignmentNotificationsEnabled(assignmentSettings.assignmentNotificationsEnabled !== false);
       setBackups(backupsRes.data.data || []);
+
+      const facebookSettings = facebookRes.data.data || {};
+      setFacebook({
+        appId: facebookSettings.appId || '',
+        appSecretConfigured: Boolean(facebookSettings.appSecretConfigured),
+        webhookVerifyTokenConfigured: Boolean(facebookSettings.webhookVerifyTokenConfigured),
+        graphApiVersion: facebookSettings.graphApiVersion || 'v21.0',
+        callbackUrl: facebookSettings.callbackUrl || ''
+      });
+      // Secret fields are never pre-filled with real values — only the App ID
+      // (not a secret) and the current Graph API version carry over.
+      setFacebookForm({ appId: facebookSettings.appId || '', appSecret: '', webhookVerifyToken: '', graphApiVersion: facebookSettings.graphApiVersion || 'v21.0' });
+      setReplacingFacebookSecret(false);
+      setReplacingFacebookToken(false);
+      setRevealedFacebookToken('');
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to load settings.');
     } finally {
@@ -303,6 +336,50 @@ export function ProductionSettingsPage() {
       saveSetting('notifications', 'assignments', { assignmentNotificationsEnabled })
     ]);
     setNotice('WhatsApp API settings saved.');
+  };
+
+  const saveFacebook = async () => {
+    setFacebookBusy(true);
+    try {
+      const payload = { appId: facebookForm.appId, graphApiVersion: facebookForm.graphApiVersion };
+      // Blank means "leave as-is" — only send the field when the admin
+      // actually opened the replace flow and typed something.
+      if (replacingFacebookSecret && facebookForm.appSecret.trim()) payload.appSecret = facebookForm.appSecret.trim();
+      if (replacingFacebookToken && facebookForm.webhookVerifyToken.trim()) payload.webhookVerifyToken = facebookForm.webhookVerifyToken.trim();
+      const response = await saveFacebookSettings(payload);
+      setFacebook(response.data.data);
+      setFacebookForm((current) => ({ ...current, appSecret: '', webhookVerifyToken: '' }));
+      setReplacingFacebookSecret(false);
+      setReplacingFacebookToken(false);
+      setNotice('Facebook integration settings saved.');
+    } finally {
+      setFacebookBusy(false);
+    }
+  };
+
+  const generateFacebookToken = async () => {
+    setFacebookBusy(true);
+    try {
+      const response = await generateFacebookVerifyToken();
+      setRevealedFacebookToken(response.data.data.verifyToken);
+      setFacebook((current) => ({ ...current, webhookVerifyTokenConfigured: true }));
+      setReplacingFacebookToken(false);
+      setFacebookForm((current) => ({ ...current, webhookVerifyToken: '' }));
+      setNotice('A new verify token was generated. Copy it now — it will not be shown again.');
+    } finally {
+      setFacebookBusy(false);
+    }
+  };
+
+  const runFacebookTest = async () => {
+    setFacebookBusy(true);
+    setFacebookTestResult(null);
+    try {
+      const response = await testFacebookConfiguration();
+      setFacebookTestResult(response.data.data);
+    } finally {
+      setFacebookBusy(false);
+    }
   };
 
   const saveSmtp = async () => {
@@ -433,6 +510,112 @@ export function ProductionSettingsPage() {
               <Grid item xs={12} md={6}><TextField label="Test message" value={testMessage} onChange={(e) => setTestMessage(e.target.value)} fullWidth /></Grid>
               <Grid item xs={12}><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}><Button variant="contained" startIcon={<SaveIcon />} onClick={() => submit(saveWhatsapp)}>Save WhatsApp API</Button><Button variant="outlined" onClick={() => submit(runWhatsappTest)}>Test Connection</Button><Button variant="outlined" startIcon={<SendIcon />} onClick={() => submit(runTestSend)} disabled={!testPhone}>Test Send Message</Button></Stack></Grid>
             </Grid>
+          )}
+
+          {tab === 'facebook' && (
+            <Stack spacing={3}>
+              {revealedFacebookToken && (
+                <Alert severity="warning" onClose={() => setRevealedFacebookToken('')}>
+                  <Typography fontWeight={800} sx={{ mb: 0.5 }}>New Verify Token — copy it now, it will not be shown again</Typography>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+                    <Typography sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{revealedFacebookToken}</Typography>
+                    <Tooltip title="Copy"><IconButton size="small" onClick={() => copy(revealedFacebookToken, 'Verify token')}><ContentCopyIcon fontSize="small" /></IconButton></Tooltip>
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">Paste this into Meta Developer Dashboard → Webhooks → Verify Token before leaving this page.</Typography>
+                </Alert>
+              )}
+
+              <Paper variant="outlined" sx={{ p: 2.5 }}>
+                <Typography variant="h6" fontWeight={850} sx={{ mb: 2 }}>App Configuration</Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <TextField label="App ID" value={facebookForm.appId} onChange={(e) => setFacebookForm({ ...facebookForm, appId: e.target.value })} fullWidth />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField label="Graph API Version" value={facebookForm.graphApiVersion} onChange={(e) => setFacebookForm({ ...facebookForm, graphApiVersion: e.target.value })} fullWidth />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    {!replacingFacebookSecret ? (
+                      <Stack direction="row" spacing={1.5} alignItems="center">
+                        <TextField label="App Secret" value="••••••••••••••••" fullWidth disabled />
+                        <Chip size="small" color={facebook.appSecretConfigured ? 'success' : 'default'} icon={facebook.appSecretConfigured ? <CheckCircleIcon /> : <CancelIcon />} label={facebook.appSecretConfigured ? 'Configured' : 'Not configured'} />
+                        <Button size="small" onClick={() => setReplacingFacebookSecret(true)}>Replace</Button>
+                      </Stack>
+                    ) : (
+                      <TextField
+                        label="New App Secret" type="password" autoComplete="new-password" fullWidth
+                        value={facebookForm.appSecret}
+                        onChange={(e) => setFacebookForm({ ...facebookForm, appSecret: e.target.value })}
+                        helperText="Only saved once you click Save Settings."
+                        InputProps={{ endAdornment: <InputAdornment position="end"><Button size="small" onClick={() => { setReplacingFacebookSecret(false); setFacebookForm({ ...facebookForm, appSecret: '' }); }}>Cancel</Button></InputAdornment> }}
+                      />
+                    )}
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    {!replacingFacebookToken ? (
+                      <Stack direction="row" spacing={1.5} alignItems="center">
+                        <TextField label="Webhook Verify Token" value="••••••••••••••••" fullWidth disabled />
+                        <Chip size="small" color={facebook.webhookVerifyTokenConfigured ? 'success' : 'default'} icon={facebook.webhookVerifyTokenConfigured ? <CheckCircleIcon /> : <CancelIcon />} label={facebook.webhookVerifyTokenConfigured ? 'Configured' : 'Not configured'} />
+                        <Button size="small" onClick={() => setReplacingFacebookToken(true)}>Enter Manually</Button>
+                      </Stack>
+                    ) : (
+                      <TextField
+                        label="New Webhook Verify Token" fullWidth
+                        value={facebookForm.webhookVerifyToken}
+                        onChange={(e) => setFacebookForm({ ...facebookForm, webhookVerifyToken: e.target.value })}
+                        helperText="Only saved once you click Save Settings."
+                        InputProps={{ endAdornment: <InputAdornment position="end"><Button size="small" onClick={() => { setReplacingFacebookToken(false); setFacebookForm({ ...facebookForm, webhookVerifyToken: '' }); }}>Cancel</Button></InputAdornment> }}
+                      />
+                    )}
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                      <Button variant="contained" startIcon={<SaveIcon />} onClick={() => submit(saveFacebook)} disabled={facebookBusy}>Save Settings</Button>
+                      <Button variant="outlined" startIcon={<AutorenewIcon />} onClick={() => submit(generateFacebookToken)} disabled={facebookBusy}>Generate Secure Token</Button>
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Paper>
+
+              <Paper variant="outlined" sx={{ p: 2.5 }}>
+                <Typography variant="h6" fontWeight={850} sx={{ mb: 2 }}>Webhook Configuration</Typography>
+                <Stack spacing={1.5}>
+                  <TextField
+                    label="Callback URL" value={facebook.callbackUrl} fullWidth disabled
+                    InputProps={{ endAdornment: <InputAdornment position="end"><Tooltip title="Copy"><IconButton onClick={() => copy(facebook.callbackUrl, 'Callback URL')}><ContentCopyIcon /></IconButton></Tooltip></InputAdornment> }}
+                  />
+                  <Typography variant="body2" color="text.secondary">Enter this exact URL and your Verify Token in Meta Developer Dashboard → Webhooks.</Typography>
+                </Stack>
+              </Paper>
+
+              <Paper variant="outlined" sx={{ p: 2.5 }}>
+                <Typography variant="h6" fontWeight={850} sx={{ mb: 2 }}>Connection Status</Typography>
+                <Stack spacing={1}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography>App Configuration</Typography>
+                    {facebook.appId && facebook.appSecretConfigured ? <CheckCircleIcon color="success" fontSize="small" /> : <CancelIcon color="disabled" fontSize="small" />}
+                  </Stack>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography>Webhook Configuration</Typography>
+                    {facebook.webhookVerifyTokenConfigured ? <CheckCircleIcon color="success" fontSize="small" /> : <CancelIcon color="disabled" fontSize="small" />}
+                  </Stack>
+                </Stack>
+                <Button sx={{ mt: 2 }} variant="outlined" startIcon={<PlayArrowIcon />} onClick={() => submit(runFacebookTest)} disabled={facebookBusy}>Test Configuration</Button>
+                {facebookTestResult && (
+                  <Alert sx={{ mt: 2 }} severity={facebookTestResult.success ? 'success' : 'warning'}>
+                    <Stack spacing={0.5}>
+                      {Object.entries(facebookTestResult.checks || {}).map(([key, passed]) => (
+                        <Typography key={key} variant="body2">{passed ? '✓' : '✗'} {key}</Typography>
+                      ))}
+                      {facebookTestResult.metaValidated !== undefined && (
+                        <Typography variant="body2">{facebookTestResult.metaValidated ? '✓' : '✗'} Meta credential validation</Typography>
+                      )}
+                      {facebookTestResult.reason && <Typography variant="body2" color="text.secondary">{facebookTestResult.reason}</Typography>}
+                    </Stack>
+                  </Alert>
+                )}
+              </Paper>
+            </Stack>
           )}
 
           {tab === 'smtp' && (

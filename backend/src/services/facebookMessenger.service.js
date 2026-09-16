@@ -3,6 +3,7 @@ const { Sequelize } = require('sequelize');
 const { sequelize, Conversation, Message, FacebookContact, FacebookPage, User, Contact } = require('../models');
 const facebookPageService = require('./facebookPage.service');
 const facebookPageAccessService = require('./facebookPageAccess.service');
+const facebookSettingsService = require('./facebookSettings.service');
 const facebookConversationIdentityService = require('./facebookConversationIdentity.service');
 const inboundFacebookMessageService = require('./inboundFacebookMessage.service');
 const leadService = require('./lead.service');
@@ -29,15 +30,12 @@ function parseMessageCursor(value) {
 
 const GRAPH_API_BASE_URL = 'https://graph.facebook.com';
 
-function graphApiVersion() {
-  return process.env.FACEBOOK_GRAPH_API_VERSION || 'v21.0';
-}
-
 class FacebookMessengerService {
   async requestClient() {
+    const { graphApiVersion } = await facebookSettingsService.getRuntimeConfig();
     return {
       client: axios.create({
-        baseURL: `${GRAPH_API_BASE_URL}/${graphApiVersion()}`,
+        baseURL: `${GRAPH_API_BASE_URL}/${graphApiVersion}`,
         timeout: 20000
       })
     };

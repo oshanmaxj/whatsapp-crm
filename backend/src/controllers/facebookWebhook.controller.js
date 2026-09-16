@@ -3,6 +3,7 @@ const logger = require('../config/logger');
 const { FacebookPage, FacebookWebhookEvent } = require('../models');
 const facebookMessengerService = require('../services/facebookMessenger.service');
 const facebookCommentService = require('../services/facebookComment.service');
+const facebookSettingsService = require('../services/facebookSettings.service');
 
 function signatureMatches(rawBody, signature, secret) {
   if (!rawBody || !signature || !secret || !signature.startsWith('sha256=')) return false;
@@ -108,11 +109,19 @@ class FacebookWebhookController {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-    const verifyToken = process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN;
+
+    let verifyToken;
+    try {
+      ({ webhookVerifyToken: verifyToken } = await facebookSettingsService.getRuntimeConfig());
+    } catch (error) {
+      logger.error('facebook_webhook_config_load_failed', { message: error.message });
+      return res.status(503).json({ success: false, message: 'Facebook webhook verify token is not configured' });
+    }
 
     if (!verifyToken) {
       return res.status(503).json({ success: false, message: 'Facebook webhook verify token is not configured' });
     }
+    // Never log the received or stored token, even on failure.
     if (mode === 'subscribe' && token === verifyToken) {
       logger.info('facebook_webhook_verified');
       return res.status(200).send(challenge);
@@ -125,7 +134,7 @@ class FacebookWebhookController {
     try {
       logger.info('facebook_webhook_received', { object: req.body?.object, entries: Array.isArray(req.body?.entry) ? req.body.entry.length : 0 });
 
-      const appSecret = process.env.FACEBOOK_APP_SECRET;
+      const { appSecret } = await facebookSettingsService.getRuntimeConfig();
       if (appSecret) {
         if (!signatureMatches(req.rawBody, req.headers['x-hub-signature-256'], appSecret)) {
           logger.warn('facebook_webhook_signature_invalid');

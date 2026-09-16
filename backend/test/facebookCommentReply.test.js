@@ -6,6 +6,7 @@ const facebookCommentService = require('../src/services/facebookComment.service'
 const facebookPageService = require('../src/services/facebookPage.service');
 const facebookPageAccessService = require('../src/services/facebookPageAccess.service');
 const facebookConversationIdentityService = require('../src/services/facebookConversationIdentity.service');
+const facebookSettingsService = require('../src/services/facebookSettings.service');
 const leadService = require('../src/services/lead.service');
 const models = require('../src/models');
 
@@ -22,16 +23,19 @@ async function withReplyMocks({ comment, config, postImpl }, callback) {
   const originals = {
     findByPk: models.FacebookComment.findByPk,
     runtimeConfig: facebookPageService.runtimeConfig,
+    getRuntimeConfig: facebookSettingsService.getRuntimeConfig,
     axiosPost: axios.post
   };
   models.FacebookComment.findByPk = async () => comment;
   facebookPageService.runtimeConfig = async () => config;
+  facebookSettingsService.getRuntimeConfig = async () => ({ appId: '', appSecret: '', webhookVerifyToken: '', graphApiVersion: 'v21.0' });
   axios.post = postImpl;
   try {
     return await callback();
   } finally {
     models.FacebookComment.findByPk = originals.findByPk;
     facebookPageService.runtimeConfig = originals.runtimeConfig;
+    facebookSettingsService.getRuntimeConfig = originals.getRuntimeConfig;
     axios.post = originals.axiosPost;
   }
 }

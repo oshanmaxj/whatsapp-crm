@@ -25,6 +25,8 @@ import AgentsPage from './pages/AgentsPage';
 import LeadsPage from './pages/LeadsPage';
 import LoginPage from './pages/LoginPage';
 import { ForgotPasswordPage, ResetPasswordPage } from './pages/PasswordResetPages';
+import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
+import FacebookDataDeletionPage from './pages/FacebookDataDeletionPage';
 import PermissionManagementPage from './pages/PermissionManagementPage';
 import PermissionRoute from './components/PermissionRoute';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -90,6 +92,8 @@ function App() {
       <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+          <Route path="/facebook-data-deletion" element={<FacebookDataDeletionPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/receipt/verify/:token" element={<ReceiptVerificationPage />} />

@@ -11,18 +11,29 @@ const PERMISSIONS = [
   ['facebook-comments.reply', 'Reply to Facebook Comments']
 ];
 
-async function tableExists(q, name) {
-  return (await q.showAllTables()).some(value => String(value?.tableName || value?.table_name || value).toLowerCase() === name);
+// All schema-inspection calls below MUST pass { transaction } even though
+// they are reads: Postgres catalog lookups against a table (describeTable /
+// showIndex / showAllTables) internally take a brief AccessShareLock on that
+// relation. If the migration's own transaction already holds an ACCESS
+// EXCLUSIVE lock on that same table (from an earlier ADD COLUMN in this same
+// migration) and the inspection call runs on a *different* pooled connection
+// (which happens whenever { transaction } is omitted), that connection queues
+// behind the exclusive lock forever while the migration's own transaction sits
+// "idle in transaction" awaiting that promise — a self-inflicted deadlock.
+// Passing { transaction } forces the read onto the SAME connection that
+// already holds the lock, where a backend never blocks on its own locks.
+async function tableExists(q, name, transaction) {
+  return (await q.showAllTables({ transaction })).some(value => String(value?.tableName || value?.table_name || value).toLowerCase() === name);
 }
 
 async function addColumnIfMissing(q, table, column, definition, transaction) {
-  const described = await q.describeTable(table);
+  const described = await q.describeTable(table, { transaction });
   if (described[column]) return;
   await q.addColumn(table, column, definition, { transaction });
 }
 
 async function addIndexIfMissing(q, table, fields, options, transaction) {
-  const indexes = await q.showIndex(table).catch(() => []);
+  const indexes = await q.showIndex(table, { transaction }).catch(() => []);
   if (indexes.some(index => index.name === options.name)) return;
   await q.addIndex(table, fields, { ...options, transaction });
 }
@@ -41,7 +52,7 @@ module.exports = {
       };
 
       // --- facebook_pages -------------------------------------------------
-      if (!await tableExists(q, 'facebook_pages')) await q.createTable('facebook_pages', {
+      if (!await tableExists(q, 'facebook_pages', transaction)) await q.createTable('facebook_pages', {
         id: { type: D.BIGINT, autoIncrement: true, primaryKey: true },
         name: { type: D.STRING(255), allowNull: false },
         page_id: { type: D.STRING(64), allowNull: false, unique: true },
@@ -55,7 +66,7 @@ module.exports = {
       }, { transaction });
 
       // --- facebook_contacts -----------------------------------------------
-      if (!await tableExists(q, 'facebook_contacts')) await q.createTable('facebook_contacts', {
+      if (!await tableExists(q, 'facebook_contacts', transaction)) await q.createTable('facebook_contacts', {
         id: { type: D.BIGINT, autoIncrement: true, primaryKey: true },
         facebook_page_id: { type: D.BIGINT, allowNull: false, references: { model: 'facebook_pages', key: 'id' }, onDelete: 'CASCADE' },
         facebook_psid: { type: D.STRING(64), allowNull: false },
@@ -66,7 +77,7 @@ module.exports = {
       }, { transaction });
 
       // --- facebook_comments -------------------------------------------------
-      if (!await tableExists(q, 'facebook_comments')) await q.createTable('facebook_comments', {
+      if (!await tableExists(q, 'facebook_comments', transaction)) await q.createTable('facebook_comments', {
         id: { type: D.BIGINT, autoIncrement: true, primaryKey: true },
         facebook_page_id: { type: D.BIGINT, allowNull: false, references: { model: 'facebook_pages', key: 'id' }, onDelete: 'CASCADE' },
         meta_comment_id: { type: D.STRING(128), allowNull: false, unique: true },
@@ -85,7 +96,7 @@ module.exports = {
       }, { transaction });
 
       // --- facebook_webhook_events -------------------------------------------
-      if (!await tableExists(q, 'facebook_webhook_events')) await q.createTable('facebook_webhook_events', {
+      if (!await tableExists(q, 'facebook_webhook_events', transaction)) await q.createTable('facebook_webhook_events', {
         id: { type: D.BIGINT, autoIncrement: true, primaryKey: true },
         event_key: { type: D.STRING(255), allowNull: false, unique: true },
         event_type: { type: D.STRING(64), allowNull: false },
@@ -99,7 +110,7 @@ module.exports = {
       }, { transaction });
 
       // --- user_facebook_pages -------------------------------------------------
-      if (!await tableExists(q, 'user_facebook_pages')) await q.createTable('user_facebook_pages', {
+      if (!await tableExists(q, 'user_facebook_pages', transaction)) await q.createTable('user_facebook_pages', {
         id: { type: D.BIGINT, autoIncrement: true, primaryKey: true },
         user_id: { type: D.BIGINT, allowNull: false, references: { model: 'users', key: 'id' }, onDelete: 'CASCADE' },
         facebook_page_id: { type: D.BIGINT, allowNull: false, references: { model: 'facebook_pages', key: 'id' }, onDelete: 'CASCADE' },
@@ -146,7 +157,7 @@ module.exports = {
       // contacts.phone: relax NOT NULL so a Facebook-only contact (no phone number)
       // can be created. Existing rows keep their phone; the unique index still
       // permits multiple NULLs under Postgres.
-      const contactsDescribed = await q.describeTable('contacts');
+      const contactsDescribed = await q.describeTable('contacts', { transaction });
       if (contactsDescribed.phone && contactsDescribed.phone.allowNull === false) {
         await q.changeColumn('contacts', 'phone', { type: D.STRING(50), allowNull: true }, { transaction });
       }

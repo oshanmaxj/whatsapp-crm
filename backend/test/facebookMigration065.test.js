@@ -12,6 +12,18 @@ const migration = require('../migrations/065_facebook_page_integration');
 // operations migration 065 performs (describeTable/createTable/addColumn/
 // showIndex/addIndex/changeColumn/showAllTables + raw sequelize.query for the
 // advisory lock, SET LOCAL, and permission upserts).
+//
+// It also models enough of Postgres's real locking behavior to catch the
+// production incident this migration once caused: DDL run with
+// { transaction } (createTable/addColumn/changeColumn/addIndex) marks that
+// table as ACCESS-EXCLUSIVE-locked by the open transaction. Any later
+// schema-inspection call (describeTable/showIndex/showAllTables) against a
+// locked table that is issued WITHOUT { transaction } would, on a real
+// Postgres server, run on a *different* pooled connection and queue forever
+// behind that lock while the migration's own transaction sits "idle in
+// transaction" waiting on the very promise that can never resolve — exactly
+// what happened in production. This fake throws SELF_LOCK_DETECTED instead
+// of hanging, so the bug fails a test rather than freezing a real database.
 function fakeQueryInterface(preexisting = {}) {
   const tables = {
     users: { id: {}, email: {}, ...preexisting.users },
@@ -27,31 +39,54 @@ function fakeQueryInterface(preexisting = {}) {
   };
   const indexes = {};
   const queries = [];
+  const lockedByTransaction = new Set();
+
+  function assertNotSelfLocking(table, options, callName) {
+    if (!options?.transaction && lockedByTransaction.has(table)) {
+      throw Object.assign(
+        new Error(`SELF_LOCK: ${callName}('${table}') ran without { transaction } while this migration's own transaction already holds an ACCESS EXCLUSIVE lock on '${table}'. On real Postgres this hangs forever ("idle in transaction").`),
+        { code: 'SELF_LOCK_DETECTED', table, callName }
+      );
+    }
+  }
 
   const q = {
-    async showAllTables() { return Object.keys(tables); },
-    async describeTable(table) { return { ...(tables[table] || {}) }; },
-    async createTable(table, definition) {
-      tables[table] = Object.fromEntries(Object.keys(definition).map((key) => [key, { allowNull: definition[key].allowNull !== false }]));
+    async showAllTables(options = {}) {
+      for (const table of lockedByTransaction) assertNotSelfLocking(table, options, 'showAllTables');
+      return Object.keys(tables);
     },
-    async addColumn(table, column, definition) {
+    async describeTable(table, options = {}) {
+      assertNotSelfLocking(table, options, 'describeTable');
+      return { ...(tables[table] || {}) };
+    },
+    async createTable(table, definition, options = {}) {
+      tables[table] = Object.fromEntries(Object.keys(definition).map((key) => [key, { allowNull: definition[key].allowNull !== false }]));
+      if (options.transaction) lockedByTransaction.add(table);
+    },
+    async addColumn(table, column, definition, options = {}) {
       tables[table] = tables[table] || {};
       tables[table][column] = { allowNull: definition.allowNull !== false, defaultValue: definition.defaultValue };
+      if (options.transaction) lockedByTransaction.add(table);
     },
-    async changeColumn(table, column, definition) {
+    async changeColumn(table, column, definition, options = {}) {
       tables[table][column] = { ...tables[table][column], allowNull: definition.allowNull !== false };
+      if (options.transaction) lockedByTransaction.add(table);
     },
-    async showIndex(table) { return indexes[table] || []; },
-    async addIndex(table, fields, options) {
+    async showIndex(table, options = {}) {
+      assertNotSelfLocking(table, options, 'showIndex');
+      return indexes[table] || [];
+    },
+    async addIndex(table, fields, options = {}) {
       indexes[table] = indexes[table] || [];
       indexes[table].push({ name: options.name, fields, unique: Boolean(options.unique) });
+      if (options.transaction) lockedByTransaction.add(table);
     },
     sequelize: {
       async transaction(fn) { return fn({}); },
       async query(sql, options = {}) { queries.push(String(sql)); return [[]]; }
     }
   };
-  return { q, tables, indexes, queries };
+  return { q, tables, indexes, queries, lockedByTransaction };
 }
 
 test('migration 065 creates every new Facebook table on first run', async () => {
@@ -109,6 +144,42 @@ test('migration wires into the runner and follows the numbered-file convention',
   assert.match(runner, /065_facebook_page_integration/);
   assert.match(runner, /runMigration\('065_facebook_page_integration\.js'/);
   assert.ok(fs.existsSync(path.join(__dirname, '..', 'migrations/065_facebook_page_integration.js')));
+});
+
+test('migration 065 never self-locks: no schema-inspection call runs unguarded against a table its own transaction already holds an ACCESS EXCLUSIVE lock on', async () => {
+  // Reproduces the exact production incident: conversations.channel is added
+  // first, then facebook_page_id and facebook_thread_key are added to the
+  // same table, then two indexes are added to it. Each of those later steps
+  // starts with a schema-inspection call (describeTable/showIndex) against
+  // 'conversations' — a table already locked earlier in this same run. If any
+  // of those calls forgot { transaction }, this run would reject with
+  // SELF_LOCK_DETECTED instead of a live database hanging indefinitely.
+  const { q } = fakeQueryInterface();
+  await assert.doesNotReject(migration.up(q, Sequelize));
+});
+
+test('the self-lock detector actually catches the historical bug (sanity check on the test harness itself)', async () => {
+  const { q } = fakeQueryInterface();
+  // Simulate the exact failure: an earlier ALTER (correctly scoped to the
+  // transaction) followed by an unguarded inspection call on the same table.
+  await q.createTable('conversations', { id: {} }, { transaction: {} });
+  await assert.rejects(
+    q.describeTable('conversations', {}),
+    (error) => error.code === 'SELF_LOCK_DETECTED' && error.table === 'conversations'
+  );
+  await assert.rejects(
+    q.showIndex('conversations', {}),
+    (error) => error.code === 'SELF_LOCK_DETECTED'
+  );
+  // The same calls succeed once they correctly pass the transaction through.
+  await assert.doesNotReject(q.describeTable('conversations', { transaction: {} }));
+  await assert.doesNotReject(q.showIndex('conversations', { transaction: {} }));
+});
+
+test('migration 065 rerun also never self-locks (idempotent path re-inspects every table without deadlocking)', async () => {
+  const { q } = fakeQueryInterface();
+  await migration.up(q, Sequelize);
+  await assert.doesNotReject(migration.up(q, Sequelize));
 });
 
 test('migration seeds Facebook permission codes and grants them to admin roles', () => {

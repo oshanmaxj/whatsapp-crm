@@ -31,6 +31,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    facebookPageId: { type: DataTypes.BIGINT, allowNull: true, field: 'facebook_page_id' },
     courseInterested: {
       type: DataTypes.STRING(100),
       allowNull: true
@@ -98,6 +99,7 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['course_interested'] },
       { fields: ['created_at'] }
       ,{ fields: ['updated_at'] }
+      ,{ fields: ['facebook_page_id'], name: 'leads_facebook_page_idx' }
     ]
   });
 
@@ -106,6 +108,7 @@ module.exports = (sequelize, DataTypes) => {
     Lead.belongsTo(models.User, { foreignKey: 'owner_id', as: 'owner' });
     Lead.belongsTo(models.LeadStatus, { foreignKey: 'status_id', as: 'status' });
     Lead.belongsTo(models.LeadSource, { foreignKey: 'source_id', as: 'source' });
+    Lead.belongsTo(models.FacebookPage, { foreignKey: 'facebook_page_id', as: 'facebookPage' });
   };
 
   return Lead;

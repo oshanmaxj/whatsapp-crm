@@ -2,6 +2,8 @@ module.exports = (sequelize, DataTypes) => {
   const Flow = sequelize.define('Flow', {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    channel: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'whatsapp' },
+    facebookPageId: { type: DataTypes.BIGINT, allowNull: true, field: 'facebook_page_id' },
     departmentId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
     name: { type: DataTypes.STRING(180), allowNull: false },
     description: { type: DataTypes.TEXT, allowNull: true },
@@ -24,6 +26,7 @@ module.exports = (sequelize, DataTypes) => {
     Flow.hasMany(models.FlowNode, { foreignKey: 'flow_id', as: 'nodes' });
     Flow.hasMany(models.FlowConnection, { foreignKey: 'flow_id', as: 'connections' });
     Flow.hasMany(models.FlowRun, { foreignKey: 'flow_id', as: 'runs' });
+    Flow.belongsTo(models.FacebookPage, { foreignKey: 'facebook_page_id', as: 'facebookPage' });
   };
 
   return Flow;

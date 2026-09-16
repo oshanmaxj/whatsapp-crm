@@ -14,6 +14,7 @@ const {
   Role,
   User,
   WhatsAppAccount,
+  FacebookPage,
   sequelize
 } = require('../models');
 const assignmentService = require('./assignment.service');
@@ -25,6 +26,7 @@ const assignmentNotificationService = require('./assignmentNotification.service'
 const aiService = require('./ai.service');
 const whatsappAccountService = require('./whatsappAccount.service');
 const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
+const facebookPageAccessService = require('./facebookPageAccess.service');
 const flowActionService = require('./flowAction.service');
 const triggerMatcher = require('./flowTriggerMatcher.service');
 const interactiveMediaService = require('./interactiveMedia.service');
@@ -594,7 +596,18 @@ class FlowService {
 
   async validateFlowReferences(flow, userId = null) {
     const errors = [];
-    if (!flow.whatsappAccountId) {
+    if (flow.channel && flow.channel !== 'whatsapp') {
+      if (!flow.facebookPageId) {
+        errors.push({ field: 'facebookPageId', message: 'A Facebook Page is required before publishing.' });
+      } else {
+        const page = await FacebookPage.findByPk(flow.facebookPageId, { attributes: ['id', 'active'] });
+        if (!page || !page.active) errors.push({ field: 'facebookPageId', message: 'The selected Facebook Page does not exist or is not active.' });
+        if (userId) {
+          try { await facebookPageAccessService.assertAccess(flow.facebookPageId, userId); }
+          catch (error) { errors.push({ field: 'facebookPageId', message: 'The selected Facebook Page is not permitted for this user.' }); }
+        }
+      }
+    } else if (!flow.whatsappAccountId) {
       errors.push({ field: 'whatsappAccountId', message: 'A WhatsApp account is required before publishing.' });
     } else {
       const account = await WhatsAppAccount.findByPk(flow.whatsappAccountId, { attributes: ['id', 'status'] });
@@ -1560,15 +1573,28 @@ class FlowService {
     const leadId = event.leadId || conversation?.leadId || event.lead?.id || null;
     const contact = event.contact || (contactId ? await Contact.findByPk(contactId) : null);
     const lead = event.lead || (leadId ? await Lead.findByPk(leadId) : null);
-    const whatsappAccountId = event.whatsappAccountId || conversation?.whatsappAccountId || contact?.whatsappAccountId || lead?.whatsappAccountId || null;
-    const candidates = await Flow.findAll({ where: { status: 'published', [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null }] }, include: this.includeBuilder() });
-    const matched = candidates.filter((candidate) => triggerMatcher.matchesTrigger(candidate, { ...event, contact, lead, whatsappAccountId }, { allowRegex: candidate.triggerConfig?.regexPrivileged === true })).sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
+    const isFacebookEvent = Boolean(event.channel && event.channel !== 'whatsapp');
+    const whatsappAccountId = isFacebookEvent ? null : (event.whatsappAccountId || conversation?.whatsappAccountId || contact?.whatsappAccountId || lead?.whatsappAccountId || null);
+    const facebookPageId = isFacebookEvent ? (event.facebookPageId || conversation?.facebookPageId || lead?.facebookPageId || null) : null;
+    // Channel is filtered at the candidate-query level (not just via trigger-source
+    // matching) so an unscoped "any WhatsApp message" flow can never fire off a
+    // Facebook event, and vice versa — both kinds of flow have a null account/page id.
+    const candidates = await Flow.findAll({
+      where: {
+        status: 'published',
+        ...(isFacebookEvent
+          ? { [Op.or]: [{ facebookPageId }, { facebookPageId: null, channel: { [Op.ne]: 'whatsapp' } }] }
+          : { [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null, channel: 'whatsapp' }, { whatsappAccountId: null, channel: null }] })
+      },
+      include: this.includeBuilder()
+    });
+    const matched = candidates.filter((candidate) => triggerMatcher.matchesTrigger(candidate, { ...event, contact, lead, whatsappAccountId, facebookPageId }, { allowRegex: candidate.triggerConfig?.regexPrivileged === true })).sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
     const results = [];
     const eventKey = event.eventId ? `event:${event.eventType}:${event.eventId}` : null;
     for (const candidate of matched) {
       const duplicate = eventKey ? await FlowRun.findOne({ where: { flowId: candidate.id, lastWhatsappMessageId: eventKey } }) : null;
       if (duplicate) { results.push(await this.getRun(duplicate.id)); continue; }
-      results.push(await this.executeFlow(candidate, { ...event, contactId, leadId, conversationId: conversation?.id || event.conversationId || null, contact, lead, conversation, whatsappAccountId, whatsappMessageId: eventKey }));
+      results.push(await this.executeFlow(candidate, { ...event, contactId, leadId, conversationId: conversation?.id || event.conversationId || null, contact, lead, conversation, whatsappAccountId, facebookPageId, whatsappMessageId: eventKey }));
       if (candidate.triggerConfig?.stopAfterMatch !== false) break;
     }
     return results;

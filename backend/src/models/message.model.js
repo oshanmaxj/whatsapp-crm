@@ -19,6 +19,13 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    facebookPageId: { type: DataTypes.BIGINT, allowNull: true, field: 'facebook_page_id' },
+    facebookMessageId: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      unique: true,
+      field: 'facebook_message_id'
+    },
     sentByUserId: {
       type: DataTypes.BIGINT.UNSIGNED,
       allowNull: true
@@ -158,6 +165,8 @@ module.exports = (sequelize, DataTypes) => {
     underscored: true,
     indexes: [
       { fields: ['whatsapp_message_id'] },
+      { fields: ['facebook_message_id'] },
+      { fields: ['facebook_page_id'], name: 'messages_facebook_page_idx' },
       { fields: ['contact_id'] },
       { fields: ['conversation_id'] },
       { fields: ['sent_by_user_id'] },

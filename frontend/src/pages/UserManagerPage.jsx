@@ -10,6 +10,7 @@ import LockResetIcon from '@mui/icons-material/LockReset';
 import PersonOffIcon from '@mui/icons-material/PersonOff';
 import { createUser, deactivateUser, getRoles, getUsers, resetUserPassword, updateUser } from '../services/userManagement.service';
 import { getWhatsAppAccounts } from '../services/whatsappAccount.service';
+import { getFacebookPages } from '../services/facebookPage.service';
 
 const blankForm = () => ({
   name: '',
@@ -20,6 +21,8 @@ const blankForm = () => ({
   receiveAssignmentNotifications: true,
   allWhatsappAccounts: true,
   whatsappAccountIds: [],
+  allFacebookPages: true,
+  facebookPageIds: [],
   status: 'active'
 });
 const roleLabels = {
@@ -55,6 +58,7 @@ function UserManagerPage() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [whatsappAccounts, setWhatsappAccounts] = useState([]);
+  const [facebookPages, setFacebookPages] = useState([]);
   const [editing, setEditing] = useState(undefined);
   const [form, setForm] = useState(blankForm);
   const [resetTarget, setResetTarget] = useState(null);
@@ -66,10 +70,11 @@ function UserManagerPage() {
   const roleOptions = useMemo(() => roles, [roles]);
 
   const load = async () => {
-    const [usersRes, rolesRes, accountsRes] = await Promise.all([getUsers(), getRoles(), getWhatsAppAccounts()]);
+    const [usersRes, rolesRes, accountsRes, facebookPagesRes] = await Promise.all([getUsers(), getRoles(), getWhatsAppAccounts(), getFacebookPages()]);
     setUsers(usersRes.data.data || []);
     setRoles(rolesRes.data.data || []);
     setWhatsappAccounts((accountsRes.data.data || []).filter(account => account.status === 'active'));
+    setFacebookPages((facebookPagesRes.data.data || []).filter(page => page.active));
   };
 
   useEffect(() => { load().catch((err) => setError(err.response?.data?.message || 'Unable to load users.')); }, []);
@@ -93,6 +98,8 @@ function UserManagerPage() {
       receiveAssignmentNotifications: user.receiveAssignmentNotifications !== false,
       allWhatsappAccounts: user.allWhatsappAccounts !== false,
       whatsappAccountIds: (user.whatsappAccounts || []).map(account => Number(account.id)),
+      allFacebookPages: user.allFacebookPages !== false,
+      facebookPageIds: (user.facebookPages || []).map(page => Number(page.id)),
       status: user.status || 'active'
     });
   };
@@ -107,6 +114,7 @@ function UserManagerPage() {
     if (!editing && form.password.length < 6) return setError('Password must be at least 6 characters.');
     if (!form.roleId) return setError('Department is required.');
     if (!form.allWhatsappAccounts && !form.whatsappAccountIds.length) return setError('Select at least one allowed WhatsApp number.');
+    if (!form.allFacebookPages && !form.facebookPageIds.length) return setError('Select at least one allowed Facebook Page.');
 
     try {
       setSaving(true);
@@ -211,6 +219,19 @@ function UserManagerPage() {
                   onChange={(_, value) => setForm({ ...form, whatsappAccountIds: value.map(account => Number(account.id)) })}
                   getOptionLabel={(account) => `${account.name || 'WhatsApp'} — ${account.phoneNumber || 'No phone number'}`}
                   renderInput={(params) => <TextField {...params} label="Allowed WhatsApp Numbers" placeholder="Search name or phone number" helperText="This is enforced by the server for Inbox, leads, Call Center, and messaging." />}
+                />}
+              </Grid>
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={<Switch checked={form.allFacebookPages} onChange={(e) => setForm({ ...form, allFacebookPages: e.target.checked, facebookPageIds: e.target.checked ? [] : form.facebookPageIds })} />}
+                  label="Allow all Facebook Pages"
+                />
+                {!form.allFacebookPages && <Autocomplete
+                  multiple disableCloseOnSelect options={facebookPages}
+                  value={facebookPages.filter(page => form.facebookPageIds.includes(Number(page.id)))}
+                  onChange={(_, value) => setForm({ ...form, facebookPageIds: value.map(page => Number(page.id)) })}
+                  getOptionLabel={(page) => page.name || 'Facebook Page'}
+                  renderInput={(params) => <TextField {...params} label="Allowed Facebook Pages" placeholder="Search Page name" helperText="This is enforced by the server for the Facebook inbox and comments." />}
                 />}
               </Grid>
               <Grid item xs={12}>

@@ -47,6 +47,12 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: true,
       field: 'all_whatsapp_accounts'
     },
+    allFacebookPages: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+      field: 'all_facebook_pages'
+    },
     receiveAssignmentNotifications: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

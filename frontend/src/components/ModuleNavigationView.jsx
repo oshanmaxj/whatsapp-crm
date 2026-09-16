@@ -16,7 +16,7 @@ export function ModuleTabs() {
   const access = getAccessPayload();
   const items = module?.items?.filter((item) => canAccessItem(item, access)) || [];
 
-  if (!module || items.length === 0 || location.pathname === '/whatsapp' || location.pathname === '/education') return null;
+  if (!module || items.length === 0 || location.pathname === '/whatsapp' || location.pathname === '/education' || location.pathname === '/facebook') return null;
 
   const activeItem = items.find((item) => itemIsActive(item, location.pathname, location.search));
 

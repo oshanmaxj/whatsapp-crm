@@ -208,6 +208,7 @@ class LeadService {
       stage: String(status.name).toLowerCase(),
       nextFollowupAt: options.nextFollowupAt || options.followUpDate || null
       , whatsappAccountId: options.whatsappAccountId || null
+      , facebookPageId: options.facebookPageId || null
     });
   }
 
@@ -492,6 +493,13 @@ class LeadService {
   async getOpenLeadForContact(contactId, whatsappAccountId = null) {
     return Lead.findOne({
       where: { contactId, ...(whatsappAccountId ? { whatsappAccountId } : {}) },
+      order: [['created_at', 'DESC']]
+    });
+  }
+
+  async getOpenLeadForContactAndFacebookPage(contactId, facebookPageId = null) {
+    return Lead.findOne({
+      where: { contactId, ...(facebookPageId ? { facebookPageId } : {}) },
       order: [['created_at', 'DESC']]
     });
   }

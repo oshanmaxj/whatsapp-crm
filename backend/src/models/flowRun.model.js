@@ -3,6 +3,9 @@ module.exports = (sequelize, DataTypes) => {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     flowId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
     whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    channel: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'whatsapp' },
+    facebookPageId: { type: DataTypes.BIGINT, allowNull: true, field: 'facebook_page_id' },
+    lastFacebookMessageId: { type: DataTypes.STRING(255), allowNull: true, field: 'last_facebook_message_id' },
     contactId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     conversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     leadId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
@@ -32,6 +35,7 @@ module.exports = (sequelize, DataTypes) => {
     FlowRun.belongsTo(models.Lead, { foreignKey: 'lead_id', as: 'lead' });
     FlowRun.belongsTo(models.Conversation, { foreignKey: 'conversation_id', as: 'conversation' });
     FlowRun.hasMany(models.FlowRunLog, { foreignKey: 'flow_run_id', as: 'logs' });
+    FlowRun.belongsTo(models.FacebookPage, { foreignKey: 'facebook_page_id', as: 'facebookPage' });
   };
 
   return FlowRun;

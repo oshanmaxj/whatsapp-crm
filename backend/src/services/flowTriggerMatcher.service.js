@@ -2,7 +2,8 @@ const MATCH_TYPES = new Set(['exact', 'contains', 'starts_with', 'ends_with', 'r
 const SOURCES = new Set([
   'inbound_message', 'any_message', 'first_message', 'button_reply', 'interactive_button_reply',
   'list_reply', 'template_button_reply', 'payment_event', 'label_added', 'contact_created',
-  'lead_status_changed', 'campaign_response', 'manual'
+  'lead_status_changed', 'campaign_response', 'manual',
+  'facebook_message_received', 'facebook_comment_received', 'facebook_comment_keyword'
 ]);
 
 function normalizeText(value, { caseInsensitive = true, trimWhitespace = true } = {}) {
@@ -45,14 +46,23 @@ function sourceMatches(source, event = {}) {
   if (source === 'template_button_reply') return event.templateQuickReply === true;
   if (source === 'campaign_response') return Boolean(event.replyToWhatsappMessageId);
   if (source === 'manual') return event.manual === true;
+  if (source === 'facebook_message_received') return event.channel === 'facebook_messenger' && Boolean(event.text || event.mediaUrl);
+  if (['facebook_comment_received', 'facebook_comment_keyword'].includes(source)) return event.channel === 'facebook_comment';
   return event.eventType === source;
 }
 
 function matchesTrigger(flow, event = {}, options = {}) {
+  // Enforced here (not just at the caller's candidate query) so an unscoped
+  // WhatsApp flow can never fire on a Facebook event and vice versa, even if
+  // matchesTrigger is ever called directly against an unfiltered flow list.
+  const flowChannel = flow.channel || 'whatsapp';
+  const eventChannel = event.channel || 'whatsapp';
+  if (flowChannel !== eventChannel) return false;
   const config = flow.triggerConfig || {};
   const source = config.source || flow.triggerType || 'inbound_message';
   if (!sourceMatches(source, event)) return false;
   if (flow.whatsappAccountId && String(flow.whatsappAccountId) !== String(event.whatsappAccountId || '')) return false;
+  if (flow.facebookPageId && String(flow.facebookPageId) !== String(event.facebookPageId || '')) return false;
   if (config.courseId && String(config.courseId) !== String(event.courseId || event.lead?.courseId || '')) return false;
   if (config.course && normalizeText(config.course) !== normalizeText(event.course || event.lead?.courseInterested || '')) return false;
   if (config.campaignId && String(config.campaignId) !== String(event.campaignId || '')) return false;

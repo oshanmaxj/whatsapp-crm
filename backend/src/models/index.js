@@ -77,6 +77,11 @@ const PaymentSlipDetectionJob = require('./paymentSlipDetectionJob.model');
 const WhatsAppAccount = require('./whatsappAccount.model');
 const RoleWhatsAppAccount = require('./roleWhatsappAccount.model');
 const UserWhatsAppAccount = require('./userWhatsappAccount.model');
+const FacebookPage = require('./facebookPage.model');
+const FacebookContact = require('./facebookContact.model');
+const FacebookComment = require('./facebookComment.model');
+const FacebookWebhookEvent = require('./facebookWebhookEvent.model');
+const UserFacebookPage = require('./userFacebookPage.model');
 const WhatsAppRoutingRule = require('./whatsappRoutingRule.model');
 const WhatsAppRoutingRuleAgent = require('./whatsappRoutingRuleAgent.model');
 const WhatsAppRoutingUnassigned = require('./whatsappRoutingUnassigned.model');
@@ -212,6 +217,11 @@ const models = {
   WhatsAppAccount: WhatsAppAccount(sequelize, Sequelize.DataTypes),
   RoleWhatsAppAccount: RoleWhatsAppAccount(sequelize, Sequelize.DataTypes),
   UserWhatsAppAccount: UserWhatsAppAccount(sequelize, Sequelize.DataTypes),
+  FacebookPage: FacebookPage(sequelize, Sequelize.DataTypes),
+  FacebookContact: FacebookContact(sequelize, Sequelize.DataTypes),
+  FacebookComment: FacebookComment(sequelize, Sequelize.DataTypes),
+  FacebookWebhookEvent: FacebookWebhookEvent(sequelize, Sequelize.DataTypes),
+  UserFacebookPage: UserFacebookPage(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingRule: WhatsAppRoutingRule(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingRuleAgent: WhatsAppRoutingRuleAgent(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingUnassigned: WhatsAppRoutingUnassigned(sequelize, Sequelize.DataTypes),
@@ -279,6 +289,18 @@ models.WhatsAppAccount.belongsToMany(models.User, {
   through: models.UserWhatsAppAccount,
   as: 'allowedUsers',
   foreignKey: 'whatsappAccountId',
+  otherKey: 'userId'
+});
+models.User.belongsToMany(models.FacebookPage, {
+  through: models.UserFacebookPage,
+  as: 'facebookPages',
+  foreignKey: 'userId',
+  otherKey: 'facebookPageId'
+});
+models.FacebookPage.belongsToMany(models.User, {
+  through: models.UserFacebookPage,
+  as: 'allowedUsers',
+  foreignKey: 'facebookPageId',
   otherKey: 'userId'
 });
 models.WhatsAppAccount.hasMany(models.WhatsAppRoutingRule, { foreignKey: 'whatsappAccountId', as: 'routingRules' });
@@ -486,6 +508,17 @@ models.WhatsAppAccount.hasMany(models.Message, { foreignKey: messageWhatsappAcco
 });
 models.Conversation.belongsTo(models.WhatsAppAccount, { foreignKey: conversationWhatsappAccountForeignKey, as: 'whatsappAccount' });
 models.Message.belongsTo(models.WhatsAppAccount, { foreignKey: messageWhatsappAccountForeignKey, as: 'whatsappAccount' });
+models.Message.belongsTo(models.FacebookPage, { foreignKey: 'facebook_page_id', as: 'facebookPage' });
+models.FacebookPage.hasMany(models.Conversation, { foreignKey: 'facebook_page_id', as: 'conversations' });
+models.FacebookPage.hasMany(models.Message, { foreignKey: 'facebook_page_id', as: 'messages' });
+models.FacebookPage.hasMany(models.Lead, { foreignKey: 'facebook_page_id', as: 'leads' });
+models.FacebookPage.hasMany(models.Flow, { foreignKey: 'facebook_page_id', as: 'flows' });
+models.FacebookPage.hasMany(models.FlowRun, { foreignKey: 'facebook_page_id', as: 'flowRuns' });
+models.FacebookPage.hasMany(models.FacebookContact, { foreignKey: 'facebook_page_id', as: 'facebookContacts' });
+models.FacebookPage.hasMany(models.FacebookComment, { foreignKey: 'facebook_page_id', as: 'facebookComments' });
+models.Contact.hasMany(models.FacebookContact, { foreignKey: 'contact_id', as: 'facebookContacts' });
+models.Contact.hasMany(models.FacebookComment, { foreignKey: 'contact_id', as: 'facebookComments' });
+models.Lead.hasMany(models.FacebookComment, { foreignKey: 'lead_id', as: 'facebookComments' });
 const aiAgentForeignKey={name:'aiAgentId',field:'ai_agent_id'},aiConversationForeignKey={name:'conversationId',field:'conversation_id'};
 models.AiAgent.hasMany(models.AiConversationState,{foreignKey:aiAgentForeignKey,as:'conversationStates'});
 models.AiConversationState.belongsTo(models.AiAgent,{foreignKey:aiAgentForeignKey,as:'agent'});

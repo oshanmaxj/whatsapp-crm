@@ -3,6 +3,8 @@ const authService = require('../services/auth.service');
 const socketService = require('../services/socket.service');
 const chatService = require('../services/chat.service');
 const conversationAccessService = require('../services/conversationAccess.service');
+const facebookPageAccessService = require('../services/facebookPageAccess.service');
+const { Conversation } = require('../models');
 const logger = require('../config/logger');
 const { corsOptions } = require('../config/cors');
 
@@ -92,6 +94,21 @@ function initSocket(server) {
         socket.emit('chat:unread', { conversationId, unread });
       } catch (error) {
         logger.warn('socket_chat_join_failed', error);
+      }
+    });
+
+    // Separate from chat:join because WhatsApp-account access has no bearing
+    // on Facebook Page access — reusing chat:join's WhatsApp-scoped check here
+    // would silently deny room access to users restricted only on WhatsApp.
+    socket.on('facebook:join', async ({ conversationId }) => {
+      try {
+        if (!conversationId) return;
+        const conversation = await Conversation.findByPk(conversationId, { attributes: ['id', 'facebookPageId', 'channel'] });
+        if (!conversation || conversation.channel !== 'facebook_messenger') return;
+        await facebookPageAccessService.assertAccess(conversation.facebookPageId, userId);
+        socket.join(`conversation_${conversationId}`);
+      } catch (error) {
+        logger.warn('socket_facebook_join_failed', error);
       }
     });
 

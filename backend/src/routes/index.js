@@ -49,6 +49,9 @@ const pipelineRoutes=require('./pipeline.routes'),followupRoutes=require('./foll
 const callCenterRoutes=require('./callCenter.routes');
 const leadStatusAdminRoutes=require('./leadStatusAdmin.routes');
 const supportTicketRoutes=require('./supportTicket.routes');
+const facebookPageRoutes = require('./facebookPage.routes');
+const facebookMessengerRoutes = require('./facebookMessenger.routes');
+const facebookCommentRoutes = require('./facebookComment.routes');
 
 const router = express.Router();
 
@@ -83,6 +86,9 @@ router.use('/google-sheets', googleSheetsRoutes);
 router.use('/appointments', appointmentRoutes);
 router.use('/whatsapp', whatsappRoutes);
 router.use('/whatsapp-accounts', whatsappAccountRoutes);
+router.use('/facebook-pages', facebookPageRoutes);
+router.use('/facebook-messenger', facebookMessengerRoutes);
+router.use('/facebook-comments', facebookCommentRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/commissions', commissionRoutes);
 router.use('/ai-agents', aiAgentRoutes);

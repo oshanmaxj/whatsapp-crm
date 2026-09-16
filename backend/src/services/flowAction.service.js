@@ -10,7 +10,8 @@ const ACTION_TYPES = new Set([
   'ADD_LABELS', 'REMOVE_LABELS', 'ADD_TO_LISTS', 'REMOVE_FROM_LISTS',
   'SUBSCRIBE_SEQUENCE', 'UNSUBSCRIBE_SEQUENCE', 'ASSIGN_TEAM', 'ASSIGN_AGENT',
   'AUTO_ASSIGN', 'UNASSIGN_AGENT', 'REMOVE_TEAM', 'SET_CUSTOM_FIELD', 'SEND_WEBHOOK',
-  'SEND_GOOGLE_SHEETS', 'CREATE_CALENDAR_EVENT', 'SEND_MESSAGE', 'START_FLOW', 'STOP_FLOW', 'PAUSE_FLOW', 'JUMP_TO_NODE'
+  'SEND_GOOGLE_SHEETS', 'CREATE_CALENDAR_EVENT', 'SEND_MESSAGE', 'START_FLOW', 'STOP_FLOW', 'PAUSE_FLOW', 'JUMP_TO_NODE',
+  'FACEBOOK_SEND_MESSAGE', 'FACEBOOK_REPLY_COMMENT'
 ]);
 const FAILURE_POLICIES = new Set(['CONTINUE', 'STOP_FLOW', 'RETRY', 'ROUTE_TO_ERROR_NODE']);
 const SENSITIVE = /token|secret|authorization|password|cookie|api[-_]?key/i;
@@ -163,6 +164,18 @@ class FlowActionService {
       const to = context.contact?.phone || context.phone;
       const response = await require('./whatsapp.service').sendTextMessage({ to, text: render(config.message, context), whatsappAccountId: context.whatsappAccountId, log: true });
       return { whatsappMessageId: response.id || null };
+    }
+    if (type === 'FACEBOOK_SEND_MESSAGE') {
+      const record = await require('./facebookMessenger.service').sendTextMessage({
+        conversationId: context.conversationId, text: render(config.message, context), userId: null
+      });
+      return { facebookMessageId: record.facebookMessageId || null };
+    }
+    if (type === 'FACEBOOK_REPLY_COMMENT') {
+      const comment = await require('./facebookComment.service').replyToComment(
+        context.commentId || config.commentId, { message: render(config.message, context) }, null
+      );
+      return { commentId: comment.id, replied: comment.replied };
     }
     if (type === 'START_FLOW') return require('./flow.service').startFlowFromAction({ targetFlowId: config.targetFlowId, contactId, conversationId, whatsappAccountId: context.whatsappAccountId, sourceFlowRunId: context.flowRun?.id, sourceNodeId: context.nodeKey, variables: { ...(context.variables || {}), ...(config.variables || {}) }, actorType: context.actor?.type || 'system', transaction });
     if (type === 'STOP_FLOW') return { directive: 'stop' };

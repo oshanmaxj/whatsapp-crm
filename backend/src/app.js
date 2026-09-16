@@ -39,7 +39,7 @@ app.options('*', cors(corsOptions));
 const defaultJsonParser = express.json({
   limit: '30mb',
   verify(req, res, buffer) {
-    if (req.originalUrl?.startsWith('/api/webhooks/whatsapp')) req.rawBody = Buffer.from(buffer);
+    if (req.originalUrl?.startsWith('/api/webhooks/whatsapp') || req.originalUrl?.startsWith('/api/webhooks/facebook')) req.rawBody = Buffer.from(buffer);
   }
 });
 app.use((req, res, next) => {

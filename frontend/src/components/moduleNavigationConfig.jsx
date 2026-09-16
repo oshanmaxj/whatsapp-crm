@@ -17,6 +17,9 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import EmailIcon from '@mui/icons-material/Email';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
+import FacebookIcon from '@mui/icons-material/Facebook';
+import ForumOutlinedIcon from '@mui/icons-material/ForumOutlined';
+import ModeCommentOutlinedIcon from '@mui/icons-material/ModeCommentOutlined';
 import GroupsIcon from '@mui/icons-material/Groups';
 import LockIcon from '@mui/icons-material/Lock';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
@@ -60,6 +63,15 @@ export const modules = [
       { label: 'AI Agents', path: '/ai-agents', icon: <SmartToyIcon />, permission: 'settings.view' },
       { label: 'Reminder Sequences', path: '/reminder-sequences', icon: <NotificationsIcon />, permission: 'reminder_sequences.view' },
       { label: 'Flow Builder', path: '/flow-builder', icon: <AccountTreeOutlinedIcon />, permission: 'flow-builder.view' }
+    ]
+  },
+  {
+    id: 'facebook', label: 'Facebook', path: '/facebook', icon: <FacebookIcon />,
+    routes: ['/facebook', '/facebook/pages', '/facebook/inbox', '/facebook/comments'],
+    items: [
+      { label: 'Pages', path: '/facebook/pages', icon: <FacebookIcon />, permission: 'facebook-pages.view' },
+      { label: 'Messenger', path: '/facebook/inbox', icon: <ForumOutlinedIcon />, permission: 'facebook-messenger.view' },
+      { label: 'Comments', path: '/facebook/comments', icon: <ModeCommentOutlinedIcon />, permission: 'facebook-comments.view' }
     ]
   },
   {

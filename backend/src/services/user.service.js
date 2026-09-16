@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const {
   Permission, Role, RolePermission, sequelize, User, UserPermissionOverride,
-  UserRole, WhatsAppAccount
+  UserRole, WhatsAppAccount, FacebookPage
 } = require('../models');
 const logger = require('../config/logger');
 
@@ -295,7 +295,8 @@ class UserService {
       where: query,
       include: [
         { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
-        { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false }
+        { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false },
+        { model: FacebookPage, as: 'facebookPages', attributes: ['id', 'name', 'active'], through: { attributes: [] }, required: false }
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -306,7 +307,8 @@ class UserService {
     const user = await User.findByPk(id, {
       include: [
         { model: Role, as: 'roles', include: [{ model: Permission, as: 'permissions' }] },
-        { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false }
+        { model: WhatsAppAccount, as: 'whatsappAccounts', attributes: ['id', 'name', 'phoneNumber', 'status'], through: { attributes: [] }, required: false },
+        { model: FacebookPage, as: 'facebookPages', attributes: ['id', 'name', 'active'], through: { attributes: [] }, required: false }
       ],
       transaction
     });
@@ -362,6 +364,7 @@ class UserService {
           status: payload.status || 'active',
           isSystemAdmin: String(role.name).toLowerCase() === 'admin'
           ,allWhatsappAccounts: payload.allWhatsappAccounts !== false
+          ,allFacebookPages: payload.allFacebookPages !== false
         }, { transaction });
 
         await UserRole.create({
@@ -371,6 +374,10 @@ class UserService {
         if (payload.allWhatsappAccounts === false) {
           const accounts = await this.resolveWhatsAppAccounts(payload.whatsappAccountIds || [], transaction);
           await user.setWhatsappAccounts(accounts, { transaction });
+        }
+        if (payload.allFacebookPages === false) {
+          const pages = await this.resolveFacebookPages(payload.facebookPageIds || [], transaction);
+          await user.setFacebookPages(pages, { transaction });
         }
         createdUser = await this.getUserById(user.id, transaction);
         if (!createdUser) throw new Error('Unable to load created user');
@@ -402,6 +409,7 @@ class UserService {
         delete updates.roles;
         delete updates.password;
         delete updates.whatsappAccountIds;
+        delete updates.facebookPageIds;
         if (payload.name && !payload.firstName && !payload.lastName) {
           const [firstName, ...rest] = String(payload.name).trim().split(/\s+/).filter(Boolean);
           updates.firstName = firstName || null;
@@ -424,6 +432,12 @@ class UserService {
           const accounts = all ? [] : await this.resolveWhatsAppAccounts(payload.whatsappAccountIds || [], transaction);
           await user.update({ allWhatsappAccounts: all }, { transaction });
           await user.setWhatsappAccounts(accounts, { transaction });
+        }
+        if (payload.allFacebookPages !== undefined || payload.facebookPageIds !== undefined) {
+          const all = payload.allFacebookPages !== false;
+          const pages = all ? [] : await this.resolveFacebookPages(payload.facebookPageIds || [], transaction);
+          await user.update({ allFacebookPages: all }, { transaction });
+          await user.setFacebookPages(pages, { transaction });
         }
         const roleReference = payload.roleId ?? payload.role;
         if (roleReference !== undefined && roleReference !== null && roleReference !== '') {
@@ -583,6 +597,21 @@ class UserService {
       throw Object.assign(new Error('One or more WhatsApp accounts are invalid or inactive'), { status: 422 });
     }
     return accounts;
+  }
+
+  async resolveFacebookPages(ids, transaction = null) {
+    const normalized = [...new Set((Array.isArray(ids) ? ids : [ids])
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0))];
+    if (!normalized.length) return [];
+    const pages = await FacebookPage.findAll({
+      where: { id: { [Op.in]: normalized }, active: true },
+      transaction
+    });
+    if (pages.length !== normalized.length) {
+      throw Object.assign(new Error('One or more Facebook Pages are invalid or inactive'), { status: 422 });
+    }
+    return pages;
   }
 
   async deactivateRole(id) {

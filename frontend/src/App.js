@@ -14,6 +14,9 @@ import CampaignsPage from './pages/CampaignsPage';
 import DashboardPage from './pages/DashboardPage';
 import FlowBuilderEditorPage from './pages/FlowBuilderEditorPage';
 import FlowBuilderListPage from './pages/FlowBuilderListPage';
+import FacebookPagesPage from './pages/FacebookPagesPage';
+import FacebookInboxPage from './pages/FacebookInboxPage';
+import FacebookCommentsPage from './pages/FacebookCommentsPage';
 import { AttendancePage, BatchesPage, CertificatesPage, CoursesPage, FeesPage, StudentsPage } from './pages/EducationPages';
 import StudentProfilePage from './pages/students/StudentProfilePage';
 import FeeRemindersPage from './pages/FeeRemindersPage';
@@ -122,6 +125,10 @@ function App() {
             <Route path="/flow-builder" element={permit('flow-builder.view', <FlowBuilderListPage />)} />
             <Route path="/flow-builder/:id" element={permit('flow-builder.edit', <FlowBuilderEditorPage />)} />
             <Route path="/appointments" element={permit('appointments.view', <AppointmentsPage />)} />
+            <Route path="/facebook" element={permit(['facebook-pages.view', 'facebook-messenger.view', 'facebook-comments.view'], <ModuleLandingPage moduleId="facebook" />)} />
+            <Route path="/facebook/pages" element={permit('facebook-pages.view', <FacebookPagesPage />)} />
+            <Route path="/facebook/inbox" element={permit('facebook-messenger.view', <FacebookInboxPage />)} />
+            <Route path="/facebook/comments" element={permit('facebook-comments.view', <FacebookCommentsPage />)} />
             <Route path="/education" element={permit(['courses.view', 'batches.view', 'students.view', 'fees.view', 'attendance.view', 'certificates.view'], <ModuleLandingPage moduleId="education" />)} />
             <Route path="/courses" element={permit('courses.view', <CoursesPage />)} />
             <Route path="/batches" element={permit('batches.view', <BatchesPage />)} />

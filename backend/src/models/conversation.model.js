@@ -28,6 +28,18 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+    channel: {
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: 'whatsapp'
+    },
+    facebookPageId: { type: DataTypes.BIGINT, allowNull: true, field: 'facebook_page_id' },
+    facebookThreadKey: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      unique: true,
+      field: 'facebook_thread_key'
+    },
     assignedRoleId: {
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true
@@ -72,7 +84,9 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['status'] },
       { fields: ['status', 'updated_at'] },
       { fields: ['last_message_at'] },
-      { fields: ['updated_at'] }
+      { fields: ['updated_at'] },
+      { fields: ['facebook_page_id'], name: 'conversations_facebook_page_idx' },
+      { fields: ['channel'], name: 'conversations_channel_idx' }
     ]
   });
 
@@ -82,6 +96,7 @@ module.exports = (sequelize, DataTypes) => {
     Conversation.belongsTo(models.User, { foreignKey: 'assigned_user_id', as: 'assignee' });
     Conversation.belongsTo(models.User, { foreignKey: 'assigned_user_id', as: 'assignedUser' });
     Conversation.belongsTo(models.Role, { foreignKey: 'assigned_role_id', as: 'assignedRole' });
+    Conversation.belongsTo(models.FacebookPage, { foreignKey: 'facebook_page_id', as: 'facebookPage' });
   };
 
   return Conversation;

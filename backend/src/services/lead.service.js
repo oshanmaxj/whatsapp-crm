@@ -209,7 +209,7 @@ class LeadService {
       nextFollowupAt: options.nextFollowupAt || options.followUpDate || null
       , whatsappAccountId: options.whatsappAccountId || null
       , facebookPageId: options.facebookPageId || null
-    });
+    }, { transaction: options.transaction });
   }
 
   buildLeadWhere({ assignedAgentId, courseInterested, whatsappAccountId, dateType, dateFrom, dateTo } = {}) {
@@ -497,10 +497,11 @@ class LeadService {
     });
   }
 
-  async getOpenLeadForContactAndFacebookPage(contactId, facebookPageId = null) {
+  async getOpenLeadForContactAndFacebookPage(contactId, facebookPageId = null, transaction = null) {
     return Lead.findOne({
       where: { contactId, ...(facebookPageId ? { facebookPageId } : {}) },
-      order: [['created_at', 'DESC']]
+      order: [['created_at', 'DESC']],
+      transaction
     });
   }
 

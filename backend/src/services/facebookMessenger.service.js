@@ -235,8 +235,8 @@ class FacebookMessengerService {
 
         let leadId = conversation.leadId;
         if (!leadId) {
-          let lead = await leadService.getOpenLeadForContactAndFacebookPage(contact.id, page.id);
-          if (!lead) lead = await leadService.createLead(contact.id, { source: 'Facebook', facebookPageId: page.id });
+          let lead = await leadService.getOpenLeadForContactAndFacebookPage(contact.id, page.id, transaction);
+          if (!lead) lead = await leadService.createLead(contact.id, { source: 'Facebook', facebookPageId: page.id, transaction });
           leadId = lead.id;
           await conversation.update({ leadId }, { transaction });
         }

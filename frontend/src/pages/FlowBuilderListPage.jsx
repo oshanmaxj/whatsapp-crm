@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, Paper,
+  Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid, Paper,
   Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -16,6 +16,14 @@ import {
   publishFlow, unpublishFlow
 } from '../services/flowBuilder.service';
 import { normalizeKeywords } from '../components/flow-builder/flowBuilderConfig';
+import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
+import FacebookPageSelect from '../components/FacebookPageSelect';
+
+const CREATE_CHANNEL_OPTIONS = [
+  ['whatsapp', 'WhatsApp'],
+  ['facebook_messenger', 'Facebook Messenger'],
+  ['facebook_comment', 'Facebook Comments']
+];
 
 function FlowAnalyticsDialog({ flow, onClose }) {
   const [analytics, setAnalytics] = useState(null);
@@ -85,7 +93,13 @@ function FlowBuilderListPage() {
   const navigate = useNavigate();
   const [flows, setFlows] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ name: 'New WhatsApp Flow', description: '', triggerKeywords: 'start' });
+  const [form, setForm] = useState({ name: 'New WhatsApp Flow', description: '', triggerKeywords: 'start', channels: ['whatsapp'], whatsappAccountId: '', facebookPageId: '' });
+  const toggleCreateChannel = (value) => {
+    setForm((current) => {
+      const next = current.channels.includes(value) ? current.channels.filter((item) => item !== value) : [...current.channels, value];
+      return next.length ? { ...current, channels: next } : current; // at least one channel must stay selected
+    });
+  };
   const [analyticsFlow, setAnalyticsFlow] = useState(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -100,7 +114,11 @@ function FlowBuilderListPage() {
   const create = async () => {
     const keywords = normalizeKeywords(form.triggerKeywords);
     const res = await createFlow({
-      ...form,
+      name: form.name,
+      description: form.description,
+      channels: form.channels,
+      whatsappAccountId: form.channels.includes('whatsapp') ? (form.whatsappAccountId || undefined) : undefined,
+      facebookPageId: form.channels.some((channel) => channel !== 'whatsapp') ? (form.facebookPageId || undefined) : undefined,
       triggerType: 'inbound_message',
       triggerKeywords: keywords,
       triggerConfig: { source: 'inbound_message', keywords, matchType: 'contains', keywordMatchMode: 'contains' }
@@ -177,6 +195,20 @@ function FlowBuilderListPage() {
             <TextField label="Flow Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} fullWidth />
             <TextField label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} fullWidth />
             <TextField label="Trigger Keywords" value={form.triggerKeywords} onChange={(e) => setForm({ ...form, triggerKeywords: e.target.value })} helperText="Comma-separated keywords, for example: start, forex, course" fullWidth />
+            <Stack spacing={0.5}>
+              <Typography variant="caption" fontWeight={800} color="text.secondary">Channels</Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap">
+                {CREATE_CHANNEL_OPTIONS.map(([value, label]) => (
+                  <FormControlLabel
+                    key={value}
+                    control={<Checkbox size="small" checked={form.channels.includes(value)} onChange={() => toggleCreateChannel(value)} />}
+                    label={<Typography fontSize={13}>{label}</Typography>}
+                  />
+                ))}
+              </Stack>
+            </Stack>
+            {form.channels.includes('whatsapp') && <WhatsAppAccountSelect value={form.whatsappAccountId} onChange={(value) => setForm({ ...form, whatsappAccountId: value || '' })} allowAll fullWidth />}
+            {form.channels.some((channel) => channel !== 'whatsapp') && <FacebookPageSelect value={form.facebookPageId} onChange={(value) => setForm({ ...form, facebookPageId: value || '' })} required fullWidth />}
           </Stack>
         </DialogContent>
         <DialogActions><Button onClick={() => setCreateOpen(false)}>Cancel</Button><Button variant="contained" startIcon={<PlayArrowIcon />} onClick={create}>Create & Open</Button></DialogActions>

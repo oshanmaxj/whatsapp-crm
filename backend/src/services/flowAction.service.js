@@ -177,7 +177,7 @@ class FlowActionService {
       );
       return { commentId: comment.id, replied: comment.replied };
     }
-    if (type === 'START_FLOW') return require('./flow.service').startFlowFromAction({ targetFlowId: config.targetFlowId, contactId, conversationId, whatsappAccountId: context.whatsappAccountId, sourceFlowRunId: context.flowRun?.id, sourceNodeId: context.nodeKey, variables: { ...(context.variables || {}), ...(config.variables || {}) }, actorType: context.actor?.type || 'system', transaction });
+    if (type === 'START_FLOW') return require('./flow.service').startFlowFromAction({ targetFlowId: config.targetFlowId, contactId, conversationId, whatsappAccountId: context.whatsappAccountId, channel: context.channel || 'whatsapp', facebookPageId: context.facebookPageId || null, sourceFlowRunId: context.flowRun?.id, sourceNodeId: context.nodeKey, variables: { ...(context.variables || {}), ...(config.variables || {}) }, actorType: context.actor?.type || 'system', transaction });
     if (type === 'STOP_FLOW') return { directive: 'stop' };
     if (type === 'PAUSE_FLOW') return { directive: 'pause', resumeAt: config.resumeAt || null };
     if (type === 'JUMP_TO_NODE') return { directive: 'jump', nodeKey: config.nodeKey };

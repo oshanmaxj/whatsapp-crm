@@ -1,3 +1,5 @@
+const { flowChannels } = require('./flowChannelCompatibility');
+
 const MATCH_TYPES = new Set(['exact', 'contains', 'starts_with', 'ends_with', 'regex']);
 const SOURCES = new Set([
   'inbound_message', 'any_message', 'first_message', 'button_reply', 'interactive_button_reply',
@@ -55,14 +57,23 @@ function matchesTrigger(flow, event = {}, options = {}) {
   // Enforced here (not just at the caller's candidate query) so an unscoped
   // WhatsApp flow can never fire on a Facebook event and vice versa, even if
   // matchesTrigger is ever called directly against an unfiltered flow list.
-  const flowChannel = flow.channel || 'whatsapp';
+  // flowChannels() returns the multi-channel `channels` array when a flow
+  // has opted into more than one channel, and otherwise falls back to the
+  // legacy single `channel` value — so a flow with channels=NULL matches
+  // exactly one channel today, unchanged from before multi-channel existed.
   const eventChannel = event.channel || 'whatsapp';
-  if (flowChannel !== eventChannel) return false;
+  if (!flowChannels(flow).includes(eventChannel)) return false;
   const config = flow.triggerConfig || {};
   const source = config.source || flow.triggerType || 'inbound_message';
   if (!sourceMatches(source, event)) return false;
-  if (flow.whatsappAccountId && String(flow.whatsappAccountId) !== String(event.whatsappAccountId || '')) return false;
-  if (flow.facebookPageId && String(flow.facebookPageId) !== String(event.facebookPageId || '')) return false;
+  // Scoped to the event's own channel: a multi-channel flow legitimately has
+  // both whatsappAccountId and facebookPageId set (one per enabled channel),
+  // so only the id matching the incoming event's channel is relevant here —
+  // otherwise a WhatsApp event on a WhatsApp+Facebook flow would be wrongly
+  // rejected by the flow's (irrelevant, for this event) facebookPageId scope.
+  if (eventChannel === 'whatsapp') {
+    if (flow.whatsappAccountId && String(flow.whatsappAccountId) !== String(event.whatsappAccountId || '')) return false;
+  } else if (flow.facebookPageId && String(flow.facebookPageId) !== String(event.facebookPageId || '')) return false;
   if (config.courseId && String(config.courseId) !== String(event.courseId || event.lead?.courseId || '')) return false;
   if (config.course && normalizeText(config.course) !== normalizeText(event.course || event.lead?.courseInterested || '')) return false;
   if (config.campaignId && String(config.campaignId) !== String(event.campaignId || '')) return false;

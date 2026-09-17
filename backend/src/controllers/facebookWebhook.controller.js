@@ -58,7 +58,8 @@ async function processMessagingItem(page, item) {
     return;
   }
   try {
-    await facebookMessengerService.handleInboundMessagingEvent(page, item);
+    if (item?.postback) await facebookMessengerService.handleInboundPostbackEvent(page, item);
+    else await facebookMessengerService.handleInboundMessagingEvent(page, item);
     await markEventStatus(eventKey, 'processed');
   } catch (error) {
     logger.error('facebook_messenger_inbound_failed', { facebookPageId: page.id, message: error.message, stack: error.stack });

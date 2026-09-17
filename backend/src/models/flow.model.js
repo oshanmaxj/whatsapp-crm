@@ -3,6 +3,12 @@ module.exports = (sequelize, DataTypes) => {
     id: { type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true },
     whatsappAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     channel: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'whatsapp' },
+    // Additive multi-channel scope: when set (non-empty array), this is the
+    // authoritative list of channels the flow is enabled for and `channel`
+    // above is kept only for display/legacy readers. NULL/empty here means
+    // "use the legacy single `channel` value" — every flow created before
+    // this column existed has channels = NULL and behaves exactly as before.
+    channels: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
     facebookPageId: { type: DataTypes.BIGINT, allowNull: true, field: 'facebook_page_id' },
     departmentId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
     name: { type: DataTypes.STRING(180), allowNull: false },

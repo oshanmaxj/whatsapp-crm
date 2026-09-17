@@ -65,6 +65,7 @@ const onboardingInboxPaginationMigration = require('../../migrations/061_onboard
 const studentSupportTicketsMigration = require('../../migrations/062_student_support_tickets');
 const campaignTemplateHeadersMigration = require('../../migrations/047_campaign_template_headers');
 const facebookPageIntegrationMigration = require('../../migrations/065_facebook_page_integration');
+const flowMultiChannelMigration = require('../../migrations/066_flow_multi_channel');
 const MIGRATION_RUNNER_LOCK = 570000;
 
 function originalDatabaseError(error) {
@@ -300,6 +301,8 @@ async function run() {
     console.log('Applied: call center workflow statuses');
     await runMigration('065_facebook_page_integration.js', facebookPageIntegrationMigration, queryInterface);
     console.log('Applied: Facebook Page integration');
+    await runMigration('066_flow_multi_channel.js', flowMultiChannelMigration, queryInterface);
+    console.log('Applied: Flow multi-channel support');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

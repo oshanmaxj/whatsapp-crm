@@ -29,6 +29,7 @@ const whatsappAccountAccessService = require('./whatsappAccountAccess.service');
 const facebookPageAccessService = require('./facebookPageAccess.service');
 const flowActionService = require('./flowAction.service');
 const triggerMatcher = require('./flowTriggerMatcher.service');
+const channelCompat = require('./flowChannelCompatibility');
 const interactiveMediaService = require('./interactiveMedia.service');
 const logger = require('../config/logger');
 const conversationAccessService = require('./conversationAccess.service');
@@ -318,9 +319,25 @@ class FlowService {
   }
 
   async create(payload, createdBy) {
-    const selectedAccountId = await whatsappAccountAccessService.resolveSelection(payload.whatsappAccountId, createdBy);
+    // channels defaults to ['whatsapp'] when the caller sends neither
+    // `channels` nor `channel` — the exact pre-multi-channel behavior, so
+    // every existing creation caller (frontend or API) keeps working unchanged.
+    const channels = channelCompat.flowChannels({ channel: payload.channel, channels: payload.channels });
+    const includesWhatsApp = channels.includes('whatsapp');
+    const includesFacebook = channels.some((channel) => channel !== 'whatsapp');
+
+    let selectedAccountId = null;
+    let defaultAccount = null;
+    if (includesWhatsApp) {
+      selectedAccountId = await whatsappAccountAccessService.resolveSelection(payload.whatsappAccountId, createdBy);
+      defaultAccount = selectedAccountId ? null : await whatsappAccountService.runtimeConfig().catch(() => null);
+    }
+    let selectedPageId = null;
+    if (includesFacebook) {
+      selectedPageId = await facebookPageAccessService.resolveSelection(payload.facebookPageId, createdBy);
+    }
     await whatsappAccountAccessService.assertDepartmentAccess(payload.departmentId, createdBy);
-    const defaultAccount = selectedAccountId ? null : await whatsappAccountService.runtimeConfig().catch(() => null);
+
     const flow = await Flow.create({
       name: payload.name || 'Untitled Flow',
       description: payload.description || null,
@@ -333,7 +350,10 @@ class FlowService {
         keywords: normalizeKeywords(payload.triggerKeywords)
       },
       whatsappPhoneNumberId: payload.whatsappPhoneNumberId || null,
-      whatsappAccountId: selectedAccountId || defaultAccount?.whatsappAccountId || null,
+      whatsappAccountId: includesWhatsApp ? (selectedAccountId || defaultAccount?.whatsappAccountId || null) : null,
+      channel: includesWhatsApp ? 'whatsapp' : channels[0],
+      channels: channels.length > 1 ? channels : null,
+      facebookPageId: includesFacebook ? selectedPageId : null,
       departmentId: payload.departmentId || null,
       createdBy
     });
@@ -351,6 +371,9 @@ class FlowService {
       triggerConfig: payload.triggerConfig ?? flow.triggerConfig,
       whatsappPhoneNumberId: payload.whatsappPhoneNumberId ?? flow.whatsappPhoneNumberId
       , whatsappAccountId: payload.whatsappAccountId ?? flow.whatsappAccountId
+      , channel: payload.channel ?? flow.channel
+      , channels: payload.channels !== undefined ? (Array.isArray(payload.channels) && payload.channels.length ? payload.channels : null) : flow.channels
+      , facebookPageId: payload.facebookPageId !== undefined ? (payload.facebookPageId || null) : flow.facebookPageId
       , departmentId: payload.departmentId !== undefined ? (payload.departmentId || null) : flow.departmentId
     });
     return this.get(id);
@@ -380,6 +403,9 @@ class FlowService {
         triggerConfig: flowPayload.triggerConfig ?? flow.triggerConfig,
         whatsappPhoneNumberId: flowPayload.whatsappPhoneNumberId ?? flow.whatsappPhoneNumberId,
         whatsappAccountId: flowPayload.whatsappAccountId ?? flow.whatsappAccountId,
+        channel: flowPayload.channel ?? flow.channel,
+        channels: flowPayload.channels !== undefined ? (Array.isArray(flowPayload.channels) && flowPayload.channels.length ? flowPayload.channels : null) : flow.channels,
+        facebookPageId: flowPayload.facebookPageId !== undefined ? (flowPayload.facebookPageId || null) : flow.facebookPageId,
         departmentId: flowPayload.departmentId !== undefined ? (flowPayload.departmentId || null) : flow.departmentId
       }, { transaction });
       await FlowConnection.destroy({ where: { flowId: id }, transaction });
@@ -596,7 +622,20 @@ class FlowService {
 
   async validateFlowReferences(flow, userId = null) {
     const errors = [];
-    if (flow.channel && flow.channel !== 'whatsapp') {
+    const channels = channelCompat.flowChannels(flow);
+    if (channels.includes('whatsapp')) {
+      if (!flow.whatsappAccountId) {
+        errors.push({ field: 'whatsappAccountId', message: 'A WhatsApp account is required before publishing.' });
+      } else {
+        const account = await WhatsAppAccount.findByPk(flow.whatsappAccountId, { attributes: ['id', 'status'] });
+        if (!account || account.status !== 'active') errors.push({ field: 'whatsappAccountId', message: 'The selected WhatsApp account does not exist or is not active.' });
+        if (userId) {
+          try { await whatsappAccountAccessService.assertAccess(flow.whatsappAccountId, userId); }
+          catch (error) { errors.push({ field: 'whatsappAccountId', message: 'The selected WhatsApp account is not permitted for this user.' }); }
+        }
+      }
+    }
+    if (channels.some((channel) => channel !== 'whatsapp')) {
       if (!flow.facebookPageId) {
         errors.push({ field: 'facebookPageId', message: 'A Facebook Page is required before publishing.' });
       } else {
@@ -607,15 +646,6 @@ class FlowService {
           catch (error) { errors.push({ field: 'facebookPageId', message: 'The selected Facebook Page is not permitted for this user.' }); }
         }
       }
-    } else if (!flow.whatsappAccountId) {
-      errors.push({ field: 'whatsappAccountId', message: 'A WhatsApp account is required before publishing.' });
-    } else {
-      const account = await WhatsAppAccount.findByPk(flow.whatsappAccountId, { attributes: ['id', 'status'] });
-      if (!account || account.status !== 'active') errors.push({ field: 'whatsappAccountId', message: 'The selected WhatsApp account does not exist or is not active.' });
-      if (userId) {
-        try { await whatsappAccountAccessService.assertAccess(flow.whatsappAccountId, userId); }
-        catch (error) { errors.push({ field: 'whatsappAccountId', message: 'The selected WhatsApp account is not permitted for this user.' }); }
-      }
     }
     if (flow.departmentId && !await Role.findByPk(flow.departmentId, { attributes: ['id'] })) {
       errors.push({ field: 'departmentId', message: 'The selected department mapping does not exist.' });
@@ -624,10 +654,18 @@ class FlowService {
     for (const ref of refs) {
       if (String(ref.target) === String(flow.id)) { errors.push({ nodeKey: ref.node.nodeKey, message: 'A flow cannot start itself.' }); continue; }
       const target = await Flow.findByPk(ref.target);
-      if (!target || target.status !== 'published') errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow must exist and be published.' });
-      else if (target.whatsappAccountId && String(target.whatsappAccountId) !== String(flow.whatsappAccountId)) errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow is not available to this WhatsApp account.' });
-      else if (await this.flowReferenceReaches(ref.target, flow.id, new Set())) errors.push({ nodeKey: ref.node.nodeKey, message: 'Circular flow reference detected.' });
+      if (!target || target.status !== 'published') { errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow must exist and be published.' }); continue; }
+      const targetChannels = channelCompat.flowChannels(target);
+      const sharedChannels = channels.filter((channel) => targetChannels.includes(channel));
+      if (!sharedChannels.length) {
+        errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow does not share a compatible channel with this flow.' });
+      } else if (sharedChannels.includes('whatsapp') && target.whatsappAccountId && String(target.whatsappAccountId) !== String(flow.whatsappAccountId)) {
+        errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow is not available to this WhatsApp account.' });
+      } else if (sharedChannels.some((channel) => channel !== 'whatsapp') && target.facebookPageId && String(target.facebookPageId) !== String(flow.facebookPageId)) {
+        errors.push({ nodeKey: ref.node.nodeKey, message: 'Target flow is not available to this Facebook Page.' });
+      } else if (await this.flowReferenceReaches(ref.target, flow.id, new Set())) errors.push({ nodeKey: ref.node.nodeKey, message: 'Circular flow reference detected.' });
     }
+    errors.push(...channelCompat.nodeCompatibilityIssues(flow));
     return errors;
   }
 
@@ -641,12 +679,19 @@ class FlowService {
     return false;
   }
 
-  async startFlowFromAction({ targetFlowId, contactId, conversationId, whatsappAccountId, sourceFlowRunId, sourceNodeId, variables = {}, actorType = 'system', transaction = null }) {
+  async startFlowFromAction({ targetFlowId, contactId, conversationId, whatsappAccountId, channel = 'whatsapp', facebookPageId = null, sourceFlowRunId, sourceNodeId, variables = {}, actorType = 'system', transaction = null }) {
     const target = await Flow.findOne({ where: { id: targetFlowId, status: 'published' }, include: this.includeBuilder(), transaction });
     if (!target) throw Object.assign(new Error('Target flow is not published or enabled.'), { code: 'FLOW_TARGET_UNAVAILABLE', status: 422 });
-    if (target.whatsappAccountId && String(target.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Target flow does not support this WhatsApp account.'), { code: 'FLOW_ACCOUNT_SCOPE_MISMATCH', status: 403 });
+    if (!channelCompat.flowChannels(target).includes(channel)) throw Object.assign(new Error('Target flow does not support this channel.'), { code: 'FLOW_CHANNEL_SCOPE_MISMATCH', status: 403 });
+    if (channel === 'whatsapp') {
+      if (target.whatsappAccountId && String(target.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Target flow does not support this WhatsApp account.'), { code: 'FLOW_ACCOUNT_SCOPE_MISMATCH', status: 403 });
+    } else if (target.facebookPageId && String(target.facebookPageId) !== String(facebookPageId)) {
+      throw Object.assign(new Error('Target flow does not support this Facebook Page.'), { code: 'FLOW_PAGE_SCOPE_MISMATCH', status: 403 });
+    }
     const conversation = await Conversation.findByPk(conversationId, { transaction });
-    if (!conversation || String(conversation.contactId) !== String(contactId) || String(conversation.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Canonical conversation context does not match the target flow action.'), { code: 'FLOW_CANONICAL_CONTEXT_MISMATCH', status: 409 });
+    if (!conversation || String(conversation.contactId) !== String(contactId)) throw Object.assign(new Error('Canonical conversation context does not match the target flow action.'), { code: 'FLOW_CANONICAL_CONTEXT_MISMATCH', status: 409 });
+    if (channel === 'whatsapp' && String(conversation.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Canonical conversation context does not match the target flow action.'), { code: 'FLOW_CANONICAL_CONTEXT_MISMATCH', status: 409 });
+    if (channel !== 'whatsapp' && String(conversation.facebookPageId) !== String(facebookPageId)) throw Object.assign(new Error('Canonical conversation context does not match the target flow action.'), { code: 'FLOW_CANONICAL_CONTEXT_MISMATCH', status: 409 });
     let depth = 0;
     const ancestors = new Set([String(targetFlowId)]);
     let cursor = sourceFlowRunId ? await FlowRun.findByPk(sourceFlowRunId, { transaction }) : null;
@@ -658,7 +703,7 @@ class FlowService {
       const parentLink = await FlowRunLink.findOne({ where: { childFlowRunId: cursor.id }, transaction });
       cursor = parentLink ? await FlowRun.findByPk(parentLink.parentFlowRunId, { transaction }) : null;
     }
-    const result = await this.executeFlow(target, { contactId, conversationId, whatsappAccountId, variables, actor: { type: actorType }, nestedDepth: depth + 1 }, {});
+    const result = await this.executeFlow(target, { contactId, conversationId, whatsappAccountId, channel, facebookPageId, variables, actor: { type: actorType }, nestedDepth: depth + 1 }, {});
     if (sourceFlowRunId && result?.id) await FlowRunLink.findOrCreate({ where: { childFlowRunId: result.id }, defaults: { parentFlowRunId: sourceFlowRunId, childFlowRunId: result.id, sourceNodeKey: sourceNodeId || null }, transaction });
     return result;
   }
@@ -855,6 +900,8 @@ class FlowService {
       currentNodeKey: null,
       status: 'running',
       whatsappAccountId: flow.whatsappAccountId || context.whatsappAccountId || null,
+      channel: context.channel || 'whatsapp',
+      facebookPageId: context.facebookPageId || null,
       contextJson: context,
       lastWhatsappMessageId: context.whatsappMessageId || null
     });
@@ -977,14 +1024,46 @@ class FlowService {
         return { stop: pre.directive === 'stop' || post.directive === 'stop', sourceHandle: pre.nodeKey || post.nodeKey || null };
       }
       if (MESSAGE_TYPES.has(node.nodeType)) {
-        const output = await this.executeMessageNode(node, config, context, realSendEnabled);
+        // Dispatch point: the only place that decides WhatsApp vs Facebook
+        // Messenger for a message-like node. WhatsApp keeps calling the exact
+        // same executeMessageNode it always has; Facebook Messenger routes
+        // through executeFacebookMessageNode instead of branching Facebook
+        // specifics into executeMessageNode itself.
+        const channel = context.channel || 'whatsapp';
+        if (!channelCompat.isNodeSupportedOnChannel(node.nodeType, channel)) {
+          throw Object.assign(new Error(`"${node.label || node.nodeType}" is not supported on ${channel}.`), {
+            code: 'FLOW_NODE_UNSUPPORTED_FOR_CHANNEL', status: 422, nodeType: node.nodeType, channel
+          });
+        }
+        const output = channel === 'whatsapp'
+          ? await this.executeMessageNode(node, config, context, realSendEnabled)
+          : await this.executeFacebookMessageNode(node, config, context, realSendEnabled);
         await this.log(run, node, output.status, context, output);
         const waitsForReply = ['button_message', 'list_message', 'interactive_message', 'whatsapp_flow', 'appointment_booking'].includes(node.nodeType);
         return {
           sent: output.status === 'completed',
           wait: waitsForReply && realSendEnabled,
-          whatsappMessageId: output.response?.id || null
+          whatsappMessageId: output.response?.id || null,
+          contextPatch: output.contextPatch || undefined
         };
+      }
+      if (node.nodeType === 'facebook_comment_reply') {
+        const channel = context.channel || 'whatsapp';
+        if (!channelCompat.isNodeSupportedOnChannel(node.nodeType, channel)) {
+          throw Object.assign(new Error(`"${node.label || node.nodeType}" is not supported on ${channel}.`), {
+            code: 'FLOW_NODE_UNSUPPORTED_FOR_CHANNEL', status: 422, nodeType: node.nodeType, channel
+          });
+        }
+        const commentId = context.commentId;
+        if (!commentId) throw Object.assign(new Error('A Facebook comment reply node requires a triggering comment.'), { code: 'FLOW_COMMENT_REQUIRED', status: 422 });
+        const message = render(config.message || node.label || '', context);
+        if (!realSendEnabled) {
+          await this.log(run, node, 'simulated', context, { commentId, message });
+          return { sent: false };
+        }
+        const comment = await require('./facebookComment.service').replyToComment(commentId, { message }, context.actor?.userId || null);
+        await this.log(run, node, 'completed', context, { commentId, replied: comment.replied });
+        return { sent: true };
       }
       if (node.nodeType === 'user_input') {
         if (!context.__replyingToNode || context.__replyingToNode !== node.nodeKey) {
@@ -1398,6 +1477,81 @@ class FlowService {
     return { status: 'completed', response, to, text, nodeType: node.nodeType };
   }
 
+  // Facebook Messenger counterpart to executeMessageNode. Deliberately
+  // separate rather than branching Facebook specifics into the WhatsApp
+  // function above — this is the "adapter" side of the dispatch in
+  // executeNode. Only called for node types isNodeSupportedOnChannel already
+  // approved for this channel; unsupported types never reach here.
+  async executeFacebookMessageNode(node, config, context, realSendEnabled) {
+    const facebookMessengerService = require('./facebookMessenger.service');
+    const mediaNode = ['image_message', 'video_message', 'audio_message', 'file_document'].includes(node.nodeType);
+    const explicitContent = config.message ?? config.caption;
+    let text = render(explicitContent || (mediaNode ? '' : node.label || ''), context);
+    if ((node.nodeType === 'ai_reply' || node.nodeType === 'ai_assistant') && realSendEnabled) {
+      text = await aiService.previewReply({
+        messageText: [config.prompt || config.assistantInstructions, context.latestMessage].filter(Boolean).join('\n\n'),
+        contact: context.contact, lead: context.lead
+      }).catch(() => render(config.fallbackMessage || 'A team member will help you shortly.', context));
+    }
+    if (!realSendEnabled) return { status: 'simulated', to: context.conversationId || null, text, nodeType: node.nodeType };
+
+    // Comment-triggered flows have no Messenger conversation yet — resolve or
+    // create one from the commenter's PSID on first send, reusing the exact
+    // identity/contact/conversation resolution the inbound Messenger path
+    // already uses (facebookConversationIdentityService), not a new copy of it.
+    let conversationId = context.conversationId;
+    let contextPatch;
+    if (!conversationId) {
+      if (!context.facebookPageId || !context.psid) {
+        throw Object.assign(new Error('A Facebook Messenger conversation could not be resolved for this flow run.'), { code: 'FACEBOOK_CONVERSATION_UNRESOLVED', status: 422 });
+      }
+      const identityService = require('./facebookConversationIdentity.service');
+      const resolved = await identityService.findOrCreateByPageAndPsid({ facebookPageId: context.facebookPageId, psid: context.psid });
+      conversationId = resolved.conversation.id;
+      contextPatch = { conversationId };
+    }
+
+    const actorUserId = context.actor?.userId || null;
+    let response;
+    if (node.nodeType === 'text_message' || node.nodeType.startsWith('ai_')) {
+      response = await facebookMessengerService.sendTextMessage({ conversationId, text, userId: actorUserId });
+    } else if (mediaNode) {
+      const typeByNode = { image_message: 'image', video_message: 'video', audio_message: 'audio', file_document: 'document' };
+      const mediaType = typeByNode[node.nodeType];
+      const configuredUrl = mediaType === 'image' ? (config.imageUrl || config.mediaUrl)
+        : mediaType === 'document' ? (config.fileUrl || config.mediaUrl) : config.mediaUrl;
+      if (!configuredUrl || String(configuredUrl).startsWith('data:')) {
+        throw Object.assign(new Error('Facebook Messenger media nodes require a public HTTPS URL (locally uploaded WhatsApp media cannot be sent to Messenger).'), { code: 'FACEBOOK_MEDIA_URL_REQUIRED', status: 422 });
+      }
+      response = await facebookMessengerService.sendMediaMessage({
+        conversationId, mediaType, url: requireHttpsUrl(configuredUrl, `${mediaType} URL`), caption: text || null, userId: actorUserId
+      });
+    } else if (['button_message', 'interactive_message'].includes(node.nodeType)) {
+      const buttons = normalizeButtons(config.buttons).slice(0, 3);
+      if (!buttons.length) throw Object.assign(new Error('Interactive button node requires at least one button.'), { status: 422 });
+      // No Messenger button-template equivalent of a WhatsApp interactive
+      // media header: send the header as its own media message first (text
+      // headers are folded into the button template's own text instead).
+      const headerType = config.headerType === 'media' ? (config.headerMediaType || 'image') : (config.headerType || 'none');
+      if (['image', 'video', 'document'].includes(headerType) && config.headerMediaUrl && !String(config.headerMediaUrl).startsWith('data:')) {
+        await facebookMessengerService.sendMediaMessage({
+          conversationId, mediaType: headerType, url: requireHttpsUrl(config.headerMediaUrl, 'header media URL'), userId: actorUserId
+        });
+      }
+      const headerText = headerType === 'text' ? String(config.headerText || '') : '';
+      response = await facebookMessengerService.sendButtonMessage({
+        conversationId,
+        text: [headerText, text || node.label || ''].filter(Boolean).join('\n'),
+        buttons: buttons.map((button) => ({ id: encodedButtonId(context.flowId, node.nodeKey, button.id), title: button.title })),
+        userId: actorUserId
+      });
+    } else {
+      throw Object.assign(new Error(`"${node.label || node.nodeType}" is not supported on Facebook Messenger.`), { code: 'FLOW_NODE_UNSUPPORTED_FOR_CHANNEL', status: 422 });
+    }
+
+    return { status: 'completed', response, to: conversationId, text, nodeType: node.nodeType, contextPatch };
+  }
+
   async executeButtonAction({ flow, run, node, button, context }) {
     const primary = String(button.primaryActionType || button.actionType || 'CONTINUE_FLOW').toUpperCase();
     const normalizedPrimary = primary === 'REPLY' ? 'CONTINUE_FLOW' : primary === 'URL' ? 'OPEN_URL' : primary === 'PHONE' ? 'CALL_PHONE' : primary;
@@ -1427,7 +1581,8 @@ class FlowService {
   async handleInboundMessage({
     text, contact, lead, conversation = null, messageType = 'text',
     interactiveType = null, buttonPayload = null, whatsappMessageId = null,
-    replyToWhatsappMessageId = null, rawPayload = null, whatsappAccountId = null
+    replyToWhatsappMessageId = null, rawPayload = null, whatsappAccountId = null,
+    channel = 'whatsapp', facebookPageId = null, matchNewTriggers = true
   }) {
     if (!text) return null;
     if (whatsappMessageId) {
@@ -1435,9 +1590,16 @@ class FlowService {
       if (duplicate) return this.getRun(duplicate.id);
     }
 
+    // Messenger postbacks/replies resume a waiting run scoped by (contact,
+    // Facebook Page) instead of (contact, WhatsApp account) — everything else
+    // in this function (button resolution, executeButtonAction, nextNode,
+    // executeFlow) is already channel-agnostic and is reused unchanged.
     const waitingRun = contact?.id
       ? await FlowRun.findOne({
-          where: { contactId: contact.id, whatsappAccountId, status: 'waiting', waitingForReply: true },
+          where: {
+            contactId: contact.id, status: 'waiting', waitingForReply: true,
+            ...(channel === 'whatsapp' ? { whatsappAccountId } : { channel, facebookPageId })
+          },
           order: [['updated_at', 'DESC']]
         })
       : null;
@@ -1457,7 +1619,7 @@ class FlowService {
         replyToWhatsappMessageId,
         rawPayload,
         __replyingToNode: waitingNode.nodeKey
-        , whatsappAccountId
+        , whatsappAccountId, channel, facebookPageId
       };
       if (waitingNode.nodeType === 'appointment_booking') {
         const appointmentAt = new Date(buttonPayload || text);
@@ -1527,18 +1689,28 @@ class FlowService {
       return this.executeFlow(flow, context, { run: waitingRun, startNode });
     }
 
+    // Messenger text messages call this with matchNewTriggers: false to check
+    // ONLY for a waiting run to resume — a genuinely new/unrelated message
+    // must fall through to the existing, separately-dispatched
+    // handleDomainEvent trigger matching instead of this function's own
+    // (WhatsApp-shaped, department-scoped) candidate query. WhatsApp's own
+    // caller never sets this flag, so its behavior is completely unchanged.
+    if (!matchNewTriggers) return null;
+
     const flows = await Flow.findAll({
       where: {
         status: 'published',
         [Op.and]: [
-          { [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null }] },
+          channel === 'whatsapp'
+            ? { [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null }, { channels: { [Op.ne]: null } }] }
+            : { [Op.or]: [{ facebookPageId }, { channels: { [Op.ne]: null } }] },
           { [Op.or]: [{ departmentId: null }, { departmentId: conversation?.assignedRoleId || null }] }
         ]
       },
       include: this.includeBuilder()
     });
     const conversationMessageCount = conversation?.id ? await Message.count({ where: { conversationId: conversation.id } }) : null;
-    const event = { text, messageType, interactiveType, buttonPayload, replyToWhatsappMessageId, whatsappAccountId, contact, lead, isFirstMessage: conversationMessageCount === 1 };
+    const event = { text, messageType, interactiveType, buttonPayload, replyToWhatsappMessageId, whatsappAccountId, facebookPageId, channel, contact, lead, isFirstMessage: conversationMessageCount === 1 };
     const matched = flows.filter((candidate) => triggerMatcher.matchesTrigger(candidate, event, { allowRegex: candidate.triggerConfig?.regexPrivileged === true }))
       .sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
     if (!matched.length) return null;
@@ -1560,7 +1732,7 @@ class FlowService {
       rawPayload,
       contact: contact ? { ...contact.toJSON(), name: contactName(contact) } : null,
       lead: lead ? lead.toJSON() : null
-      , whatsappAccountId
+      , whatsappAccountId, channel, facebookPageId
       }));
       if (flow.triggerConfig?.stopAfterMatch !== false) break;
     }
@@ -1579,12 +1751,17 @@ class FlowService {
     // Channel is filtered at the candidate-query level (not just via trigger-source
     // matching) so an unscoped "any WhatsApp message" flow can never fire off a
     // Facebook event, and vice versa — both kinds of flow have a null account/page id.
+    // A flow with a non-null `channels` array (multi-channel) is always included
+    // here regardless of the legacy-scoping branch below, since a single row can
+    // legitimately have both a whatsappAccountId and a facebookPageId set — the
+    // precise per-channel check happens in matchesTrigger, not this coarse filter.
+    const legacyChannelScope = isFacebookEvent
+      ? [{ facebookPageId }, { facebookPageId: null, channel: { [Op.ne]: 'whatsapp' } }]
+      : [{ whatsappAccountId }, { whatsappAccountId: null, channel: 'whatsapp' }, { whatsappAccountId: null, channel: null }];
     const candidates = await Flow.findAll({
       where: {
         status: 'published',
-        ...(isFacebookEvent
-          ? { [Op.or]: [{ facebookPageId }, { facebookPageId: null, channel: { [Op.ne]: 'whatsapp' } }] }
-          : { [Op.or]: [{ whatsappAccountId }, { whatsappAccountId: null, channel: 'whatsapp' }, { whatsappAccountId: null, channel: null }] })
+        [Op.or]: [...legacyChannelScope, { channels: { [Op.ne]: null } }]
       },
       include: this.includeBuilder()
     });

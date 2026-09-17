@@ -6,7 +6,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, Divider, IconButton, MenuItem, Paper, Stack, TextField,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Checkbox, Chip, Divider, FormControlLabel, IconButton, MenuItem, Paper, Stack, TextField,
   Tooltip, Typography
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -27,6 +27,18 @@ import { getRoles, getUsers } from '../services/userManagement.service';
 import FlowNodeConfigDialog from '../components/flow-builder/FlowNodeConfigDialog';
 import { nodeConfigErrors, normalizeKeywords } from '../components/flow-builder/flowBuilderConfig';
 import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
+import FacebookPageSelect from '../components/FacebookPageSelect';
+
+const CHANNEL_OPTIONS = [
+  ['whatsapp', 'WhatsApp'],
+  ['facebook_messenger', 'Facebook Messenger'],
+  ['facebook_comment', 'Facebook Comments']
+];
+// A flow with no `channels` array is a pre-multi-channel (or WhatsApp-created)
+// flow — it behaves exactly as before, scoped to its single legacy `channel`.
+function effectiveChannels(flow) {
+  return Array.isArray(flow?.channels) && flow.channels.length ? flow.channels : [flow?.channel || 'whatsapp'];
+}
 
 const GROUPS = [
   { title: 'MESSAGES', blocks: [['text_message', 'Text', '💬'], ['image_message', 'Image', '🖼️'], ['audio_message', 'Audio', '🎧'], ['video_message', 'Video', '🎬'], ['file_document', 'File', '📄'], ['location', 'Location', '📍'], ['ai_reply', 'AI Reply', '✨']] },
@@ -185,6 +197,14 @@ function Editor() {
   const [error, setError] = useState('');
   const [validationIssues, setValidationIssues] = useState({ errors: [], warnings: [], requestId: null });
   const selected = useMemo(() => nodes.find((node) => node.id === selectedId), [nodes, selectedId]);
+  const channels = useMemo(() => effectiveChannels(flow), [flow]);
+  const toggleChannel = (value) => {
+    const current = effectiveChannels(flow);
+    const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+    if (!next.length) return; // at least one channel must always remain selected
+    setFlow({ ...flow, channels: next, channel: next.includes('whatsapp') ? 'whatsapp' : next[0] });
+    setIsDirty(true);
+  };
 
   const deleteNode = useCallback((nodeId) => {
     const target = nodes.find((node) => node.id === nodeId);
@@ -350,23 +370,36 @@ function Editor() {
         </Paper>)}
       </Stack></AccordionDetails>
     </Accordion>}
-    <Paper elevation={0} sx={{ p: 1, border: '1px solid', borderColor: 'divider' }}><Stack direction="row" spacing={1} alignItems="center">
-      <IconButton onClick={() => navigate('/flow-builder')}><ArrowBackIcon /></IconButton>
-      <TextField size="small" value={flow?.name || ''} onChange={(e) => setFlow({ ...flow, name: e.target.value })} sx={{ width: 260 }} />
-      <Box flex={1} />
-      <WhatsAppAccountSelect value={flow?.whatsappAccountId || ''} onChange={(value) => { setFlow({ ...flow, whatsappAccountId: value || null }); setIsDirty(true); }} sx={{ width: 260 }} />
-      <TextField select size="small" label="Department" value={flow?.departmentId || ''} onChange={(event) => { setFlow({ ...flow, departmentId: event.target.value || null }); setIsDirty(true); }} sx={{ width: 210 }}>
-        <MenuItem value="">All assigned departments</MenuItem>
-        {departments.map((department) => <MenuItem key={department.id} value={department.id}>{department.name}</MenuItem>)}
-      </TextField>
-      <Tooltip title="Zoom out"><IconButton onClick={() => instance?.zoomOut()}><ZoomOutIcon /></IconButton></Tooltip>
-      <Tooltip title="Zoom in"><IconButton onClick={() => instance?.zoomIn()}><ZoomInIcon /></IconButton></Tooltip>
-      <Button startIcon={<ZoomOutMapIcon />} onClick={() => instance?.fitView()}>Fit</Button>
-      {isDirty && <Chip size="small" color="warning" label="Unsaved" />}
-      <Button startIcon={<SaveIcon />} variant="outlined" onClick={() => save().catch((e) => setError(e.response?.data?.message || e.message))}>Save</Button>
-      <Button startIcon={<RocketLaunchIcon />} variant="contained" color={flow?.status === 'published' ? 'warning' : 'primary'} onClick={() => publish().catch((e) => setError(e.response?.data?.message || e.message))}>{flow?.status === 'published' ? 'Unpublish' : 'Publish'}</Button>
-      <Button startIcon={<PlayArrowIcon />} color="success" variant="contained" onClick={() => test().catch((e) => setError(e.response?.data?.message || e.message))}>Test flow</Button>
-    </Stack></Paper>
+    <Paper elevation={0} sx={{ p: 1, border: '1px solid', borderColor: 'divider' }}>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <IconButton onClick={() => navigate('/flow-builder')}><ArrowBackIcon /></IconButton>
+        <TextField size="small" value={flow?.name || ''} onChange={(e) => setFlow({ ...flow, name: e.target.value })} sx={{ width: 260 }} />
+        <Box flex={1} />
+        <TextField select size="small" label="Department" value={flow?.departmentId || ''} onChange={(event) => { setFlow({ ...flow, departmentId: event.target.value || null }); setIsDirty(true); }} sx={{ width: 210 }}>
+          <MenuItem value="">All assigned departments</MenuItem>
+          {departments.map((department) => <MenuItem key={department.id} value={department.id}>{department.name}</MenuItem>)}
+        </TextField>
+        <Tooltip title="Zoom out"><IconButton onClick={() => instance?.zoomOut()}><ZoomOutIcon /></IconButton></Tooltip>
+        <Tooltip title="Zoom in"><IconButton onClick={() => instance?.zoomIn()}><ZoomInIcon /></IconButton></Tooltip>
+        <Button startIcon={<ZoomOutMapIcon />} onClick={() => instance?.fitView()}>Fit</Button>
+        {isDirty && <Chip size="small" color="warning" label="Unsaved" />}
+        <Button startIcon={<SaveIcon />} variant="outlined" onClick={() => save().catch((e) => setError(e.response?.data?.message || e.message))}>Save</Button>
+        <Button startIcon={<RocketLaunchIcon />} variant="contained" color={flow?.status === 'published' ? 'warning' : 'primary'} onClick={() => publish().catch((e) => setError(e.response?.data?.message || e.message))}>{flow?.status === 'published' ? 'Unpublish' : 'Publish'}</Button>
+        <Button startIcon={<PlayArrowIcon />} color="success" variant="contained" onClick={() => test().catch((e) => setError(e.response?.data?.message || e.message))}>Test flow</Button>
+      </Stack>
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 1, pl: 6, flexWrap: 'wrap' }}>
+        <Typography variant="caption" fontWeight={800} color="text.secondary">Channels:</Typography>
+        {CHANNEL_OPTIONS.map(([value, label]) => (
+          <FormControlLabel
+            key={value}
+            control={<Checkbox size="small" checked={channels.includes(value)} onChange={() => toggleChannel(value)} />}
+            label={<Typography fontSize={13}>{label}</Typography>}
+          />
+        ))}
+        {channels.includes('whatsapp') && <WhatsAppAccountSelect value={flow?.whatsappAccountId || ''} onChange={(value) => { setFlow({ ...flow, whatsappAccountId: value || null }); setIsDirty(true); }} sx={{ width: 240 }} />}
+        {channels.some((value) => value !== 'whatsapp') && <FacebookPageSelect value={flow?.facebookPageId || ''} onChange={(value) => { setFlow({ ...flow, facebookPageId: value || null }); setIsDirty(true); }} sx={{ width: 220 }} />}
+      </Stack>
+    </Paper>
     <Box sx={{ display: 'grid', gridTemplateColumns: '250px minmax(500px, 1fr)', gap: 1, flex: 1, minHeight: 0 }}>
       <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', overflow: 'auto' }}>
         <Typography variant="h6" fontWeight={900}>Flow blocks</Typography>

@@ -53,6 +53,11 @@ class FacebookCommentService {
       contactId: contact?.id || null,
       leadId: lead?.id || null,
       commentId: comment.id,
+      // Threaded through so a comment-triggered flow can resolve/create a
+      // private Messenger conversation on demand (see
+      // flow.service.js:executeFacebookMessageNode) without a second,
+      // duplicate identity-resolution pass.
+      psid: psid || null,
       text: comment.message
     }).catch((error) => logger.warn('facebook_comment_flow_dispatch_failed', { facebookPageId, message: error.message })));
 

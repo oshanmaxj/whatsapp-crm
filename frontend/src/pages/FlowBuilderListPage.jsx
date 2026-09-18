@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid, Paper,
-  Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography
+  Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
@@ -163,12 +163,17 @@ function FlowBuilderListPage() {
       <Paper sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }} elevation={0}>
         <TableContainer sx={{ overflowX: 'auto' }}>
           <Table>
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Trigger</TableCell><TableCell>WhatsApp number</TableCell><TableCell>Status</TableCell><TableCell>Updated</TableCell><TableCell>Runs</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Trigger</TableCell><TableCell>Priority</TableCell><TableCell>WhatsApp number</TableCell><TableCell>Status</TableCell><TableCell>Updated</TableCell><TableCell>Runs</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {flows.map((flow) => (
                 <TableRow key={flow.id} hover>
                   <TableCell><Typography fontWeight={850}>{flow.name}</Typography><Typography variant="body2" color="text.secondary">{flow.description || '-'}</Typography></TableCell>
                   <TableCell>{(flow.triggerKeywords || []).join(', ') || '-'}</TableCell>
+                  <TableCell>
+                    <Tooltip title="Lower number runs first when more than one flow matches the same message. Default is 100.">
+                      <Chip size="small" variant="outlined" label={`Priority ${Number(flow.triggerConfig?.priority ?? 100) || 100}`} />
+                    </Tooltip>
+                  </TableCell>
                   <TableCell>{flow.whatsappPhoneNumberId || 'Default'}</TableCell>
                   <TableCell><Chip size="small" label={flow.status} color={flow.status === 'published' ? 'success' : 'default'} /></TableCell>
                   <TableCell>{flow.updatedAt ? new Date(flow.updatedAt).toLocaleString() : '-'}</TableCell>
@@ -182,7 +187,7 @@ function FlowBuilderListPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {flows.length === 0 && <TableRow><TableCell colSpan={7}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">No flows yet. Create your first WhatsApp automation.</Typography></TableCell></TableRow>}
+              {flows.length === 0 && <TableRow><TableCell colSpan={8}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">No flows yet. Create your first WhatsApp automation.</Typography></TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>

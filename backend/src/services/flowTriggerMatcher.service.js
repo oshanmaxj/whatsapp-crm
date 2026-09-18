@@ -53,7 +53,11 @@ function sourceMatches(source, event = {}) {
   return event.eventType === source;
 }
 
-function matchesTrigger(flow, event = {}, options = {}) {
+// Single source of truth for trigger evaluation, shared by the public boolean
+// matchesTrigger() (used for all actual gating decisions — untouched behavior)
+// and evaluateTrigger() (used only for diagnostic/observability logging, so a
+// rejected candidate's reason can be reported without guessing).
+function evaluateTrigger(flow, event = {}, options = {}) {
   // Enforced here (not just at the caller's candidate query) so an unscoped
   // WhatsApp flow can never fire on a Facebook event and vice versa, even if
   // matchesTrigger is ever called directly against an unfiltered flow list.
@@ -62,28 +66,33 @@ function matchesTrigger(flow, event = {}, options = {}) {
   // legacy single `channel` value — so a flow with channels=NULL matches
   // exactly one channel today, unchanged from before multi-channel existed.
   const eventChannel = event.channel || 'whatsapp';
-  if (!flowChannels(flow).includes(eventChannel)) return false;
+  if (!flowChannels(flow).includes(eventChannel)) return { matched: false, reason: 'CHANNEL_NOT_SCOPED' };
   const config = flow.triggerConfig || {};
   const source = config.source || flow.triggerType || 'inbound_message';
-  if (!sourceMatches(source, event)) return false;
+  if (!sourceMatches(source, event)) return { matched: false, reason: 'SOURCE_MISMATCH' };
   // Scoped to the event's own channel: a multi-channel flow legitimately has
   // both whatsappAccountId and facebookPageId set (one per enabled channel),
   // so only the id matching the incoming event's channel is relevant here —
   // otherwise a WhatsApp event on a WhatsApp+Facebook flow would be wrongly
   // rejected by the flow's (irrelevant, for this event) facebookPageId scope.
   if (eventChannel === 'whatsapp') {
-    if (flow.whatsappAccountId && String(flow.whatsappAccountId) !== String(event.whatsappAccountId || '')) return false;
-  } else if (flow.facebookPageId && String(flow.facebookPageId) !== String(event.facebookPageId || '')) return false;
-  if (config.courseId && String(config.courseId) !== String(event.courseId || event.lead?.courseId || '')) return false;
-  if (config.course && normalizeText(config.course) !== normalizeText(event.course || event.lead?.courseInterested || '')) return false;
-  if (config.campaignId && String(config.campaignId) !== String(event.campaignId || '')) return false;
-  if (config.contactSource && String(config.contactSource) !== String(event.contactSource || '')) return false;
+    if (flow.whatsappAccountId && String(flow.whatsappAccountId) !== String(event.whatsappAccountId || '')) return { matched: false, reason: 'WHATSAPP_ACCOUNT_SCOPE_MISMATCH' };
+  } else if (flow.facebookPageId && String(flow.facebookPageId) !== String(event.facebookPageId || '')) return { matched: false, reason: 'FACEBOOK_PAGE_SCOPE_MISMATCH' };
+  if (config.courseId && String(config.courseId) !== String(event.courseId || event.lead?.courseId || '')) return { matched: false, reason: 'COURSE_ID_MISMATCH' };
+  if (config.course && normalizeText(config.course) !== normalizeText(event.course || event.lead?.courseInterested || '')) return { matched: false, reason: 'COURSE_NAME_MISMATCH' };
+  if (config.campaignId && String(config.campaignId) !== String(event.campaignId || '')) return { matched: false, reason: 'CAMPAIGN_ID_MISMATCH' };
+  if (config.contactSource && String(config.contactSource) !== String(event.contactSource || '')) return { matched: false, reason: 'CONTACT_SOURCE_MISMATCH' };
   const configured = config.keywords?.length ? config.keywords : flow.triggerKeywords;
-  return keywordMatches(event.text || event.buttonPayload, configured, config.matchType || config.keywordMatchMode || 'contains', {
+  const keywordMatch = keywordMatches(event.text || event.buttonPayload, configured, config.matchType || config.keywordMatchMode || 'contains', {
     caseInsensitive: config.caseInsensitive !== false,
     trimWhitespace: config.normalizeWhitespace !== false,
     allowRegex: Boolean(options.allowRegex)
   });
+  return keywordMatch ? { matched: true, reason: null } : { matched: false, reason: 'KEYWORD_MISMATCH' };
 }
 
-module.exports = { normalizeText, keywords, keywordMatches, matchesTrigger, MATCH_TYPES, SOURCES };
+function matchesTrigger(flow, event = {}, options = {}) {
+  return evaluateTrigger(flow, event, options).matched;
+}
+
+module.exports = { normalizeText, keywords, keywordMatches, matchesTrigger, evaluateTrigger, MATCH_TYPES, SOURCES };

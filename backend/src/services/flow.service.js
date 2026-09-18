@@ -666,7 +666,50 @@ class FlowService {
       } else if (await this.flowReferenceReaches(ref.target, flow.id, new Set())) errors.push({ nodeKey: ref.node.nodeKey, message: 'Circular flow reference detected.' });
     }
     errors.push(...channelCompat.nodeCompatibilityIssues(flow));
+    errors.push(...await this.triggerPriorityConflicts(flow));
     return errors;
+  }
+
+  // Conservative, non-blocking heads-up (never an error — see normalizeValidation's
+  // severity split) that another published flow could plausibly race this one for
+  // the same inbound event under today's first-match-wins/tied-priority semantics
+  // (see handleDomainEvent). This is not a full overlap solver: it only compares
+  // channel/account/page scope, tied triggerConfig.priority, and whether both
+  // triggers are message-driven — deliberately simple so it stays understandable.
+  async triggerPriorityConflicts(flow) {
+    const MESSAGE_LIKE_SOURCES = new Set([
+      'inbound_message', 'any_message', 'first_message',
+      'facebook_message_received', 'facebook_comment_received', 'facebook_comment_keyword'
+    ]);
+    const source = flow.triggerConfig?.source || flow.triggerType || 'inbound_message';
+    if (!MESSAGE_LIKE_SOURCES.has(source)) return [];
+    const channels = channelCompat.flowChannels(flow);
+    const priority = Number(flow.triggerConfig?.priority ?? 100) || 100;
+    const others = await Flow.findAll({
+      where: { status: 'published', id: { [Op.ne]: flow.id } },
+      attributes: ['id', 'name', 'channel', 'channels', 'whatsappAccountId', 'facebookPageId', 'triggerConfig', 'triggerType']
+    });
+    const warnings = [];
+    for (const other of others) {
+      const otherSource = other.triggerConfig?.source || other.triggerType || 'inbound_message';
+      if (!MESSAGE_LIKE_SOURCES.has(otherSource)) continue;
+      const otherPriority = Number(other.triggerConfig?.priority ?? 100) || 100;
+      if (otherPriority !== priority) continue;
+      const otherChannels = channelCompat.flowChannels(other);
+      const sharedChannels = channels.filter((channel) => otherChannels.includes(channel));
+      if (!sharedChannels.length) continue;
+      const scopeOverlaps = sharedChannels.some((channel) => (channel === 'whatsapp'
+        ? (!flow.whatsappAccountId || !other.whatsappAccountId || String(flow.whatsappAccountId) === String(other.whatsappAccountId))
+        : (!flow.facebookPageId || !other.facebookPageId || String(flow.facebookPageId) === String(other.facebookPageId))));
+      if (!scopeOverlaps) continue;
+      warnings.push({
+        severity: 'warning',
+        field: 'triggerConfig.priority',
+        code: 'FLOW_TRIGGER_PRIORITY_CONFLICT',
+        message: `Another published flow ("${other.name}") may match the same messages at Priority ${priority}. Execution order may depend on which matching flow is evaluated first.`
+      });
+    }
+    return warnings;
   }
 
   async flowReferenceReaches(currentFlowId, targetFlowId, visited) {
@@ -1765,15 +1808,41 @@ class FlowService {
       },
       include: this.includeBuilder()
     });
-    const matched = candidates.filter((candidate) => triggerMatcher.matchesTrigger(candidate, { ...event, contact, lead, whatsappAccountId, facebookPageId }, { allowRegex: candidate.triggerConfig?.regexPrivileged === true })).sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
+    const evalContext = { ...event, contact, lead, whatsappAccountId, facebookPageId };
+    const evaluations = candidates.map((candidate) => ({
+      candidate,
+      ...triggerMatcher.evaluateTrigger(candidate, evalContext, { allowRegex: candidate.triggerConfig?.regexPrivileged === true })
+    }));
+    const matched = evaluations
+      .filter((entry) => entry.matched)
+      .map((entry) => entry.candidate)
+      .sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
     const results = [];
     const eventKey = event.eventId ? `event:${event.eventType}:${event.eventId}` : null;
+    const startedFlowIds = [];
+    const skippedAsDuplicate = [];
     for (const candidate of matched) {
       const duplicate = eventKey ? await FlowRun.findOne({ where: { flowId: candidate.id, lastWhatsappMessageId: eventKey } }) : null;
-      if (duplicate) { results.push(await this.getRun(duplicate.id)); continue; }
+      if (duplicate) { results.push(await this.getRun(duplicate.id)); skippedAsDuplicate.push(candidate.id); continue; }
       results.push(await this.executeFlow(candidate, { ...event, contactId, leadId, conversationId: conversation?.id || event.conversationId || null, contact, lead, conversation, whatsappAccountId, facebookPageId, whatsappMessageId: eventKey }));
+      startedFlowIds.push(candidate.id);
       if (candidate.triggerConfig?.stopAfterMatch !== false) break;
     }
+    // Diagnostic only — never logs message text/body or any token/secret.
+    // candidateFlowIds/matchedFlowIds let a "why didn't my flow run" question be
+    // answered from logs alone; rejectedFlowIds carries the reason evaluateTrigger()
+    // computed for each non-matching candidate (e.g. WHATSAPP_ACCOUNT_SCOPE_MISMATCH).
+    logger.info('flow_domain_event_evaluated', {
+      eventType: event.eventType || null,
+      channel: event.channel || 'whatsapp',
+      facebookPageId,
+      contactId,
+      candidateFlowIds: candidates.map((flow) => flow.id),
+      matchedFlowIds: matched.map((flow) => flow.id),
+      startedFlowIds,
+      skippedAsDuplicateFlowIds: skippedAsDuplicate,
+      rejectedFlowIds: evaluations.filter((entry) => !entry.matched).map((entry) => ({ flowId: entry.candidate.id, reason: entry.reason }))
+    });
     return results;
   }
 

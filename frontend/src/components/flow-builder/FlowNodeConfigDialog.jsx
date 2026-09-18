@@ -431,6 +431,11 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
       let nextConfig = { ...config };
       if (node.data.nodeType === 'start') {
         nextConfig = { ...nextConfig, keywords: normalizeKeywords(nextConfig.keywords), keywordMatchMode: nextConfig.matchType || nextConfig.keywordMatchMode || 'contains' };
+        // Blank priority is not written at all — the effective default (100) is
+        // applied at match time (flowTriggerMatcher/handleDomainEvent), so a flow
+        // the admin never touches this field on stays byte-for-byte unchanged.
+        if (nextConfig.priority === '' || nextConfig.priority === null || nextConfig.priority === undefined) delete nextConfig.priority;
+        else nextConfig.priority = Math.trunc(Number(nextConfig.priority));
       }
       if (node.data.nodeType === 'image_message' && nextConfig.sourceType === 'upload' && nextConfig.fileDataBase64 && !nextConfig.whatsappMediaId) {
         const response = await uploadFlowMedia(flowId, {
@@ -528,13 +533,28 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
       {['facebook_comment_received', 'facebook_comment_keyword'].includes(config.source) && <Typography variant="caption" color="text.secondary">Facebook comment triggers: leave keywords empty for "any comment", or use the keyword matching below for "exact"/"contains" comment text.</Typography>}
       <TextField label="Trigger keywords" value={Array.isArray(config.keywords) ? config.keywords.join(', ') : config.keywords || ''} onChange={(event) => set('keywords', normalizeKeywords(event.target.value))} error={Boolean(errors.keywords)} helperText={errors.keywords || 'Separate keywords with commas; Unicode and Sinhala are supported.'} fullWidth />
       {field('matchType', 'Keyword matching', { select: true, children: [['exact', 'Exact match'], ['contains', 'Contains'], ['starts_with', 'Starts with'], ['ends_with', 'Ends with'], ['regex', 'Regular expression (privileged)']].map(([value, text]) => <MenuItem key={value} value={value}>{text}</MenuItem>) })}
-      <Grid container spacing={1}><Grid item xs={6}>{field('priority', 'Priority', { type: 'number' })}</Grid><Grid item xs={6}>{field('contactSource', 'Optional source scope')}</Grid></Grid>
+      {field('contactSource', 'Optional source scope')}
       <Autocomplete options={actionOptions.courses || []} value={(actionOptions.courses || []).find((item) => item.name === config.course) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => set('course', item?.name || '')} renderInput={(params) => <TextField {...params} label="Optional course scope" />} />
       <Autocomplete options={actionOptions.campaigns || []} value={(actionOptions.campaigns || []).find((item) => String(item.id) === String(config.campaignId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => set('campaignId', item?.id || '')} renderInput={(params) => <TextField {...params} label="Optional campaign scope" />} />
       <FormControlLabel control={<Checkbox checked={config.caseInsensitive !== false} onChange={(event) => set('caseInsensitive', event.target.checked)} />} label="Case insensitive" />
       <FormControlLabel control={<Checkbox checked={config.normalizeWhitespace !== false} onChange={(event) => set('normalizeWhitespace', event.target.checked)} />} label="Trim and normalize whitespace" />
-      <FormControlLabel control={<Checkbox checked={config.stopAfterMatch !== false} onChange={(event) => set('stopAfterMatch', event.target.checked)} />} label="Stop after first matched trigger" />
-    </Section><Section title="Automation actions" description="Actions can run before or after this flow starts."><AutomationActionsEditor value={config.automationActions || []} onChange={(automationActions) => set('automationActions', automationActions)} options={actionOptions} optionsLoading={actionOptionsLoading} optionsError={actionOptionsError} onRefreshOptions={onRefreshActionOptions} onLabelOptionsChange={onLabelOptionsChange} /></Section></>;
+    </Section>
+    <Section title="Trigger precedence" description="Controls what happens when more than one published flow could match the same incoming message.">
+      <TextField
+        label="Trigger priority"
+        type="number"
+        inputProps={{ step: 1 }}
+        value={config.priority ?? ''}
+        onChange={(event) => set('priority', event.target.value)}
+        placeholder="100"
+        error={Boolean(errors.priority)}
+        helperText={errors.priority || 'When multiple flows match the same incoming message, the flow with the lower priority number runs first. Leave blank for the default (100). Examples: 10 = high priority, 100 = normal/default, 200 = lower priority.'}
+        fullWidth
+      />
+      <FormControlLabel control={<Checkbox checked={config.stopAfterMatch !== false} onChange={(event) => set('stopAfterMatch', event.target.checked)} />} label="Stop after this flow matches" />
+      <Typography variant="caption" color="text.secondary">When enabled, lower-priority matching flows will not run after this flow starts. Turn this off if you want other matching flows to also run.</Typography>
+    </Section>
+    <Section title="Automation actions" description="Actions can run before or after this flow starts."><AutomationActionsEditor value={config.automationActions || []} onChange={(automationActions) => set('automationActions', automationActions)} options={actionOptions} optionsLoading={actionOptionsLoading} optionsError={actionOptionsError} onRefreshOptions={onRefreshActionOptions} onLabelOptionsChange={onLabelOptionsChange} /></Section></>;
   } else if (type === 'interactive_message') {
     form = <>
       <Section title="Header" description="Optional content shown above the message body.">

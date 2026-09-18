@@ -33,6 +33,15 @@ test('interactive media headers require a valid uploaded or pending source', () 
   expect(nodeConfigErrors('interactive_message', { message: 'Choose', headerType: 'image', headerMediaId: 'meta-1', headerMediaAccountId: 7, headerMediaMimeType: 'image/jpeg', headerMediaSize: 1024, buttons: [{ id: 'b', title: 'Go' }] }).headerMedia).toBeUndefined();
 });
 
+test('trigger priority is optional but must be a whole number when provided', () => {
+  expect(nodeConfigErrors('start', { source: 'any_message' }).priority).toBeUndefined();
+  expect(nodeConfigErrors('start', { source: 'any_message', priority: '' }).priority).toBeUndefined();
+  expect(nodeConfigErrors('start', { source: 'any_message', priority: 10 }).priority).toBeUndefined();
+  expect(nodeConfigErrors('start', { source: 'any_message', priority: '10' }).priority).toBeUndefined();
+  expect(nodeConfigErrors('start', { source: 'any_message', priority: '10.5' }).priority).toMatch(/whole number/i);
+  expect(nodeConfigErrors('start', { source: 'any_message', priority: 'abc' }).priority).toMatch(/whole number/i);
+});
+
 test('node save applies the successful multipart upload result and removes embedded base64', () => {
   const saved = applyInteractiveMediaUpload({ message: 'Choose', headerMediaDataBase64: 'large-base64', headerMediaPreview: 'data:image/jpeg;base64,large-base64' }, {
     mediaId: 'meta-1234', whatsappAccountId: '7', localMediaRef: 'flow/22/header.jpg',

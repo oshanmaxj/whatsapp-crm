@@ -76,6 +76,9 @@ export function nodeConfigErrors(nodeType, config = {}) {
     if (config.source === 'inbound_message' && !normalizeKeywords(config.keywords).length) {
       errors.keywords = 'Add at least one trigger keyword.';
     }
+    if (config.priority !== '' && config.priority !== null && config.priority !== undefined && !Number.isInteger(Number(config.priority))) {
+      errors.priority = 'Priority must be a whole number.';
+    }
   }
   if (['text_message', 'interactive_message', 'button_message', 'list_message'].includes(nodeType)) {
     require('message', 'Enter a message body.');

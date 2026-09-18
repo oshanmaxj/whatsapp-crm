@@ -315,6 +315,35 @@ class FacebookMessengerService {
     return { items: messages.reverse().map(normalizeMessagePresentation), nextCursor, hasMore };
   }
 
+  // Best-effort Messenger profile lookup (GET /{psid}?fields=first_name,last_name)
+  // so a real person's name — not the literal placeholder "Facebook" — ends up
+  // on the Contact. Skipped entirely once we already have a real (non-
+  // placeholder) name for this PSID, so an ongoing conversation doesn't
+  // re-fetch on every message. Never throws: a lookup failure (permissions,
+  // rate limit, network) must never lose the inbound message it's attached to.
+  async resolveProfileDisplayName(page, psid) {
+    try {
+      const existing = await FacebookContact.findOne({ where: { facebookPageId: page.id, facebookPsid: psid } });
+      const existingContact = existing?.contactId ? await Contact.findByPk(existing.contactId) : null;
+      const hasRealName = existingContact?.firstName && !['Facebook', 'Facebook User'].includes(existingContact.firstName);
+      if (hasRealName) return null;
+
+      const config = await facebookPageService.runtimeConfig(page.id);
+      const { client } = await this.requestClient();
+      const response = await this.retryRequest(() => client.get(`/${psid}`, {
+        params: { fields: 'first_name,last_name', access_token: config.pageAccessToken },
+        timeout: 8000
+      }), 2);
+      const name = [response.data?.first_name, response.data?.last_name].filter(Boolean).join(' ').trim();
+      return name || null;
+    } catch (error) {
+      logger.warn('facebook_messenger_profile_lookup_failed', {
+        facebookPageId: page.id, message: error.response?.data?.error?.message || error.message
+      });
+      return null;
+    }
+  }
+
   // Full inbound pipeline for one Messenger `messaging` webhook item: resolve
   // page/contact/lead/conversation, persist the message idempotently, emit
   // live updates. Returns null for events this MVP intentionally ignores
@@ -336,11 +365,12 @@ class FacebookMessengerService {
     }
 
     const timestamp = item.timestamp ? new Date(Number(item.timestamp)) : new Date();
+    const displayName = await this.resolveProfileDisplayName(page, psid).catch(() => null);
 
     const resolved = await facebookConversationIdentityService.findOrCreateByPageAndPsid({
       facebookPageId: page.id,
       psid,
-      displayName: null,
+      displayName,
       lastMessageAt: timestamp,
       afterResolve: async ({ contact, conversation, transaction }) => {
         logger.info('facebook_contact_resolved', { facebookPageId: page.id, contactId: contact.id });
@@ -435,8 +465,9 @@ class FacebookMessengerService {
     if (!psid || !payload) return null;
 
     const timestamp = item.timestamp ? new Date(Number(item.timestamp)) : new Date();
+    const displayName = await this.resolveProfileDisplayName(page, psid).catch(() => null);
     const resolved = await facebookConversationIdentityService.findOrCreateByPageAndPsid({
-      facebookPageId: page.id, psid, displayName: null, lastMessageAt: timestamp
+      facebookPageId: page.id, psid, displayName, lastMessageAt: timestamp
     });
 
     logger.info('facebook_messenger_postback_received', { facebookPageId: page.id, conversationId: resolved.conversation.id });

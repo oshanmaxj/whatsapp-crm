@@ -21,7 +21,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import {
-  getFlow, getFlowActionOptions, publishFlow, saveFlowBuilder, testFlow, unpublishFlow
+  getFlow, getFlowActionOptions, publishFlow, saveFlowBuilder, testFlow, unpublishFlow, validateFlow
 } from '../services/flowBuilder.service';
 import { getRoles, getUsers } from '../services/userManagement.service';
 import FlowNodeConfigDialog from '../components/flow-builder/FlowNodeConfigDialog';
@@ -319,6 +319,17 @@ function Editor() {
     setFlow(response.data.data);
     setIsDirty(false);
     setNotice('Flow saved.');
+    await refreshValidation();
+  };
+  // Best-effort, non-blocking: surfaces trigger-priority conflicts and other
+  // publish-time warnings (e.g. unsupported nodes for a channel) as soon as
+  // they're known, without ever gating Save or Publish on this call succeeding.
+  const refreshValidation = async () => {
+    try {
+      const response = await validateFlow(id);
+      const body = response.data.data || {};
+      setValidationIssues({ errors: body.errors || [], warnings: body.warnings || [], requestId: null });
+    } catch { /* permission or transient failure — Save/Publish are unaffected */ }
   };
   const goToIssue = (issue) => {
     if (!issue.nodeId) return;
@@ -339,8 +350,11 @@ function Editor() {
     try {
       const response = await publishFlow(id);
       setFlow(response.data.data);
-      setValidationIssues({ errors: [], warnings: [], requestId: null });
       setError(''); setNotice('Flow published.');
+      // A successful publish can still carry non-blocking warnings (e.g. another
+      // published flow may race this one at the same trigger priority) — refresh
+      // rather than clear, so that warning stays visible instead of being hidden.
+      await refreshValidation();
     } catch (requestError) {
       const body = requestError.response?.data || {};
       const errors = Array.isArray(body.errors) ? body.errors : Array.isArray(body.details) ? body.details : [];

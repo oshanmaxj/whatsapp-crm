@@ -16,7 +16,7 @@ import { getAccessPayload } from '../utils/access';
 function contactName(conversation) {
   const contact = conversation?.contact;
   const name = [contact?.firstName, contact?.lastName].filter(Boolean).join(' ');
-  return name || 'Facebook user';
+  return name || 'Facebook User';
 }
 
 function ConversationRow({ conversation, active, onClick }) {

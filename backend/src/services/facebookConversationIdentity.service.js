@@ -1,6 +1,13 @@
 const models = require('../models');
 const logger = require('../config/logger');
 
+// Names this service itself has ever written as a stand-in for "we don't
+// know this person's real name yet" — recognized so a later, real profile
+// name can upgrade the contact in place. Never used to search/merge
+// contacts; upgrades only ever touch the exact contact already keyed by
+// this Page+PSID.
+const PLACEHOLDER_CONTACT_NAMES = new Set(['Facebook', 'Facebook User']);
+
 function createFacebookConversationIdentityService(dependencies = {}) {
   const sequelize = dependencies.sequelize || models.sequelize;
   const Contact = dependencies.Contact || models.Contact;
@@ -31,14 +38,25 @@ function createFacebookConversationIdentityService(dependencies = {}) {
       : null;
     if (contact?.deletedAt) await contact.restore({ transaction });
 
+    const parts = String(displayName || '').trim().split(/\s+/).filter(Boolean);
+    const resolvedFirstName = parts.shift() || null;
+    const resolvedLastName = parts.join(' ') || null;
+
     if (!contact) {
-      const parts = String(displayName || '').trim().split(/\s+/).filter(Boolean);
+      // Never fabricated from the Page name — only from a real profile
+      // lookup the caller resolved (displayName), or this explicit,
+      // clearly-labeled placeholder when none was available.
       contact = await Contact.create({
         phone: null,
-        firstName: parts.shift() || 'Facebook',
-        lastName: parts.join(' ') || null,
+        firstName: resolvedFirstName || 'Facebook User',
+        lastName: resolvedLastName,
         status: 'active'
       }, { transaction });
+    } else if (resolvedFirstName && PLACEHOLDER_CONTACT_NAMES.has(contact.firstName)) {
+      // Upgrade this exact contact in place once a real name becomes
+      // available — never a name-based search/merge across contacts, and
+      // never overwrites a name this contact already genuinely has.
+      await contact.update({ firstName: resolvedFirstName, lastName: resolvedLastName }, { transaction });
     }
 
     if (!facebookContact) {

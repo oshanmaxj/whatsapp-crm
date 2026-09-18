@@ -170,6 +170,33 @@ function decodedButtonId(payload) {
   return parts[0] === 'flowbtn' && parts.length >= 4 ? parts.slice(3).join(':') : String(payload || '');
 }
 
+// The stable payload already sent to WhatsApp/Messenger — `flowbtn:{flowId}:
+// {nodeKey}:{buttonId}` — carries everything needed to resolve a button back
+// to its original flow/node/button DEFINITION, independent of any particular
+// FlowRun. decodedButtonId() above only ever kept the trailing buttonId,
+// which is why button resolution previously depended entirely on "the
+// contact's current waiting FlowRun" instead of this already-embedded
+// identity. This decodes the full reference so durable (menu/action) button
+// clicks can be resolved directly, without requiring a live waiting run.
+function decodeStableButtonReference(payload) {
+  const parts = String(payload || '').split(':');
+  if (parts[0] !== 'flowbtn' || parts.length < 4) return null;
+  const [, flowId, nodeKey] = parts;
+  const buttonId = parts.slice(3).join(':');
+  if (!/^\d+$/.test(flowId) || !nodeKey || !buttonId) return null;
+  return { flowId, nodeKey, buttonId };
+}
+
+// Same channel/account/page scoping already enforced for NEW trigger
+// matching (flowTriggerMatcher.service.js) — reused here so an old button
+// can never be honored across a different WhatsApp account or Facebook Page
+// than the one its flow is actually scoped to.
+function flowScopeMatchesEvent(flow, { channel, whatsappAccountId, facebookPageId }) {
+  if (!channelCompat.flowChannels(flow).includes(channel)) return false;
+  if (channel === 'whatsapp') return !flow.whatsappAccountId || String(flow.whatsappAccountId) === String(whatsappAccountId || '');
+  return !flow.facebookPageId || String(flow.facebookPageId) === String(facebookPageId || '');
+}
+
 function serializeFlow(flow) {
   const plain = typeof flow?.toJSON === 'function' ? flow.toJSON() : flow;
   if (!plain) return null;
@@ -1650,6 +1677,69 @@ class FlowService {
     };
   }
 
+  // Resolves a decoded {flowId, nodeKey, buttonId} reference back to the
+  // CURRENT flow/node/button definition — never trusting anything from the
+  // payload beyond identity. Returns null (never throws) for every unsafe or
+  // no-longer-valid case: flow missing, unpublished, wrong channel/account/
+  // Page scope, node deleted, or button removed — so the caller can fail
+  // safe instead of guessing.
+  async resolveDurableButtonTarget({ flowId, nodeKey, buttonId }, { channel, whatsappAccountId, facebookPageId }) {
+    const flow = await Flow.findOne({ where: { id: Number(flowId) }, include: this.includeBuilder() });
+    if (!flow || flow.status !== 'published') return null;
+    if (!flowScopeMatchesEvent(flow, { channel, whatsappAccountId, facebookPageId })) return null;
+    const node = (flow.nodes || []).find((candidate) => candidate.nodeKey === nodeKey);
+    if (!node) return null;
+    const buttons = node.configJson?.buttons || node.configJson?.rows || [];
+    const button = buttons.find((candidate) => String(candidate.id || candidate.payload || '') === buttonId);
+    if (!button) return null;
+    return { flow, node, button };
+  }
+
+  // Executes a durable button click OUTSIDE of any existing FlowRun — used
+  // whenever the button's own stable reference no longer matches the
+  // contact's current waiting run (old message, later button on the same
+  // message, or no waiting run at all). Deliberately never mutates an
+  // unrelated run: this always operates on a brand-new, independent FlowRun
+  // scoped to the resolved flow/node, so an unrelated active run (e.g. a
+  // live user_input question) is never rewound or corrupted by an old menu
+  // button being pressed.
+  async executeDurableButtonClick({ flow, node, button, contact, lead, conversation, text, buttonPayload, interactiveType, whatsappMessageId, replyToWhatsappMessageId, rawPayload, whatsappAccountId, channel, facebookPageId }) {
+    const context = {
+      latestMessage: text, buttonPayload, interactiveType, whatsappMessageId, replyToWhatsappMessageId, rawPayload,
+      __replyingToNode: node.nodeKey, whatsappAccountId, channel, facebookPageId,
+      contactId: contact?.id || null, leadId: lead?.id || null, conversationId: conversation?.id || null,
+      contact: contact ? { ...(contact.toJSON ? contact.toJSON() : contact), name: contactName(contact) } : null,
+      lead: lead ? (lead.toJSON ? lead.toJSON() : lead) : null,
+      conversation: conversation ? (conversation.toJSON ? conversation.toJSON() : conversation) : null,
+      flowId: flow.id
+    };
+    const run = await FlowRun.create({
+      flowId: flow.id, contactId: contact?.id || null, conversationId: conversation?.id || null, leadId: lead?.id || null,
+      currentNodeKey: node.nodeKey, status: 'running', waitingForReply: false,
+      whatsappAccountId: channel === 'whatsapp' ? whatsappAccountId : null,
+      channel, facebookPageId: channel === 'whatsapp' ? null : facebookPageId,
+      contextJson: context, lastWhatsappMessageId: whatsappMessageId || null
+    });
+    logger.info('flow_durable_button_isolated_run_started', { flowId: flow.id, nodeKey: node.nodeKey, runId: run.id, channel });
+    const startNode = this.nextNode(flow, node, context, String(button.id || button.payload || ''));
+    const actionResult = await this.executeButtonAction({ flow, run, node, button, context });
+    await this.log(run, node, 'completed', context, { buttonId: button.id, actionType: actionResult.actionType, actions: actionResult.actions, durable: true });
+    if (actionResult.stop || !actionResult.continueFlow) {
+      await run.update({ status: 'completed', completedAt: new Date(), contextJson: context });
+      return this.getRun(run.id);
+    }
+    if (actionResult.pause) {
+      context.resumeAfterChild = true;
+      await run.update({ status: 'waiting', waitingForReply: false, waitingNodeKey: node.nodeKey, contextJson: context });
+      return this.getRun(run.id);
+    }
+    if (!startNode) {
+      await run.update({ status: 'completed', completedAt: new Date(), contextJson: context });
+      return this.getRun(run.id);
+    }
+    return this.executeFlow(flow, context, { run, startNode });
+  }
+
   async handleInboundMessage({
     text, contact, lead, conversation = null, messageType = 'text',
     interactiveType = null, buttonPayload = null, whatsappMessageId = null,
@@ -1675,6 +1765,39 @@ class FlowService {
           order: [['updated_at', 'DESC']]
         })
       : null;
+
+    // Durable button routing: a button/list reply's own stable payload
+    // (flowbtn:{flowId}:{nodeKey}:{buttonId}) already identifies exactly
+    // which flow/node/button it belongs to — independent of any FlowRun.
+    // Only bypass the existing waiting-run branch below when the click is
+    // NOT simply "press the button on the flow's current waiting node" (the
+    // common case, left byte-for-byte unchanged for zero regression risk).
+    // This is what lets an old button keep working after later text
+    // messages (Scenario A) and lets a second button on the same original
+    // message work after the first was already used (Scenario B), without
+    // ever touching an unrelated active waiting run (e.g. a live
+    // user_input question) that happens to belong to this same contact.
+    const stableButtonRef = decodeStableButtonReference(buttonPayload);
+    const isCurrentWaitingNode = Boolean(waitingRun) && stableButtonRef
+      && String(waitingRun.flowId) === String(stableButtonRef.flowId) && waitingRun.waitingNodeKey === stableButtonRef.nodeKey;
+    if (stableButtonRef && !isCurrentWaitingNode) {
+      const resolved = await this.resolveDurableButtonTarget(stableButtonRef, { channel, whatsappAccountId, facebookPageId });
+      if (!resolved) {
+        // Flow unpublished/deleted, node/button removed, or wrong account/
+        // Page scope — an expired or foreign button click. Never fall
+        // through to feed this payload into an unrelated waiting run.
+        logger.warn('flow_durable_button_reference_invalid', {
+          channel, whatsappAccountId: channel === 'whatsapp' ? whatsappAccountId : null,
+          facebookPageId: channel === 'whatsapp' ? null : facebookPageId
+        });
+        return null;
+      }
+      return this.executeDurableButtonClick({
+        ...resolved, contact, lead, conversation, text, buttonPayload, interactiveType, whatsappMessageId,
+        replyToWhatsappMessageId, rawPayload, whatsappAccountId, channel, facebookPageId
+      });
+    }
+
     if (waitingRun) {
       const flow = await this.get(waitingRun.flowId);
       const waitingNode = (flow.nodes || []).find((node) => node.nodeKey === waitingRun.waitingNodeKey);

@@ -1080,7 +1080,7 @@ class FlowService {
         }
         const output = channel === 'whatsapp'
           ? await this.executeMessageNode(node, config, context, realSendEnabled)
-          : await this.executeFacebookMessageNode(node, config, context, realSendEnabled);
+          : await this.executeFacebookMessageNode(node, config, context, realSendEnabled, run);
         await this.log(run, node, output.status, context, output);
         const waitsForReply = ['button_message', 'list_message', 'interactive_message', 'whatsapp_flow', 'appointment_booking'].includes(node.nodeType);
         return {
@@ -1525,8 +1525,9 @@ class FlowService {
   // function above — this is the "adapter" side of the dispatch in
   // executeNode. Only called for node types isNodeSupportedOnChannel already
   // approved for this channel; unsupported types never reach here.
-  async executeFacebookMessageNode(node, config, context, realSendEnabled) {
+  async executeFacebookMessageNode(node, config, context, realSendEnabled, run = null) {
     const facebookMessengerService = require('./facebookMessenger.service');
+    const facebookMediaUrlResolver = require('./facebookMediaUrlResolver.service');
     const mediaNode = ['image_message', 'video_message', 'audio_message', 'file_document'].includes(node.nodeType);
     const explicitContent = config.message ?? config.caption;
     let text = render(explicitContent || (mediaNode ? '' : node.label || ''), context);
@@ -1561,13 +1562,16 @@ class FlowService {
     } else if (mediaNode) {
       const typeByNode = { image_message: 'image', video_message: 'video', audio_message: 'audio', file_document: 'document' };
       const mediaType = typeByNode[node.nodeType];
-      const configuredUrl = mediaType === 'image' ? (config.imageUrl || config.mediaUrl)
-        : mediaType === 'document' ? (config.fileUrl || config.mediaUrl) : config.mediaUrl;
-      if (!configuredUrl || String(configuredUrl).startsWith('data:')) {
-        throw Object.assign(new Error('Facebook Messenger media nodes require a public HTTPS URL (locally uploaded WhatsApp media cannot be sent to Messenger).'), { code: 'FACEBOOK_MEDIA_URL_REQUIRED', status: 422 });
-      }
+      // Same shared resolver for every media node type: an admin-provided
+      // public HTTPS URL is used as-is, and a Flow-Builder-uploaded (WhatsApp)
+      // file is resolved to a short-lived, HMAC-signed public CRM URL Meta's
+      // servers can fetch without CRM authentication — see
+      // facebookMediaUrlResolver.service.js for the full strategy/security model.
+      const resolvedMedia = await facebookMediaUrlResolver.resolveForMessenger({
+        mediaType, config, flowId: context.flowId || null, flowRunId: run?.id || null, nodeId: node.nodeKey || null
+      });
       response = await facebookMessengerService.sendMediaMessage({
-        conversationId, mediaType, url: requireHttpsUrl(configuredUrl, `${mediaType} URL`), caption: text || null, userId: actorUserId
+        conversationId, mediaType, url: resolvedMedia.url, caption: text || null, userId: actorUserId
       });
     } else if (['button_message', 'interactive_message'].includes(node.nodeType)) {
       const buttons = normalizeButtons(config.buttons).slice(0, 3);
@@ -1576,10 +1580,35 @@ class FlowService {
       // media header: send the header as its own media message first (text
       // headers are folded into the button template's own text instead).
       const headerType = config.headerType === 'media' ? (config.headerMediaType || 'image') : (config.headerType || 'none');
-      if (['image', 'video', 'document'].includes(headerType) && config.headerMediaUrl && !String(config.headerMediaUrl).startsWith('data:')) {
-        await facebookMessengerService.sendMediaMessage({
-          conversationId, mediaType: headerType, url: requireHttpsUrl(config.headerMediaUrl, 'header media URL'), userId: actorUserId
-        });
+      if (['image', 'video', 'document'].includes(headerType)) {
+        // Same field-name shape resolveForMessenger already reads for a
+        // standalone media node (mediaUrl/mediaLocalRef/mimeType/
+        // whatsappMediaId) — just adapted from this node's "header*"-prefixed
+        // fields, so this reuses the exact same resolver/route/signing logic
+        // rather than a second copy of it.
+        const headerConfig = {
+          mediaUrl: config.headerMediaUrl,
+          mediaLocalRef: config.headerMediaLocalRef,
+          mimeType: config.headerMediaMimeType,
+          whatsappMediaId: config.headerMediaId,
+          mediaAccountId: config.headerMediaAccountId
+        };
+        const headerMediaConfigured = Boolean(config.headerMediaUrl || config.headerMediaLocalRef || config.headerMediaId);
+        // Nothing was ever attached (a bare "media" header with no file/URL
+        // picked yet) — there is nothing to discard, so this is not an error.
+        // Anything that WAS configured but can no longer resolve (missing
+        // file, invalid reference, unsupported type, etc.) throws instead of
+        // being silently dropped — the node fails loudly, same as any other
+        // media-resolution failure.
+        if (headerMediaConfigured) {
+          const resolvedHeaderMedia = await facebookMediaUrlResolver.resolveForMessenger({
+            mediaType: headerType, config: headerConfig,
+            flowId: context.flowId || null, flowRunId: run?.id || null, nodeId: node.nodeKey || null
+          });
+          await facebookMessengerService.sendMediaMessage({
+            conversationId, mediaType: headerType, url: resolvedHeaderMedia.url, userId: actorUserId
+          });
+        }
       }
       const headerText = headerType === 'text' ? String(config.headerText || '') : '';
       response = await facebookMessengerService.sendButtonMessage({

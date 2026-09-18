@@ -39,9 +39,16 @@ function decryptSecret(value) {
   return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64')), decipher.final()]).toString('utf8');
 }
 
+// The public HTTPS origin Meta uses to reach this backend — already the
+// correct "our own public base URL" for anything else Meta's servers need
+// to fetch from us (e.g. Messenger media attachments), so it's reused as-is
+// rather than introducing a second, separate public-URL setting.
+function publicBaseUrl() {
+  return envValue('FACEBOOK_WEBHOOK_BASE_URL', 'https://api.firstofsolutions.com').replace(/\/$/, '');
+}
+
 function callbackUrl() {
-  const base = envValue('FACEBOOK_WEBHOOK_BASE_URL', 'https://api.firstofsolutions.com').replace(/\/$/, '');
-  return `${base}${CALLBACK_PATH}`;
+  return `${publicBaseUrl()}${CALLBACK_PATH}`;
 }
 
 function envDefaults() {
@@ -191,3 +198,4 @@ class FacebookSettingsService {
 
 module.exports = new FacebookSettingsService();
 module.exports.callbackUrl = callbackUrl;
+module.exports.publicBaseUrl = publicBaseUrl;

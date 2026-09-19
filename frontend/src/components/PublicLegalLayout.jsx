@@ -63,6 +63,7 @@ export default function PublicLegalLayout({ title, subtitle, children }) {
             </Typography>
             <Stack direction="row" spacing={2}>
               <Link component={RouterLink} to="/privacy-policy" underline="hover" variant="body2">Privacy Policy</Link>
+              <Link component={RouterLink} to="/terms-of-service" underline="hover" variant="body2">Terms of Service</Link>
               <Link component={RouterLink} to="/facebook-data-deletion" underline="hover" variant="body2">Facebook Data Deletion</Link>
             </Stack>
           </Stack>

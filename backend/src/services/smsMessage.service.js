@@ -73,7 +73,13 @@ class SmsMessageService {
       await auditService.record({ userId: user?.id, action: 'SMS_SENT', entityType: 'sms_message', entityId: String(record.id), changes: { to: toNumber, provider: result.provider, source } });
       return record;
     } catch (error) {
-      await record.update({ status: 'failed', provider: error.provider || null, errorMessage: error.message, failedAt: new Date() });
+      // SMS History (an admin diagnostics view) gets the full technical/
+      // provider-specific error text when the adapter preserved one (e.g. a
+      // clean-for-users message like the sender-mask-not-approved case
+      // still keeps its raw provider wording here); the error re-thrown
+      // below — and therefore the immediate API response / UI alert — keeps
+      // whatever clean `message` the adapter chose to surface instead.
+      await record.update({ status: 'failed', provider: error.provider || null, errorMessage: error.technicalMessage || error.message, failedAt: new Date() });
       await auditService.record({ userId: user?.id, action: 'SMS_SEND_FAILED', entityType: 'sms_message', entityId: String(record.id), changes: { to: toNumber, provider: error.provider || null, source, error: error.message } });
       throw error;
     }

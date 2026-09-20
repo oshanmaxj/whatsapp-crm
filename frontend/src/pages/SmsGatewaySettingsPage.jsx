@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Alert, Box, Button, Card, CardContent, Chip, Divider, FormControlLabel,
+  Alert, Box, Button, Card, CardContent, Divider, FormControlLabel,
   IconButton, InputAdornment, MenuItem, Stack, Switch, TextField, Tooltip, Typography
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -18,11 +18,23 @@ const emptySettings = {
   lastTestError: null
 };
 
+// Formats the provider-neutral { balance, currency } shape the backend
+// already normalizes (see smsgo.provider.js's getBalance()) — this
+// component never sees or parses a raw provider response.
+function formatBalance(balance) {
+  if (!balance || typeof balance.balance !== 'number') return null;
+  const amount = balance.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return balance.currency ? `${balance.currency} ${amount}` : amount;
+}
+
 export default function SmsGatewaySettingsPage() {
   const [settings, setSettings] = React.useState(emptySettings);
   const [form, setForm] = React.useState({ isEnabled: false, activeProvider: 'smsgo', mode: 'sandbox', defaultMask: '', sandboxApiKey: '', liveApiKey: '' });
-  const [masks, setMasks] = React.useState([]);
+  // null = not yet fetched (show free-text entry); [] = fetched, none
+  // approved yet (show the friendly empty-state); non-empty = show a picker.
+  const [masks, setMasks] = React.useState(null);
   const [balance, setBalance] = React.useState(null);
+  const [balanceError, setBalanceError] = React.useState(null);
   const [message, setMessage] = React.useState(null);
   const [errors, setErrors] = React.useState({});
   const [saving, setSaving] = React.useState(false);
@@ -72,7 +84,7 @@ export default function SmsGatewaySettingsPage() {
 
   const testConnection = async () => {
     if (testing) return;
-    setTesting(true); setMessage(null);
+    setTesting(true); setMessage(null); setBalanceError(null);
     try {
       const { data } = await service.testSmsGatewayConnection();
       setBalance(data.data.result?.balance ?? null);
@@ -90,8 +102,9 @@ export default function SmsGatewaySettingsPage() {
     setFetchingMasks(true); setMessage(null);
     try {
       const { data } = await service.getSmsGatewayMasks();
-      const list = Array.isArray(data.data) ? data.data : (data.data?.masks || []);
-      setMasks(list);
+      // Backend already returns a flat array of mask id strings (normalized
+      // inside smsgo.provider.js) — no provider-specific shape to unwrap here.
+      setMasks(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       setMessage({ severity: 'error', text: error.response?.data?.message || error.message });
     } finally { setFetchingMasks(false); }
@@ -99,12 +112,13 @@ export default function SmsGatewaySettingsPage() {
 
   const fetchBalance = async () => {
     if (fetchingBalance) return;
-    setFetchingBalance(true); setMessage(null);
+    setFetchingBalance(true); setMessage(null); setBalanceError(null);
     try {
       const { data } = await service.getSmsGatewayBalance();
       setBalance(data.data);
     } catch (error) {
-      setMessage({ severity: 'error', text: error.response?.data?.message || error.message });
+      setBalance(null);
+      setBalanceError(error.response?.data?.message || error.message);
     } finally { setFetchingBalance(false); }
   };
 
@@ -161,18 +175,29 @@ export default function SmsGatewaySettingsPage() {
             <MenuItem value="sandbox">Sandbox</MenuItem>
             <MenuItem value="live">Live</MenuItem>
           </TextField>}
-          {capabilities.masks && <TextField
+          {capabilities.masks && Array.isArray(masks) && masks.length > 0 && (
+            // Approved masks are available — pick one rather than typing it,
+            // per the requirement that manual entry shouldn't be required
+            // once the provider has told us what's actually approved.
+            <TextField
+              select
+              label="Default sender mask"
+              value={masks.includes(form.defaultMask) ? form.defaultMask : ''}
+              onChange={(e) => setForm({ ...form, defaultMask: e.target.value })}
+              helperText="Used when a send doesn't specify its own mask. Only masks approved by the provider are listed."
+            >
+              {masks.map((mask) => <MenuItem key={mask} value={mask}>{mask}</MenuItem>)}
+            </TextField>
+          )}
+          {capabilities.masks && Array.isArray(masks) && masks.length === 0 && (
+            <Alert severity="warning">No approved sender masks are currently available from the SMS provider.</Alert>
+          )}
+          {capabilities.masks && masks === null && <TextField
             label="Default sender mask"
             value={form.defaultMask}
             onChange={(e) => setForm({ ...form, defaultMask: e.target.value })}
-            helperText="Used when a send doesn't specify its own mask."
+            helperText="Click Fetch Masks below to pick from the provider's approved masks instead of typing one."
           />}
-          {masks.length > 0 && <Stack direction="row" spacing={1} flexWrap="wrap">
-            {masks.map((entry) => {
-              const label = typeof entry === 'string' ? entry : (entry.mask || entry.name || JSON.stringify(entry));
-              return <Chip key={label} label={label} onClick={() => setForm({ ...form, defaultMask: label })} clickable size="small" />;
-            })}
-          </Stack>}
           <TextField
             type="password" autoComplete="new-password"
             label={settings.providerConfig?.sandboxApiKeyConfigured ? 'Sandbox API key (configured — leave blank to keep)' : 'Sandbox API key'}
@@ -199,7 +224,11 @@ export default function SmsGatewaySettingsPage() {
             Last test: {settings.lastTestStatus || 'Not tested'}{settings.lastTestAt ? ` at ${new Date(settings.lastTestAt).toLocaleString()}` : ''}
             {settings.lastTestError ? ` — ${settings.lastTestError}` : ''}
           </Typography>
-          {balance != null && <Typography variant="body2">Balance: {typeof balance === 'object' ? JSON.stringify(balance) : balance}</Typography>}
+          {formatBalance(balance) && <Box sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1, display: 'inline-block' }}>
+            <Typography variant="caption" color="text.secondary" display="block">Available Balance</Typography>
+            <Typography variant="h6">{formatBalance(balance)}</Typography>
+          </Box>}
+          {balanceError && <Alert severity="error">{balanceError}</Alert>}
         </Stack>
       </CardContent>
     </Card>

@@ -19,19 +19,34 @@ const SMSGO_STATUS_MAP = {
   rejected: 'rejected', invalid: 'rejected', blocked: 'rejected'
 };
 
+// SMSGo's own wording for an unapproved sender mask (observed live:
+// `Mask "First Of Ed" not approved. Available masks: `). Detected here, not
+// in generic business logic or the frontend, so the rest of the CRM only
+// ever sees a provider-neutral SENDER_MASK_NOT_APPROVED code — a future
+// provider that rejects unapproved masks differently just needs its own
+// adapter to map its own wording to the same code.
+const MASK_NOT_APPROVED_PATTERN = /mask.*not approved/i;
+const MASK_NOT_APPROVED_MESSAGE = 'SMS could not be sent because the selected sender mask is not approved by the SMS provider.';
+
 function invalidPhone(value) {
   return Object.assign(new Error(`Invalid Sri Lankan phone number: ${value}`), { status: 400, code: 'INVALID_PHONE_NUMBER' });
 }
 
-function gatewayError(message, { status = 502, code = 'SMSGO_REQUEST_FAILED', cause } = {}) {
-  return Object.assign(new Error(message), { status, code, exposeMessage: true, cause });
+// `technicalMessage` preserves the exact provider wording for logging/SMS
+// History diagnostics even when `message` (what reaches the API response
+// and the UI) has been swapped for a clean, generic explanation.
+function gatewayError(message, { status = 502, code = 'SMSGO_REQUEST_FAILED', cause, technicalMessage } = {}) {
+  return Object.assign(new Error(message), { status, code, exposeMessage: true, cause, technicalMessage: technicalMessage || message });
 }
 
 function unwrapError(error, fallbackMessage) {
   if (error.response) {
-    const message = error.response.data?.message || error.response.data?.error || fallbackMessage;
+    const providerMessage = error.response.data?.message || error.response.data?.error || fallbackMessage;
     const status = error.response.status >= 400 && error.response.status < 500 ? 422 : 502;
-    return gatewayError(message, { status, code: 'SMSGO_REQUEST_FAILED', cause: error });
+    if (MASK_NOT_APPROVED_PATTERN.test(providerMessage)) {
+      return gatewayError(MASK_NOT_APPROVED_MESSAGE, { status: 422, code: 'SENDER_MASK_NOT_APPROVED', cause: error, technicalMessage: providerMessage });
+    }
+    return gatewayError(providerMessage, { status, code: 'SMSGO_REQUEST_FAILED', cause: error, technicalMessage: providerMessage });
   }
   return gatewayError(fallbackMessage, { status: 502, code: 'SMSGO_UNREACHABLE', cause: error });
 }
@@ -128,20 +143,36 @@ class SmsGoProvider extends BaseSmsProvider {
     return results;
   }
 
+  // Normalizes SMSGo's `{success, data: {balance, currency}}` envelope into
+  // the provider-neutral `{balance, currency}` shape — this is the only
+  // place that shape is ever parsed. Nothing above this adapter (settings
+  // service, controller, frontend) ever sees the raw response.
   async getBalance() {
     try {
       const response = await withRetry(() => this.client().get('/account/balance'));
-      return response.data;
+      const data = response.data?.data || response.data || {};
+      const balance = Number(data.balance);
+      return {
+        balance: Number.isFinite(balance) ? balance : null,
+        currency: data.currency || null
+      };
     } catch (error) {
       throw unwrapError(error, 'Unable to fetch the SMSGo account balance.');
     }
   }
 
+  // Normalizes whatever shape SMSGo's masks endpoint returns (a bare array,
+  // `{data: [...]}}`, `{masks: [...]}}`, entries as plain strings or as
+  // objects) into a flat array of mask id strings — the only shape the
+  // generic layer and frontend ever need to render a picker.
   async getSenderMasks() {
     try {
       const response = await withRetry(() => this.client().get('/account/masks'));
       const data = response.data;
-      return Array.isArray(data) ? data : (data?.masks || data?.data || []);
+      const list = Array.isArray(data) ? data : (data?.data || data?.masks || []);
+      return list
+        .map((entry) => (typeof entry === 'string' ? entry : (entry?.mask || entry?.name || entry?.id || null)))
+        .filter((mask) => Boolean(mask));
     } catch (error) {
       throw unwrapError(error, 'Unable to fetch approved SMSGo sender masks.');
     }

@@ -33,6 +33,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import SmsIcon from '@mui/icons-material/Sms';
 import StorageIcon from '@mui/icons-material/Storage';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
@@ -126,6 +127,7 @@ export const modules = [
       { label: 'System Info', path: '/settings?tab=system', icon: <StorageIcon />, permission: 'settings.view', tab: 'system' },
       { label: 'Zoom Integration', path: '/settings/integrations/zoom', icon: <VideoLibraryIcon />, permission: 'settings.view' },
       { label: 'AI Providers', path: '/settings/ai-providers', icon: <SmartToyIcon />, permission: 'ai_providers.view' },
+      { label: 'SMS Gateway', path: '/settings/sms-gateway', icon: <SmsIcon />, permission: 'settings.view' },
       { label: 'Lead Statuses', path: '/settings/lead-statuses', icon: <TrendingUpIcon />, permission: 'lead_statuses.view' },
       { label: 'User Manager', path: '/users', icon: <ManageAccountsIcon />, permission: 'user-manager.view' },
       { label: 'Departments & Permissions', path: '/permissions', icon: <AdminPanelSettingsIcon />, permission: 'user-manager.edit' },

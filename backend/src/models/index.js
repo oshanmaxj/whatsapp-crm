@@ -131,6 +131,7 @@ const CallCenterPresenceSession = require('./callCenterPresenceSession.model');
 const SupportTicket = require('./supportTicket.model');
 const SupportTicketCategory = require('./supportTicketCategory.model');
 const SupportTicketMessage = require('./supportTicketMessage.model');
+const SmsMessage = require('./smsMessage.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -142,6 +143,7 @@ const models = {
   SupportTicket: SupportTicket(sequelize, Sequelize.DataTypes),
   SupportTicketCategory: SupportTicketCategory(sequelize, Sequelize.DataTypes),
   SupportTicketMessage: SupportTicketMessage(sequelize, Sequelize.DataTypes),
+  SmsMessage: SmsMessage(sequelize, Sequelize.DataTypes),
   Message: Message(sequelize, Sequelize.DataTypes),
   Contact: Contact(sequelize, Sequelize.DataTypes),
   LeadStatus: LeadStatus(sequelize, Sequelize.DataTypes),

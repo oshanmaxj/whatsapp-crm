@@ -8,6 +8,17 @@ const DEFAULT_BASE_URL = 'https://api.smsgo.lk/api/v1';
 const MAX_BULK_BATCH = 1000;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
+// Maps SMSGo's own (undocumented, best-effort) status vocabulary to the
+// CRM's canonical set. Only this file needs updating if SMSGo's real values
+// turn out different once live delivery reports are observed.
+const SMSGO_STATUS_MAP = {
+  queued: 'queued', pending: 'queued', accepted: 'queued', submitted: 'queued',
+  sent: 'sent',
+  delivered: 'delivered', delivrd: 'delivered',
+  failed: 'failed', undelivered: 'failed', undeliverable: 'failed', error: 'failed', expired: 'failed',
+  rejected: 'rejected', invalid: 'rejected', blocked: 'rejected'
+};
+
 function invalidPhone(value) {
   return Object.assign(new Error(`Invalid Sri Lankan phone number: ${value}`), { status: 400, code: 'INVALID_PHONE_NUMBER' });
 }
@@ -141,10 +152,12 @@ class SmsGoProvider extends BaseSmsProvider {
     return { mode: this.mode, balance };
   }
 
-  // req: { rawBody: Buffer|string, signatureHeader: string }. SMSGo signs
-  // with HMAC-SHA256 keyed by the active API key.
-  verifyWebhookSignature({ rawBody, signatureHeader }) {
-    if (!this.apiKey || !signatureHeader) return false;
+  // SMSGo signs with HMAC-SHA256 keyed by the active API key, sent in the
+  // `X-SMSGo-Signature` header. Express lower-cases incoming header names.
+  verifyWebhookSignature({ headers, rawBody }) {
+    if (!this.apiKey) return false;
+    const signatureHeader = headers?.['x-smsgo-signature'];
+    if (!signatureHeader || !rawBody) return false;
     const expected = crypto.createHmac('sha256', this.apiKey).update(rawBody).digest('hex');
     const expectedBuffer = Buffer.from(expected, 'utf8');
     const providedBuffer = Buffer.from(String(signatureHeader), 'utf8');
@@ -152,19 +165,25 @@ class SmsGoProvider extends BaseSmsProvider {
     return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
   }
 
-  // SMSGo's `sms.status_update` payload shape isn't documented beyond the
-  // event name, so this maps the plausible fields defensively rather than
-  // assuming an exact structure.
+  // SMSGo's own status vocabulary isn't documented beyond the `sms.status_update`
+  // event name, so this maps the plausible raw values defensively into the
+  // CRM's canonical set (queued/sent/delivered/failed/rejected/unknown) —
+  // this mapping table is exactly the "provider status mapping" that must
+  // stay inside the adapter. Anything unrecognized becomes 'unknown' rather
+  // than guessed at, so it fails safe instead of silently misclassifying a
+  // delivery outcome.
   normalizeWebhookEvent(payload) {
     const data = payload?.data || payload || {};
+    const rawStatus = String(data.status || payload?.status || '').trim();
+    const status = SMSGO_STATUS_MAP[rawStatus.toLowerCase()] || 'unknown';
     return {
       provider: this.name,
       providerMessageId: data.messageId || data.id || null,
-      status: String(data.status || payload?.status || '').toLowerCase() || 'unknown',
       recipient: data.to || data.recipient || null,
+      status,
       error: data.error || data.reason || null,
       timestamp: data.timestamp || payload?.timestamp || new Date().toISOString(),
-      rawMetadata: payload
+      metadata: { rawStatus: rawStatus || null, raw: payload }
     };
   }
 }

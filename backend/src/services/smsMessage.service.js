@@ -1,7 +1,16 @@
-const { SmsMessage } = require('../models');
+const { Op } = require('sequelize');
+const { SmsMessage, Contact, Lead, Student, User } = require('../models');
 const smsService = require('./sms/sms.service');
 const { normalizeSriLankanPhone } = require('../utils/phone');
 const auditService = require('./audit.service');
+const logger = require('../config/logger');
+
+const RELATED_INCLUDES = [
+  { model: Contact, as: 'contact', attributes: ['id', 'firstName', 'lastName', 'phone'] },
+  { model: Lead, as: 'lead', attributes: ['id', 'contactId'], include: [{ model: Contact, as: 'contact', attributes: ['id', 'firstName', 'lastName', 'phone'] }] },
+  { model: Student, as: 'student', attributes: ['id', 'name', 'phone'] },
+  { model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'] }
+];
 
 class SmsMessageService {
   // Ad-hoc / test single send: validates and normalizes the recipient,
@@ -50,6 +59,43 @@ class SmsMessageService {
       await auditService.record({ userId: user?.id, action: 'SMS_SEND_FAILED', entityType: 'sms_message', entityId: String(record.id), changes: { to: toNumber, provider: error.provider || null, source, error: error.message } });
       throw error;
     }
+  }
+
+  // Server-side paginated/filterable list for the SMS History page. Never
+  // loads the full table — always bounded by limit/offset.
+  async list({ status, provider, phone, dateFrom, dateTo, page = 1, pageSize = 25 } = {}) {
+    const where = {};
+    if (status) where.status = status;
+    if (provider) where.provider = provider;
+    if (phone) where.toNumber = { [Op.iLike]: `%${String(phone).replace(/\D/g, '')}%` };
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) where.createdAt[Op.gte] = new Date(dateFrom);
+      if (dateTo) where.createdAt[Op.lte] = new Date(dateTo);
+    }
+
+    const limit = Math.min(Math.max(Number(pageSize) || 25, 1), 100);
+    const currentPage = Math.max(Number(page) || 1, 1);
+    const offset = (currentPage - 1) * limit;
+
+    const { rows, count } = await SmsMessage.findAndCountAll({
+      where, limit, offset, order: [['createdAt', 'DESC']], include: RELATED_INCLUDES, distinct: true
+    });
+
+    return { rows, total: count, page: currentPage, pageSize: limit, totalPages: Math.max(Math.ceil(count / limit), 1) };
+  }
+
+  async getById(id) {
+    const record = await SmsMessage.findByPk(id, { include: RELATED_INCLUDES });
+    if (!record) throw Object.assign(new Error('SMS message not found.'), { status: 404, code: 'SMS_MESSAGE_NOT_FOUND' });
+    // Defense-in-depth: providerMetadata is whatever raw payload the
+    // provider sent us, so it's redacted through the same generic
+    // secret-key/value scrubber the request logger uses before ever
+    // leaving the server, even though a provider has no legitimate reason
+    // to echo our own API key back to us.
+    const json = record.toJSON();
+    json.providerMetadata = logger.redact(json.providerMetadata);
+    return json;
   }
 }
 

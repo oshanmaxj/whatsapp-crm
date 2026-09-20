@@ -1,8 +1,9 @@
 import React from 'react';
 import {
   Alert, Box, Button, Card, CardContent, Chip, Divider, FormControlLabel,
-  MenuItem, Stack, Switch, TextField, Typography
+  IconButton, InputAdornment, MenuItem, Stack, Switch, TextField, Tooltip, Typography
 } from '@mui/material';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import * as service from '../services/smsGateway.service';
 
 const emptySettings = {
@@ -10,6 +11,7 @@ const emptySettings = {
   activeProvider: 'smsgo',
   availableProviders: [{ id: 'smsgo', label: 'SMSGo.lk' }],
   capabilities: {},
+  webhookUrl: null,
   providerConfig: { mode: 'sandbox', defaultMask: '', sandboxApiKeyConfigured: false, liveApiKeyConfigured: false },
   lastTestStatus: null,
   lastTestAt: null,
@@ -121,6 +123,16 @@ export default function SmsGatewaySettingsPage() {
     } finally { setSendingTest(false); }
   };
 
+  const copyWebhookUrl = async () => {
+    if (!settings.webhookUrl) return;
+    try {
+      await navigator.clipboard.writeText(settings.webhookUrl);
+      setMessage({ severity: 'success', text: 'Webhook URL copied to clipboard.' });
+    } catch {
+      setMessage({ severity: 'error', text: 'Could not copy automatically — select and copy the URL manually.' });
+    }
+  };
+
   const capabilities = settings.capabilities || {};
 
   return <Box>
@@ -193,6 +205,28 @@ export default function SmsGatewaySettingsPage() {
     </Card>
 
     <Divider sx={{ my: 3 }} />
+
+    {settings.webhookUrl && <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h6" sx={{ mb: 1 }}>Delivery webhook</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Enter this URL as the delivery callback in the {settings.availableProviders.find((p) => p.id === settings.activeProvider)?.label || settings.activeProvider} dashboard so delivery status updates flow back into SMS History.
+        </Typography>
+        <TextField
+          fullWidth
+          value={settings.webhookUrl}
+          InputProps={{
+            readOnly: true,
+            endAdornment: <InputAdornment position="end">
+              <Tooltip title="Copy">
+                <IconButton onClick={copyWebhookUrl} edge="end"><ContentCopyIcon fontSize="small" /></IconButton>
+              </Tooltip>
+            </InputAdornment>
+          }}
+          onFocus={(e) => e.target.select()}
+        />
+      </CardContent>
+    </Card>}
 
     <Card>
       <CardContent>

@@ -67,6 +67,7 @@ const campaignTemplateHeadersMigration = require('../../migrations/047_campaign_
 const facebookPageIntegrationMigration = require('../../migrations/065_facebook_page_integration');
 const flowMultiChannelMigration = require('../../migrations/066_flow_multi_channel');
 const smsGatewayMigration = require('../../migrations/067_sms_gateway');
+const smsWebhookEventsMigration = require('../../migrations/068_sms_webhook_events');
 const MIGRATION_RUNNER_LOCK = 570000;
 
 function originalDatabaseError(error) {
@@ -306,6 +307,8 @@ async function run() {
     console.log('Applied: Flow multi-channel support');
     await runMigration('067_sms_gateway.js', smsGatewayMigration, queryInterface);
     console.log('Applied: SMS gateway message log and send permission');
+    await runMigration('068_sms_webhook_events.js', smsWebhookEventsMigration, queryInterface);
+    console.log('Applied: SMS webhook idempotency ledger and view permission');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

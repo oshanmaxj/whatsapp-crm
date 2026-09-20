@@ -132,6 +132,7 @@ const SupportTicket = require('./supportTicket.model');
 const SupportTicketCategory = require('./supportTicketCategory.model');
 const SupportTicketMessage = require('./supportTicketMessage.model');
 const SmsMessage = require('./smsMessage.model');
+const SmsWebhookEvent = require('./smsWebhookEvent.model');
 
 const models = {
   User: User(sequelize, Sequelize.DataTypes),
@@ -144,6 +145,7 @@ const models = {
   SupportTicketCategory: SupportTicketCategory(sequelize, Sequelize.DataTypes),
   SupportTicketMessage: SupportTicketMessage(sequelize, Sequelize.DataTypes),
   SmsMessage: SmsMessage(sequelize, Sequelize.DataTypes),
+  SmsWebhookEvent: SmsWebhookEvent(sequelize, Sequelize.DataTypes),
   Message: Message(sequelize, Sequelize.DataTypes),
   Contact: Contact(sequelize, Sequelize.DataTypes),
   LeadStatus: LeadStatus(sequelize, Sequelize.DataTypes),

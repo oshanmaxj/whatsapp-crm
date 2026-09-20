@@ -26,9 +26,16 @@ class BaseSmsProvider {
   async getBalance() { throw notSupported(this.name, 'getBalance'); }
   async getSenderMasks() { throw notSupported(this.name, 'getSenderMasks'); }
   async testConnection() { throw notImplemented('testConnection'); }
-  // `req` shape: { rawBody: Buffer, signatureHeader: string }
-  verifyWebhookSignature(/* req */) { throw notSupported(this.name, 'verifyWebhookSignature'); }
-  // Must return the normalized shape: { provider, providerMessageId, status, recipient, error, timestamp, rawMetadata }
+  // Takes the raw request's headers + raw body verbatim — which header(s)
+  // carry the signature, and how it's computed, is entirely up to the
+  // adapter. The generic webhook controller never inspects a signature
+  // header itself. Shape: { headers: object, rawBody: Buffer }
+  verifyWebhookSignature(/* { headers, rawBody } */) { throw notSupported(this.name, 'verifyWebhookSignature'); }
+  // Must map the provider's own payload AND its own status vocabulary into
+  // the CRM's canonical shape/status set — that mapping is provider-specific
+  // and belongs here, not in generic business logic. `status` must already
+  // be one of: queued, sent, delivered, failed, rejected, unknown.
+  // Returns: { provider, providerMessageId, recipient, status, error, timestamp, metadata }
   normalizeWebhookEvent(/* payload */) { throw notSupported(this.name, 'normalizeWebhookEvent'); }
 }
 

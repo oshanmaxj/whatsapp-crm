@@ -53,12 +53,13 @@ export const modules = [
   { id: 'commissions', label: 'Commissions', path: '/commissions', icon: <PaymentsIcon />, permission: 'commission.view_own', routes: ['/commissions'] },
   {
     id: 'whatsapp', label: 'WhatsApp', path: '/whatsapp', icon: <WhatsAppIcon />,
-    routes: ['/whatsapp', '/whatsapp-dashboard', '/connect-whatsapp', '/whatsapp-accounts', '/whatsapp-templates', '/campaigns', '/compliance', '/auto-replies', '/ai-agents', '/flow-builder', '/reminder-sequences'],
+    routes: ['/whatsapp', '/whatsapp-dashboard', '/connect-whatsapp', '/whatsapp-accounts', '/whatsapp-templates', '/campaigns', '/sms-history', '/compliance', '/auto-replies', '/ai-agents', '/flow-builder', '/reminder-sequences'],
     items: [
       { label: 'Connect WhatsApp', path: '/connect-whatsapp', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
       { label: 'WhatsApp Numbers', path: '/whatsapp-accounts', icon: <WhatsAppIcon />, permission: 'connect-whatsapp.view' },
       { label: 'WA Templates', path: '/whatsapp-templates', icon: <ChatBubbleOutlineIcon />, permission: 'connect-whatsapp.view' },
       { label: 'Broadcasting / Campaigns', path: '/campaigns', icon: <CampaignIcon />, permission: 'campaigns.view' },
+      { label: 'SMS History', path: '/sms-history', icon: <SmsIcon />, permission: 'sms.view' },
       { label: 'Compliance', path: '/compliance', icon: <FactCheckIcon />, permission: 'connect-whatsapp.view' },
       { label: 'Auto Replies', path: '/auto-replies', icon: <SmartToyIcon />, permission: 'settings.view' },
       { label: 'AI Agents', path: '/ai-agents', icon: <SmartToyIcon />, permission: 'settings.view' },

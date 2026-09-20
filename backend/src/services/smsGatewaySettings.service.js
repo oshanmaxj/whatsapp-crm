@@ -6,6 +6,16 @@ const factory = require('./sms/smsProviderFactory');
 const NAMESPACE = 'sms_gateway';
 const KEY = 'config';
 const DEFAULT_PROVIDER = 'smsgo';
+const WEBHOOK_PATH = '/api/webhooks/sms';
+
+// Reuses the same "our own public HTTPS origin" env var facebookSettings.service.js
+// already established for exactly this purpose, rather than introducing a
+// second env var that means the same thing. The path itself is generic —
+// one endpoint serves whichever provider is active (see smsWebhook.controller.js).
+function publicBaseUrl() {
+  const value = process.env.FACEBOOK_WEBHOOK_BASE_URL || 'https://api.firstofsolutions.com';
+  return String(value).trim().replace(/\/$/, '');
+}
 
 function clean(value) {
   return value == null ? '' : String(value).trim();
@@ -98,6 +108,10 @@ class SmsGatewaySettingsService {
       activeProvider: config.activeProvider,
       availableProviders: factory.listProviders(),
       capabilities: provider.capabilities,
+      // Generic by design: whichever provider is active exposes its own
+      // webhook endpoint the same way — a future provider without a
+      // webhookSignature capability simply won't show one here.
+      webhookUrl: provider.capabilities.webhookSignature ? `${publicBaseUrl()}${WEBHOOK_PATH}` : null,
       providerConfig: publicProviderConfig,
       lastTestStatus: config.lastTestStatus,
       lastTestAt: config.lastTestAt,

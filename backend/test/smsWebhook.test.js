@@ -49,7 +49,10 @@ models.SmsWebhookEvent.update = async (patch, { where: { eventKey } }) => {
 };
 
 let smsMessageStore;
-models.SmsMessage.findOne = async ({ where }) => {
+let lastFindOneOptions;
+models.SmsMessage.findOne = async (options) => {
+  lastFindOneOptions = options;
+  const { where } = options;
   for (const row of smsMessageStore.values()) {
     if (row.provider === where.provider && row.providerMessageId === where.providerMessageId) {
       if (!row.update) row.update = async (patch) => { Object.assign(row, patch); return row; };
@@ -57,6 +60,16 @@ models.SmsMessage.findOne = async ({ where }) => {
     }
   }
   return null;
+};
+
+// applyDeliveryEvent() wraps its read-check-write in sequelize.transaction()
+// with a row lock — this mock makes the transaction transparent (no real DB)
+// while still exercising the real production code path structurally, so we
+// can assert it actually asked for the lock (see the concurrency test below).
+let transactionCallCount = 0;
+models.sequelize.transaction = async (fn) => {
+  transactionCallCount += 1;
+  return fn({ LOCK: { UPDATE: 'UPDATE' } });
 };
 
 function seedMessage(row) {
@@ -74,6 +87,8 @@ async function resetGatewayState() {
 test.beforeEach(async () => {
   webhookEventStore = new Map();
   smsMessageStore = new Map();
+  transactionCallCount = 0;
+  lastFindOneOptions = undefined;
   await resetGatewayState();
 });
 
@@ -169,6 +184,79 @@ test('out-of-order status protection: a delivered message is not downgraded by a
   assert.equal(smsMessageStore.get(5).status, 'delivered', 'a delivered message must never be downgraded by an out-of-order intermediate status');
 });
 
+test('out-of-order lifecycle transitions behave as documented', async () => {
+  // queued -> sent -> failed: each step ranks higher, both apply; ends failed.
+  seedMessage({ id: 10, provider: 'smsgo', providerMessageId: 'MSG-QSF', status: 'queued' });
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-QSF', status: 'Sent' } });
+  assert.equal(smsMessageStore.get(10).status, 'sent');
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-QSF', status: 'Failed', error: 'carrier error' } });
+  assert.equal(smsMessageStore.get(10).status, 'failed');
+
+  // queued -> failed -> sent: "sent" arriving after "failed" is a LOWER rank
+  // and is ignored; ends failed (failed does not get walked back to sent).
+  seedMessage({ id: 11, provider: 'smsgo', providerMessageId: 'MSG-QFS', status: 'queued' });
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-QFS', status: 'Failed' } });
+  assert.equal(smsMessageStore.get(11).status, 'failed');
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-QFS', status: 'Sent' } });
+  assert.equal(smsMessageStore.get(11).status, 'failed', 'a stale "sent" arriving after "failed" must not revert the record');
+
+  // sent -> delivered -> failed: delivered is terminal; the later "failed" is dropped.
+  seedMessage({ id: 12, provider: 'smsgo', providerMessageId: 'MSG-SDF', status: 'sent' });
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-SDF', status: 'Delivered' } });
+  assert.equal(smsMessageStore.get(12).status, 'delivered');
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-SDF', status: 'Failed' } });
+  assert.equal(smsMessageStore.get(12).status, 'delivered', 'delivered must never be overwritten by a later failed event');
+
+  // failed -> delivered: delivered outranks failed and delivered is not the
+  // CURRENT status yet, so this is allowed to apply (a provider correcting
+  // an earlier failure report to a confirmed delivery).
+  seedMessage({ id: 13, provider: 'smsgo', providerMessageId: 'MSG-FD', status: 'failed' });
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-FD', status: 'Delivered' } });
+  assert.equal(smsMessageStore.get(13).status, 'delivered', 'a later delivered event may still correct an earlier failed report');
+});
+
+test('provider + providerMessageId lookup does not cross-match another provider using the same id', async () => {
+  seedMessage({ id: 20, provider: 'smsgo', providerMessageId: 'DUPLICATE-ID-ACROSS-PROVIDERS', status: 'sent' });
+  seedMessage({ id: 21, provider: 'some-other-provider', providerMessageId: 'DUPLICATE-ID-ACROSS-PROVIDERS', status: 'sent' });
+
+  await invoke({ event: 'sms.status_update', data: { messageId: 'DUPLICATE-ID-ACROSS-PROVIDERS', status: 'Delivered' } });
+
+  assert.equal(smsMessageStore.get(20).status, 'delivered', 'the smsgo-provider row for this id must be updated');
+  assert.equal(smsMessageStore.get(21).status, 'sent', "a different provider's row sharing the same raw id string must never be touched");
+});
+
+test('an invalid/garbage provider timestamp falls back to the received time instead of corrupting deliveredAt', async () => {
+  seedMessage({ id: 30, provider: 'smsgo', providerMessageId: 'MSG-BADTS', status: 'sent' });
+  const before = Date.now();
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-BADTS', status: 'Delivered', timestamp: 'not-a-real-date' } });
+  const record = smsMessageStore.get(30);
+  assert.equal(record.status, 'delivered', 'the status transition itself must not be blocked by a bad timestamp');
+  assert.ok(record.deliveredAt instanceof Date && !Number.isNaN(record.deliveredAt.getTime()), 'deliveredAt must be a valid Date, never "Invalid Date"');
+  assert.ok(record.deliveredAt.getTime() >= before, 'an invalid provider timestamp must fall back to roughly now, not silently pass through as garbage');
+});
+
+test('concurrency: applyDeliveryEvent runs its read-check-write inside a locked transaction', async () => {
+  seedMessage({ id: 40, provider: 'smsgo', providerMessageId: 'MSG-LOCK', status: 'sent' });
+  await invoke({ event: 'sms.status_update', data: { messageId: 'MSG-LOCK', status: 'Delivered' } });
+  assert.equal(transactionCallCount, 1, 'the status update must run inside sequelize.transaction()');
+  assert.equal(lastFindOneOptions.lock, 'UPDATE', 'the row must be read with a row lock (transaction.LOCK.UPDATE), not a bare unlocked read, so concurrent deliveries for the same message serialize instead of racing past the out-of-order check');
+});
+
+test('two concurrent deliveries for the SAME message each run in their own transaction (serialized by the DB lock, not by the app)', async () => {
+  seedMessage({ id: 41, provider: 'smsgo', providerMessageId: 'MSG-CONCURRENT', status: 'sent' });
+  await Promise.all([
+    invoke({ event: 'sms.status_update', data: { messageId: 'MSG-CONCURRENT', status: 'Delivered' } }),
+    invoke({ event: 'sms.status_update', data: { messageId: 'MSG-CONCURRENT', status: 'Sent' } })
+  ]);
+  assert.equal(transactionCallCount, 2, 'each distinct event gets its own transaction/lock acquisition');
+  // Whichever order Postgres's real row lock serializes these in, 'delivered'
+  // must win over 'sent' once both have been applied, by the same terminal
+  // guard already proven above — this just confirms concurrent delivery of
+  // two DIFFERENT events for one message still converges on the correct
+  // final state rather than depending on request arrival order in-process.
+  assert.equal(smsMessageStore.get(41).status, 'delivered');
+});
+
 // ---------- Authorization (permission-middleware boundary, matching the
 // existing callCenterAuthorizationBoundary.test.js style) ----------
 function invokePermission(code, user) {
@@ -198,4 +286,12 @@ test('sms.routes.js declares sms.view on both history routes and sms.send on the
   assert.ok(source.includes("permit('sms.send')"), 'POST /send must require sms.send');
   assert.ok(/get\('\/messages',\s*permit\('sms\.view'\)/.test(source), 'GET /messages must require sms.view');
   assert.ok(/get\('\/messages\/:id',\s*permit\('sms\.view'\)/.test(source), 'GET /messages/:id must require sms.view');
+});
+
+test('webhook.routes.js does not require CRM authentication on any provider webhook (providers cannot log in)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/webhook.routes.js'), 'utf8');
+  assert.ok(!/auth\.authenticate|authMiddleware/.test(source), 'webhook.routes.js must not gate provider callbacks behind CRM session auth — they are authenticated only by their own signature scheme');
+  assert.ok(source.includes("router.post('/sms', smsWebhookController.receive)"), 'the generic SMS webhook must be mounted');
 });

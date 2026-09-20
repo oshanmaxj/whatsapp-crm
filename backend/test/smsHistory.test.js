@@ -100,3 +100,29 @@ test('getById() redacts providerMetadata through the generic secret scrubber', a
   const result = await smsMessageService.getById(1);
   assert.equal(JSON.stringify(result.providerMetadata).includes('should-not-appear'), false);
 });
+
+test('getById() redacts apiKey/signature-shaped keys the generic scrubber alone would miss', async () => {
+  models.SmsMessage.findByPk = async () => ({
+    toJSON: () => ({
+      id: 2,
+      providerMetadata: {
+        raw: {
+          apiKey: 'sandbox-secret-should-never-appear',
+          'X-API-Key': 'another-secret-should-never-appear',
+          signature: 'hmac-signature-should-never-appear',
+          nested: { api_key: 'nested-secret-should-never-appear' },
+          status: 'DELIVRD',
+          to: '94771234567'
+        }
+      }
+    })
+  });
+  const result = await smsMessageService.getById(2);
+  const serialized = JSON.stringify(result.providerMetadata);
+  for (const secret of ['sandbox-secret-should-never-appear', 'another-secret-should-never-appear', 'hmac-signature-should-never-appear', 'nested-secret-should-never-appear']) {
+    assert.equal(serialized.includes(secret), false, `${secret} must be redacted`);
+  }
+  // Non-sensitive fields must survive — this is a targeted redaction, not a wipe.
+  assert.equal(result.providerMetadata.raw.status, 'DELIVRD');
+  assert.equal(result.providerMetadata.raw.to, '94771234567');
+});

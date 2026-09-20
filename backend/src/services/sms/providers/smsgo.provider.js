@@ -154,6 +154,17 @@ class SmsGoProvider extends BaseSmsProvider {
 
   // SMSGo signs with HMAC-SHA256 keyed by the active API key, sent in the
   // `X-SMSGo-Signature` header. Express lower-cases incoming header names.
+  // ASSUMED, NOT INDEPENDENTLY CONFIRMED: "X-SMSGo-Signature is HMAC-SHA256
+  // keyed by the account's API key" comes only from this integration's
+  // original spec, not from SMSGo's own published documentation (no SMSGo
+  // docs were fetched or reviewed while building this adapter). Verify this
+  // against a real signed delivery — or against SMSGo's docs directly —
+  // before relying on it to reject traffic in production. If it turns out
+  // SMSGo instead uses a separate webhook-signing secret, that only means
+  // changing this method plus `registry.js`'s `smsgo` field list (e.g. add
+  // `webhookSecret` as a new secret field) and the settings UI — nothing
+  // above this adapter (generic controller, sms.service.js, business logic)
+  // needs to change, since none of it knows how a signature is computed.
   verifyWebhookSignature({ headers, rawBody }) {
     if (!this.apiKey) return false;
     const signatureHeader = headers?.['x-smsgo-signature'];

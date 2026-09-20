@@ -12,6 +12,24 @@ const RELATED_INCLUDES = [
   { model: User, as: 'creator', attributes: ['id', 'firstName', 'lastName', 'email'] }
 ];
 
+// logger.redact() (config/logger.js) is tuned for our own outbound request
+// logs (authorization/bearer/app secret/client secret) and doesn't cover
+// "apiKey"/"api_key"/"x-api-key"/"signature" — precisely the shapes a raw
+// SMS provider webhook/response payload could plausibly echo back under.
+// providerMetadata is exactly that raw payload, so it gets this stricter,
+// key-name-based pass on top, recursively, before ever leaving the server.
+const CREDENTIAL_KEY_PATTERN = /api[_-]?key|apikey|signature|secret|authorization|access[_-]?token|bearer/i;
+function redactCredentialLikeKeys(value) {
+  if (Array.isArray(value)) return value.map(redactCredentialLikeKeys);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [
+      key,
+      CREDENTIAL_KEY_PATTERN.test(key) ? '[REDACTED]' : redactCredentialLikeKeys(child)
+    ]));
+  }
+  return value;
+}
+
 class SmsMessageService {
   // Ad-hoc / test single send: validates and normalizes the recipient,
   // writes an sms_messages row up front (so a send that throws after being
@@ -94,7 +112,7 @@ class SmsMessageService {
     // leaving the server, even though a provider has no legitimate reason
     // to echo our own API key back to us.
     const json = record.toJSON();
-    json.providerMetadata = logger.redact(json.providerMetadata);
+    json.providerMetadata = redactCredentialLikeKeys(logger.redact(json.providerMetadata));
     return json;
   }
 }

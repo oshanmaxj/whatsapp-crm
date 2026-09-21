@@ -223,10 +223,22 @@ class BirthdayWishService {
           eventId: `birthday:${wish.birthdayDate}`,
           eventDate: wish.birthdayDate
         });
+        // Year-scoped occurrence key, independent of the WhatsApp path's
+        // dedupeKey (which is not year-scoped — see dispatch() in
+        // studentMessageAutomation.service.js) so the SMS wish correctly
+        // sends again every year even when the WhatsApp one would not.
+        const smsResult = await studentMessageAutomationService.dispatchSms('birthday_wish', wish.studentId, {
+          eventId: `birthday:${wish.birthdayDate}`,
+          smsOccurrenceKey: `birthday:${wish.studentId}:${String(wish.birthdayDate).slice(0, 4)}`,
+          eventDate: wish.birthdayDate
+        }).catch((error) => ({ status: 'failed', error: error.message }));
         await wish.update({
           status: queued.status === 'disabled' ? 'cancelled' : 'sent',
           sentDate: queued.status === 'disabled' ? null : new Date(),
-          response: { mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null }
+          response: {
+            mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null,
+            sms: { status: smsResult.status, smsMessageId: smsResult.record?.id || null, reason: smsResult.reason || smsResult.error || null }
+          }
         });
         if (queued.status !== 'disabled') await this.notifyResult(wish, 'sent');
         return BirthdayWish.findByPk(wish.id, { include: this.include() });

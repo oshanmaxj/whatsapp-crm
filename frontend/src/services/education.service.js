@@ -46,6 +46,7 @@ export const createStudentEnrollment = (id, payload) => api.post(`/students/${id
 export const updateEnrollment = (id, payload) => api.patch(`/enrollments/${id}`, payload);
 export const deleteEnrollment = (id) => api.delete(`/enrollments/${id}`);
 export const resetStudentPortalPassword = (id, password, confirmation) => api.post(`/students/${id}/reset-portal-password`, password ? { password, confirmation } : { confirmation });
+export const updateStudentClassSmsReminders = (id, enabled) => api.patch(`/students/${id}/class-sms-reminders`, { enabled });
 export const deleteStudent = (id) => api.delete(`/students/${id}`);
 export const convertLeadToStudent = (leadId, payload) => api.post(`/leads/${leadId}/convert-to-student`, normalizeStudentPayload(payload));
 export const listStudentNotes = (id) => api.get(`/students/${id}/notes`);

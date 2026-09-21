@@ -29,6 +29,7 @@ import {
   deleteStudentNote,
   getStudentProfile,
   resetStudentPortalPassword,
+  updateStudentClassSmsReminders,
   updateStudentGuardian
 } from '../../services/education.service';
 import { forceSendStudentOnboarding, getStudentOnboardingStatus, sendStudentOnboarding } from '../../services/studentMessageTemplate.service';
@@ -96,6 +97,7 @@ function StudentProfilePage() {
   const [editingGuardianId, setEditingGuardianId] = useState(null);
   const [onboarding, setOnboarding] = useState([]);
   const [sendingOnboarding, setSendingOnboarding] = useState(false);
+  const [savingClassSmsReminders, setSavingClassSmsReminders] = useState(false);
 
   const load = async () => {
     try {
@@ -233,6 +235,16 @@ function StudentProfilePage() {
     finally { setSendingOnboarding(false); }
   };
 
+  const toggleClassSmsReminders = async (checked) => {
+    try {
+      setSavingClassSmsReminders(true);
+      await updateStudentClassSmsReminders(id, checked);
+      setSuccess(checked ? 'Class SMS reminders resumed.' : 'Class SMS reminders paused.');
+      await load();
+    } catch (err) { setError(err.response?.data?.message || 'Unable to update class SMS reminders.'); }
+    finally { setSavingClassSmsReminders(false); }
+  };
+
   const resetLmsAccess = async () => {
     if (!window.confirm('Create a new temporary LMS password, invalidate the current password, and send new access details?')) return;
     try { setSendingOnboarding(true); await resetStudentPortalPassword(id, '', 'RESET LMS PASSWORD'); setSuccess('New temporary LMS access details queued securely.'); await load(); }
@@ -275,7 +287,7 @@ function StudentProfilePage() {
       </Grid>
     </Paper>
     {onboarding.length > 0 && <Alert severity={onboarding.some((item) => item.status === 'failed') ? 'warning' : 'info'}>
-      Welcome delivery: {onboarding.slice(0, 3).map((item) => `${item.templateKey.replace(/_/g, ' ')} — ${item.status}`).join(' · ')}
+      Welcome delivery: {onboarding.slice(0, 3).map((item) => `${String(item.templateKey || 'message').replace(/_/g, ' ')} — ${item.status}`).join(' · ')}
     </Alert>}
 
     <Paper elevation={0} sx={{ border: `1px solid ${theme.palette.divider}` }}>
@@ -288,7 +300,15 @@ function StudentProfilePage() {
       <Grid item xs={12} md={6}><InfoCard title="Student Information" icon={<SchoolIcon color="primary" />}><DetailGrid rows={[
         ['Full Name', student.fullName], ['Student ID', student.studentId], ['NIC', student.nic], ['Phone', student.phone],
         ['WhatsApp Number', student.whatsappNumber], ['Email', student.email], ['Date of Birth', dateText(student.dateOfBirth)], ['Address', student.address], ['Registration Date', dateText(student.registrationDate)]
-      ]} /></InfoCard></Grid>
+      ]} />
+        {hasPermission('student.class_sms_reminders.manage') && <>
+          <Divider sx={{ my: 2 }} />
+          <FormControlLabel
+            control={<Switch checked={student.classSmsRemindersEnabled !== false} disabled={savingClassSmsReminders} onChange={(e) => toggleClassSmsReminders(e.target.checked)} />}
+            label="Class SMS Reminders"
+          />
+        </>}
+      </InfoCard></Grid>
       <Grid item xs={12} md={6}><InfoCard title="Current Courses" icon={<SchoolIcon color="primary" />}><Stack spacing={1}>
         {activeEnrollments.map((item) => <Paper key={item.id} variant="outlined" sx={{ p: 1.5 }}><Typography fontWeight={800}>{item.course?.name || 'Course'}</Typography><Typography variant="body2" color="text.secondary">{item.course?.code || ''}</Typography></Paper>)}
         {!activeEnrollments.length && <Typography color="text.secondary">No active courses.</Typography>}

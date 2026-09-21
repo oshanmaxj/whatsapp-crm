@@ -250,10 +250,27 @@ class FeeReminderService {
         installmentNo: reminder.installment?.installmentNo,
         installmentDueDate: reminder.installment?.dueDate
       });
+      // Keyed to this FeeReminder row's own id: automatic generation
+      // (ensureReminder) already findOrCreate's one row per
+      // installment+reminderType+scheduledDate, so reusing that id gives
+      // correct per-occurrence SMS idempotency for free; a manual resend
+      // (sendManualReminder) always creates a fresh row/id, so it keeps
+      // working exactly like the existing manual WhatsApp resend does.
+      const smsResult = await studentMessageAutomationService.dispatchSms('payment_reminder', student.id, {
+        eventId: `fee-reminder:${reminder.id}`,
+        smsOccurrenceKey: `fee-reminder:${reminder.id}`,
+        eventDate: reminder.scheduledDate,
+        paymentAmount: outstanding(reminder.installment) || reminder.installment?.amount,
+        installmentNo: reminder.installment?.installmentNo,
+        installmentDueDate: reminder.installment?.dueDate
+      }).catch((error) => ({ status: 'failed', error: error.message }));
       await reminder.update({
         status: queued.status === 'disabled' ? 'cancelled' : 'sent',
         sentDate: queued.status === 'disabled' ? null : new Date(),
-        response: { mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null }
+        response: {
+          mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null,
+          sms: { status: smsResult.status, smsMessageId: smsResult.record?.id || null, reason: smsResult.reason || smsResult.error || null }
+        }
       });
       if (queued.status !== 'disabled') {
         await FeeInstallment.update({ reminderSentAt: new Date() }, { where: { id: reminder.installmentId } });

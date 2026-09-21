@@ -19,6 +19,13 @@ module.exports = (sequelize, DataTypes) => {
     segments: { type: DataTypes.INTEGER, allowNull: true },
     cost: { type: DataTypes.DECIMAL(10, 4), allowNull: true },
     source: { type: DataTypes.STRING(40), allowNull: false, defaultValue: 'manual' },
+    // Set only for automatic student-notification sends (welcome/class
+    // reminder/birthday/payment reminder) — the send claims this key before
+    // calling the provider, so a duplicate automatic dispatch (e.g. after a
+    // worker restart) hits the unique index instead of re-sending. NULL for
+    // manual/campaign sends, which keep their existing unlimited-resend
+    // behavior (Postgres unique indexes treat NULLs as distinct).
+    dedupeKey: { type: DataTypes.STRING(150), allowNull: true },
     contactId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     leadId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
     studentId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
@@ -35,7 +42,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['provider'] },
       { fields: ['provider_message_id'] },
       { fields: ['to_number'] },
-      { fields: ['created_at'] }
+      { fields: ['created_at'] },
+      { fields: ['dedupe_key'], unique: true }
     ]
   });
 

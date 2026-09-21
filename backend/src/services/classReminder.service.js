@@ -298,10 +298,22 @@ class ClassReminderService {
         eventDate: reminder.scheduleDate,
         liveClassAt: reminder.scheduledTime || `${reminder.scheduleDate}T${reminder.scheduleTime || '00:00:00'}`
       });
+      // SMS rides alongside the WhatsApp dispatch above, keyed to this
+      // reminder row's own id so it is naturally scoped per student+class
+      // occurrence (matches the ClassReminder findOrCreate key). A failure
+      // here must never affect the WhatsApp status recorded below.
+      const smsResult = await studentMessageAutomationService.dispatchSms('class_reminder', reminder.studentId, {
+        eventId: `class-reminder:${reminder.id}`,
+        smsOccurrenceKey: `class-reminder:${reminder.id}`,
+        eventDate: reminder.scheduleDate
+      }).catch((error) => ({ status: 'failed', error: error.message }));
       await reminder.update({
         status: queued.status === 'disabled' ? 'cancelled' : 'sent',
         sentTime: queued.status === 'disabled' ? null : new Date(),
-        response: { mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null }
+        response: {
+          mode: 'student_automation_queue', status: queued.status, queueId: queued.queue?.id || null,
+          sms: { status: smsResult.status, smsMessageId: smsResult.record?.id || null, reason: smsResult.reason || smsResult.error || null }
+        }
       });
       if (queued.status !== 'disabled') await this.notifyReminder(reminder, 'sent');
       return ClassReminder.findByPk(reminder.id, { include: this.include() });

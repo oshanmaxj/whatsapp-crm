@@ -15,6 +15,7 @@ const flowService = require('./services/flow.service');
 const pipelineService = require('./services/pipeline.service');
 const reminderSequenceService = require('./services/reminderSequence.service');
 const smsCampaignWorkerService = require('./services/smsCampaignWorker.service');
+const automationSchedulerService = require('./services/automationScheduler.service');
 const { isMissingTableError } = require('./utils/databaseError');
 const { ensureUnifiedLeadStatuses } = require('./services/unifiedLeadStatuses.service');
 
@@ -60,6 +61,8 @@ const startServer = async () => {
     reminderSequenceService.start();
     if (process.env.SMS_CAMPAIGN_WORKER_ENABLED !== 'false') smsCampaignWorkerService.start();
     else logger.warn('sms_campaign_worker_disabled', { reason: 'SMS_CAMPAIGN_WORKER_ENABLED=false' });
+    if (process.env.AUTOMATION_SCHEDULER_ENABLED !== 'false') automationSchedulerService.start();
+    else logger.warn('automation_scheduler_disabled', { reason: 'AUTOMATION_SCHEDULER_ENABLED=false' });
   } catch (error) {
     logger.error('server_start_failed', error);
     process.exit(1);

@@ -42,6 +42,7 @@ router.delete('/enrollments/:id', educationController.deleteEnrollment.bind(educ
 router.post('/students', educationController.createStudent.bind(educationController));
 router.patch('/students/:id', educationController.updateStudent.bind(educationController));
 router.post('/students/:id/reset-portal-password', permit('student.lms_credentials.reset'), educationController.resetStudentPortalPassword.bind(educationController));
+router.patch('/students/:id/class-sms-reminders', permit('student.class_sms_reminders.manage'), educationController.updateClassSmsReminders.bind(educationController));
 router.delete('/students/:id', educationController.deleteStudent.bind(educationController));
 router.post('/leads/:id/convert-to-student', educationController.convertLead.bind(educationController));
 

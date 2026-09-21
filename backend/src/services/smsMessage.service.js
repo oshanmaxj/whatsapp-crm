@@ -85,6 +85,65 @@ class SmsMessageService {
     }
   }
 
+  // Automatic student-notification sends (welcome/class reminder/birthday/
+  // payment reminder) go through this instead of sendSingle(): the caller
+  // supplies a durable `dedupeKey` (unique per occurrence — e.g. per
+  // student+year for a birthday wish) which is claimed via the sms_messages
+  // unique index BEFORE the provider is called, so a duplicate automatic
+  // dispatch (worker restart, re-run) can never double-send — it just finds
+  // the row it already claimed and returns it. Never throws: automatic sends
+  // must never break the caller (registration, class reminder generation,
+  // etc.), so every outcome — invalid phone, duplicate, provider failure —
+  // comes back as a status on the returned object instead.
+  async sendAutomated({ dedupeKey, to, message, source, studentId, contactId, leadId, createdBy }) {
+    if (!dedupeKey) throw Object.assign(new Error('dedupeKey is required for automated SMS sends.'), { status: 500 });
+
+    let toNumber;
+    try {
+      toNumber = normalizeSriLankanPhone(to);
+      if (!toNumber) throw new Error('invalid');
+    } catch {
+      return { status: 'skipped', reason: 'invalid_phone' };
+    }
+    if (!String(message || '').trim()) return { status: 'skipped', reason: 'empty_message' };
+
+    let record;
+    try {
+      record = await SmsMessage.create({
+        toNumber, message, provider: null, status: 'queued', source: source || 'automatic',
+        dedupeKey, contactId: contactId || null, leadId: leadId || null, studentId: studentId || null,
+        createdBy: createdBy || null
+      });
+    } catch (error) {
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        const existing = await SmsMessage.findOne({ where: { dedupeKey } });
+        return { status: 'duplicate', record: existing };
+      }
+      logger.warn('sms_automated_claim_failed', { source, studentId, error: error.message });
+      return { status: 'failed', reason: 'claim_failed' };
+    }
+
+    try {
+      const result = await smsService.sendSms({ to: toNumber, message });
+      await record.update({
+        status: 'sent',
+        provider: result.provider,
+        providerMessageId: result.providerMessageId || null,
+        providerStatus: result.providerStatus || null,
+        providerMetadata: result.raw || null,
+        mask: result.mask || null,
+        segments: result.segments ?? null,
+        cost: result.cost ?? null,
+        sentAt: new Date()
+      });
+      return { status: 'sent', record };
+    } catch (error) {
+      await record.update({ status: 'failed', provider: error.provider || null, errorMessage: error.technicalMessage || error.message, failedAt: new Date() });
+      logger.warn('sms_automated_send_failed', { source, studentId, provider: error.provider || null, error: error.message });
+      return { status: 'failed', reason: 'send_failed', record };
+    }
+  }
+
   // Server-side paginated/filterable list for the SMS History page. Never
   // loads the full table — always bounded by limit/offset.
   async list({ status, provider, phone, dateFrom, dateTo, page = 1, pageSize = 25 } = {}) {

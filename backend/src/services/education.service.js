@@ -455,6 +455,7 @@ class EducationService {
         registrationDate: data.enrolledAt,
         status: data.status,
         photo: data.photoUrl || data.contact?.photoUrl || null,
+        classSmsRemindersEnabled: data.classSmsRemindersEnabled !== false,
         raw: data
       },
       course: data.course ? {
@@ -837,6 +838,12 @@ class EducationService {
       originEvent: 'student_registration',
       portalPassword: portalPassword || generatedPortalPassword || ''
     }).catch((error) => logger.warn('student_welcome_queue_failed', { studentId: student.id, error: error.message }));
+    await studentMessageAutomationService.dispatchSms('student_welcome', student.id, {
+      eventId: `student:${student.id}`,
+      eventDate: new Date().toISOString().slice(0, 10),
+      originEvent: 'student_registration',
+      createdBy: userId
+    }).catch((error) => logger.warn('student_welcome_sms_failed', { studentId: student.id, error: error.message }));
     if (process.env.LMS_GUIDE_AUTOMATION_ENABLED !== 'false') {
       await studentMessageAutomationService.dispatch('lms_user_guide', student.id, {
         eventId: `student:${student.id}`,
@@ -876,6 +883,18 @@ class EducationService {
       await studentCanonicalIdentityService.publishStudentChanged(row.id).catch(() => null);
     }
     return this.getStudent(id);
+  }
+
+  async updateClassSmsReminders(id, enabled, actor = null) {
+    const row = await this.getStudent(id);
+    const value = Boolean(enabled);
+    if (row.classSmsRemindersEnabled === value) return { studentId: row.id, classSmsRemindersEnabled: value };
+    await row.update({ classSmsRemindersEnabled: value });
+    await auditService.record({
+      userId: actor?.id || null, action: 'STUDENT_CLASS_SMS_REMINDERS_TOGGLED', entityType: 'student', entityId: row.id,
+      changes: { classSmsRemindersEnabled: value }
+    });
+    return { studentId: row.id, classSmsRemindersEnabled: value };
   }
 
   async resetStudentPortalPassword(id, payload = {}, actor = null) {

@@ -4,6 +4,8 @@ const {
   AppSetting, Batch, Course, Student, StudentAutomationDispatch, StudentEnrollment, StudentMessageTemplate
 } = require('../models');
 const messageQueueService = require('./messageQueue.service');
+const smsMessageService = require('./smsMessage.service');
+const { requireNormalizedPhone } = require('../utils/phone');
 
 const SUPPORTED_VARIABLES = [
   'student_name', 'registration_number', 'course_name', 'batch_name', 'email', 'phone',
@@ -213,6 +215,59 @@ class StudentMessageAutomationService {
     }
   }
 
+  // SMS counterpart to dispatch(): looks up the `<templateKey>_sms` row in
+  // the SAME StudentMessageTemplate table (e.g. 'student_welcome_sms' next
+  // to the WhatsApp 'student_welcome' row) so it reuses the exact same
+  // admin template-editor UI, isActive/automationEnabled semantics, and
+  // variable substitution as the WhatsApp path — it just never touches
+  // StudentAutomationDispatch/MessageQueue (those are WhatsApp-shaped) and
+  // never throws, since automatic callers (registration, reminders) must
+  // never break because an SMS failed. Idempotency is independent of the
+  // WhatsApp path's dedupeKey (which is not occurrence-scoped) — callers
+  // pass `smsOccurrenceKey` for a correctly per-occurrence key (e.g. per
+  // class reminder row id, per birthday year, per fee reminder row id).
+  renderSmsBody(template, variables) {
+    return render(template.body, variables).replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  async dispatchSms(templateKey, studentId, event = {}) {
+    const smsKey = `${templateKey}_sms`;
+    let template;
+    try {
+      template = await this.get(smsKey);
+    } catch (error) {
+      if (error.status === 404) return { status: 'not_configured', templateKey: smsKey };
+      throw error;
+    }
+    if (!template.isActive || !template.automationEnabled) return { status: 'disabled', templateKey: smsKey };
+
+    const { student, variables } = await this.context(studentId, event);
+    if (templateKey === 'class_reminder' && student.classSmsRemindersEnabled === false) {
+      return { status: 'student_opted_out', templateKey: smsKey };
+    }
+
+    let toNumber;
+    try {
+      toNumber = requireNormalizedPhone(student.phone);
+    } catch {
+      return { status: 'skipped', reason: 'invalid_phone', templateKey: smsKey };
+    }
+
+    const body = this.renderSmsBody(template, variables);
+    if (!body) return { status: 'skipped', reason: 'empty_template', templateKey: smsKey };
+
+    const occurrenceKey = String(event.smsOccurrenceKey || event.eventId || studentId);
+    const forceAttempt = event.forceAttempt || null;
+    const dedupeKey = crypto.createHash('sha256')
+      .update(`sms:${templateKey}:${studentId}:${occurrenceKey}${forceAttempt ? `:force:${forceAttempt}` : ''}`)
+      .digest('hex');
+
+    return smsMessageService.sendAutomated({
+      dedupeKey, to: toNumber, message: body, source: smsKey,
+      studentId, contactId: student.contactId || null, createdBy: event.createdBy || null
+    });
+  }
+
   async onboardingStatus(studentId) {
     const student = await Student.findByPk(studentId);
     if (!student) throw Object.assign(new Error('Student not found'), { status: 404 });
@@ -238,6 +293,12 @@ class StudentMessageAutomationService {
       results.push(await this.dispatch('lms_user_guide', student.id, { eventId: `lms:${student.id}`, originEvent: force ? 'manual_force_resend' : 'manual_send_missing', forceAttempt, createdBy }));
       results.push({ templateKey: 'student_welcome', status: 'pending_configuration', reason: 'password_cannot_be_recovered_for_secure_resend' });
     }
+    // Welcome SMS is a plain confirmation (no portal credentials embedded),
+    // so unlike the WhatsApp student_welcome message above it is never
+    // blocked by portal-password state — it can always be (re)sent here.
+    results.push(await this.dispatchSms('student_welcome', student.id, {
+      eventId: `student:${student.id}`, originEvent: force ? 'manual_force_resend' : 'manual_send_missing', forceAttempt, createdBy
+    }));
     if (force) await require('./audit.service').record({ userId: createdBy, action: 'STUDENT_ONBOARDING_FORCE_RESEND', entityType: 'student', entityId: studentId, changes: { enrollmentId, forceAttempt, messageTypes: results.map((item) => item.templateKey || item.dispatch?.templateKey).filter(Boolean) } });
     return results;
   }

@@ -70,6 +70,7 @@ export default function FacebookInboxPage() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const bottomRef = useRef(null);
 
   const selected = useMemo(() => conversations.find((item) => String(item.id) === String(selectedId)) || null, [conversations, selectedId]);
@@ -77,7 +78,8 @@ export default function FacebookInboxPage() {
   const loadConversations = () => getFacebookPages().then((response) => setPages(response.data.data || []))
     .then(() => getFacebookConversations(pageFilter || null))
     .then((response) => setConversations(response.data.data || []))
-    .catch((err) => setError(err.response?.data?.message || 'Unable to load Facebook conversations.'));
+    .catch((err) => setError(err.response?.data?.message || 'Unable to load Facebook conversations.'))
+    .finally(() => setHasLoaded(true));
 
   useEffect(() => { loadConversations(); }, [pageFilter]);
 
@@ -149,7 +151,7 @@ export default function FacebookInboxPage() {
             {conversations.map((conversation) => (
               <ConversationRow key={conversation.id} conversation={conversation} active={String(conversation.id) === String(selectedId)} onClick={() => setSelectedId(conversation.id)} />
             ))}
-            {!conversations.length && <Typography color="text.secondary" sx={{ p: 2 }}>No Facebook Messenger conversations yet.</Typography>}
+            {hasLoaded && !conversations.length && <Typography color="text.secondary" sx={{ p: 2 }}>No Facebook Messenger conversations yet.</Typography>}
           </List>
         }
         chat={

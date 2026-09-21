@@ -45,9 +45,12 @@ export default function WhatsAppAccountsPage() {
   const [deactivating, setDeactivating] = useState(null);
   const [reactivating, setReactivating] = useState(null);
   const [reactivationForm, setReactivationForm] = useState({ accessToken: '', verifyToken: '', appId: '', appSecret: '' });
+  const [loading, setLoading] = useState(true);
 
   const load = () => getWhatsAppAccounts(true).then((response) => setAccounts(response.data.data || []));
-  useEffect(() => { load().catch((error) => setMessage({ severity: 'error', text: error.response?.data?.message || 'Unable to load WhatsApp numbers.' })); }, []);
+  useEffect(() => {
+    load().catch((error) => setMessage({ severity: 'error', text: error.response?.data?.message || 'Unable to load WhatsApp numbers.' })).finally(() => setLoading(false));
+  }, []);
   const beginCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
   const beginEdit = (account) => {
     setEditing(account);
@@ -150,7 +153,7 @@ export default function WhatsAppAccountsPage() {
                 </TableCell>
               </TableRow>
             );})}
-            {!accounts.length && <TableRow><TableCell colSpan={9} align="center">No WhatsApp numbers configured.</TableCell></TableRow>}
+            {!loading && !accounts.length && <TableRow><TableCell colSpan={9} align="center">No WhatsApp numbers configured.</TableCell></TableRow>}
           </TableBody>
         </Table>
       </TableContainer>

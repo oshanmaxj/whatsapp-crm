@@ -214,8 +214,12 @@ class FlowService {
   }
 
   async list(userId = null) {
-    const accessWhere = userId ? await whatsappAccountAccessService.whereForUser(userId) : {};
+    // Was two separate calls (whereForUser() + userContext()) — whereForUser()
+    // calls userContext() internally, so this ran the same User.findByPk
+    // (with its Role/WhatsAppAccount includes) twice per request. Resolve it
+    // once and derive accessWhere the same way whereForUser() does.
     const context = userId ? await whatsappAccountAccessService.userContext(userId) : null;
+    const accessWhere = context ? (context.unrestricted ? {} : { whatsappAccountId: { [Op.in]: context.accountIds } }) : {};
     const departmentWhere = context && !context.isAdmin
       ? { [Op.or]: [{ departmentId: null }, { departmentId: { [Op.in]: (context.user.roles || []).map((role) => role.id) } }] }
       : {};

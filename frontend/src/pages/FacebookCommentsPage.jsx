@@ -16,9 +16,11 @@ export default function FacebookCommentsPage() {
   const [replying, setReplying] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const load = () => getFacebookComments(pageFilter || null).then((response) => setComments(response.data.data || []))
-    .catch((error) => setMessage({ severity: 'error', text: error.response?.data?.message || 'Unable to load Facebook comments.' }));
+    .catch((error) => setMessage({ severity: 'error', text: error.response?.data?.message || 'Unable to load Facebook comments.' }))
+    .finally(() => setHasLoaded(true));
 
   useEffect(() => { getFacebookPages().then((response) => setPages(response.data.data || [])).catch(() => null); }, []);
   useEffect(() => { load(); }, [pageFilter]);
@@ -77,7 +79,7 @@ export default function FacebookCommentsPage() {
                 </TableCell>
               </TableRow>
             ))}
-            {!comments.length && <TableRow><TableCell colSpan={8} align="center">No Facebook comments yet.</TableCell></TableRow>}
+            {hasLoaded && !comments.length && <TableRow><TableCell colSpan={8} align="center">No Facebook comments yet.</TableCell></TableRow>}
           </TableBody>
         </Table>
       </TableContainer>

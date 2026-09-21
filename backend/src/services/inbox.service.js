@@ -77,6 +77,16 @@ function serializeAgent(agent) {
 }
 function displayName(person, fallback = 'Unknown') { return person ? ([person.firstName, person.lastName].filter(Boolean).join(' ') || person.email || fallback) : fallback; }
 
+// Replicates conversationAccessService.scopedWhere()'s exact AND-combination
+// logic, but takes an already-resolved scopeWhere instead of re-resolving it
+// — whereForUser() doesn't depend on baseWhere, so calling scopedWhere()
+// twice per listConversations() (once for permissionWhere, once for the
+// filtered `where`) was re-running the identical User/Role/WhatsAppAccount
+// access query for no reason.
+function applyConversationScope(baseWhere, scopeWhere) {
+  return Object.keys(scopeWhere).length ? { [Op.and]: [baseWhere, scopeWhere] } : baseWhere;
+}
+
 function calculateInteractionRate(messagesSent, repliesReceived) {
   const sent = Number(messagesSent || 0);
   const received = Number(repliesReceived || 0);
@@ -256,7 +266,9 @@ class InboxService {
     enrollmentStatus,
     cursor,
     limit: requestedLimit = 100,
-    q
+    q,
+    countsOnly = false,
+    precomputedScopeWhere = null
   } = {}, userOrId) {
     const userId = typeof userOrId === 'object' ? userOrId.id : userOrId;
     const filters = {};
@@ -275,8 +287,9 @@ class InboxService {
     }
     if (status) filters.status = status;
     if (whatsappAccountId) filters.whatsappAccountId = whatsappAccountId;
-    const permissionWhere = await conversationAccessService.scopedWhere(userOrId, {});
-    const where = await conversationAccessService.scopedWhere(userOrId, filters);
+    const scopeWhere = precomputedScopeWhere || await conversationAccessService.whereForUser(userOrId);
+    const permissionWhere = applyConversationScope({}, scopeWhere);
+    const where = applyConversationScope(filters, scopeWhere);
     let cursorPredicate = null;
     if (cursor) {
       const decoded = decodeCursor(cursor);
@@ -356,6 +369,19 @@ class InboxService {
     const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 100));
     const filteringIncludes = includes.filter((include) => include.required);
     const effectiveLastMessageAt = literal('COALESCE("Conversation"."last_message_at", "Conversation"."updated_at", "Conversation"."created_at")');
+
+    if (countsOnly) {
+      // counts() only ever reads filteredTotal off the result — skip the
+      // page fetch, hydration, latest-message and student-summary work
+      // entirely (previously counts() ran the ENTIRE list pipeline four
+      // times just to read two numbers out of each result).
+      const [total, filteredTotal] = await Promise.all([
+        Conversation.count({ where: permissionWhere, distinct: true }),
+        Conversation.count({ where: filteredWhere, include: filteringIncludes, distinct: true })
+      ]);
+      return { items: [], nextCursor: null, hasMore: false, total, filteredTotal };
+    }
+
     const [pageRows, total, filteredTotal] = await Promise.all([Conversation.findAll({
       attributes: ['id', [effectiveLastMessageAt, 'effectiveLastMessageAt']],
       where: pageWhere,
@@ -380,17 +406,24 @@ class InboxService {
     const latestByConversation = new Map();
 
     if (conversationIds.length > 0) {
-      const recentMessages = await Message.findAll({
-        where: { conversationId: { [Op.in]: conversationIds } },
-        order: [['created_at', 'DESC']],
-        attributes: ['id', 'conversationId', 'direction', 'type', 'messageType', 'text', 'templateName', 'mediaUrl', 'status', 'isInternalNotification', 'createdAt']
-      });
+      // Was: fetch EVERY message ever sent in these conversations (no
+      // LIMIT) just to pick the newest one per conversation in JS — cost
+      // scaled with total message history instead of page size. DISTINCT
+      // ON with the existing (conversation_id, created_at) index lets
+      // Postgres return exactly one (the newest) row per conversation.
+      const recentMessages = await sequelize.query(
+        `SELECT DISTINCT ON (conversation_id)
+            id, conversation_id AS "conversationId", direction, type, message_type AS "messageType",
+            text, template_name AS "templateName", media_url AS "mediaUrl", status,
+            is_internal_notification AS "isInternalNotification", created_at AS "createdAt"
+         FROM messages
+         WHERE conversation_id IN (:conversationIds) AND deleted_at IS NULL
+         ORDER BY conversation_id, created_at DESC`,
+        { replacements: { conversationIds }, type: sequelize.QueryTypes.SELECT }
+      );
 
       for (const message of recentMessages) {
-        const conversationId = String(message.conversationId);
-        if (!latestByConversation.has(conversationId)) {
-          latestByConversation.set(conversationId, message);
-        }
+        latestByConversation.set(String(message.conversationId), message);
       }
     }
 
@@ -398,8 +431,12 @@ class InboxService {
       ...conversation,
       lastMessage: latestByConversation.get(String(conversation.id)) || null
     }));
-    const withInteractionRates = await this.attachInteractionRates(withLatestMessages);
-    const items = await this.attachStudentSummaries(withInteractionRates);
+    // interactionRate is only read from the single-conversation workspace
+    // view (getConversation(), below, still computes it) — the list UI
+    // never renders it, and the open conversation updates it incrementally
+    // from socket events. Computing it here meant a GROUP BY scan over
+    // full message history for every conversation on every list/counts call.
+    const items = await this.attachStudentSummaries(withLatestMessages);
     const cursorRow = returnedPageRows[returnedPageRows.length - 1];
     return {
       items,
@@ -412,11 +449,17 @@ class InboxService {
 
   async counts(query = {}, userOrId) {
     const { cursor, messagingWindow, limit, ...scopeQuery } = query;
+    // Resolve the user's access scope once and reuse it across all four
+    // sub-calls (previously each of the four listConversations() calls
+    // independently re-resolved it), and skip the row/message/summary
+    // pipeline entirely via countsOnly — counts() only ever reads
+    // filteredTotal off each result.
+    const precomputedScopeWhere = await conversationAccessService.whereForUser(userOrId);
     const [all, inside, outside, closing] = await Promise.all([
-      this.listConversations({ ...scopeQuery, limit: 1 }, userOrId),
-      this.listConversations({ ...scopeQuery, messagingWindow: 'inside', limit: 1 }, userOrId),
-      this.listConversations({ ...scopeQuery, messagingWindow: 'outside', limit: 1 }, userOrId),
-      this.listConversations({ ...scopeQuery, messagingWindow: 'closing', limit: 1 }, userOrId)
+      this.listConversations({ ...scopeQuery, limit: 1, countsOnly: true, precomputedScopeWhere }, userOrId),
+      this.listConversations({ ...scopeQuery, messagingWindow: 'inside', limit: 1, countsOnly: true, precomputedScopeWhere }, userOrId),
+      this.listConversations({ ...scopeQuery, messagingWindow: 'outside', limit: 1, countsOnly: true, precomputedScopeWhere }, userOrId),
+      this.listConversations({ ...scopeQuery, messagingWindow: 'closing', limit: 1, countsOnly: true, precomputedScopeWhere }, userOrId)
     ]);
     return {
       total: all.filteredTotal,

@@ -1,6 +1,6 @@
 const axios = require('axios');
 const crypto = require('crypto');
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 const {
   sequelize, WhatsAppAccount, Conversation, Message, Contact, Lead, WhatsAppTemplate,
   Campaign, CampaignRecipient, MessageQueue, Flow, FlowRun, AutoReply, WhatsAppComplianceLog
@@ -273,16 +273,36 @@ class WhatsAppAccountService {
       where: { ...(includeInactive ? {} : { status: 'active' }), ...accessWhere },
       order: [['is_default', 'DESC'], ['name', 'ASC']]
     });
-    const stats = await Promise.all(rows.map(async (row) => {
-      const [templates, campaigns, flows, conversations] = await Promise.all([
-        WhatsAppTemplate.count({ where: { whatsappAccountId: row.id } }),
-        Campaign.count({ where: { whatsappAccountId: row.id } }),
-        Flow.count({ where: { whatsappAccountId: row.id } }),
-        Conversation.count({ where: { whatsappAccountId: row.id } })
-      ]);
-      return { templates, campaigns, flows, conversations };
+    const accountIds = rows.map((row) => row.id);
+    // Was: 4 COUNT queries PER account, all fired at once via Promise.all
+    // (4×N queries, growing with account count and flooding the pool on
+    // every page load). Replaced with 4 GROUP BY queries total, each
+    // returning one row per account, independent of how many accounts exist.
+    const groupCounts = async (model) => {
+      if (!accountIds.length) return new Map();
+      const grouped = await model.findAll({
+        attributes: ['whatsappAccountId', [fn('COUNT', col('id')), 'count']],
+        where: { whatsappAccountId: { [Op.in]: accountIds } },
+        group: ['whatsappAccountId'],
+        raw: true
+      });
+      return new Map(grouped.map((r) => [String(r.whatsappAccountId), Number(r.count)]));
+    };
+    const [templateMap, campaignMap, flowMap, conversationMap] = await Promise.all([
+      groupCounts(WhatsAppTemplate),
+      groupCounts(Campaign),
+      groupCounts(Flow),
+      groupCounts(Conversation)
+    ]);
+    return rows.map((row) => ({
+      ...serialize(row),
+      statistics: {
+        templates: templateMap.get(String(row.id)) || 0,
+        campaigns: campaignMap.get(String(row.id)) || 0,
+        flows: flowMap.get(String(row.id)) || 0,
+        conversations: conversationMap.get(String(row.id)) || 0
+      }
     }));
-    return rows.map((row, index) => ({ ...serialize(row), statistics: stats[index] }));
   }
 
   async get(id) {

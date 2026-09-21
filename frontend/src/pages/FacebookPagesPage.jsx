@@ -23,9 +23,12 @@ export default function FacebookPagesPage() {
   const [busy, setBusy] = useState(false);
   const [deactivating, setDeactivating] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
 
   const load = () => getFacebookPages(true).then((response) => setPages(response.data.data || []));
-  useEffect(() => { load().catch((error) => setMessage({ severity: 'error', text: error.response?.data?.message || 'Unable to load Facebook Pages.' })); }, []);
+  useEffect(() => {
+    load().catch((error) => setMessage({ severity: 'error', text: error.response?.data?.message || 'Unable to load Facebook Pages.' })).finally(() => setLoading(false));
+  }, []);
 
   const beginCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
   const beginEdit = (page) => { setEditing(page); setForm({ ...emptyForm, ...page, pageAccessToken: '' }); setOpen(true); };
@@ -90,7 +93,7 @@ export default function FacebookPagesPage() {
                 </TableCell>
               </TableRow>
             ))}
-            {!pages.length && <TableRow><TableCell colSpan={7} align="center">No Facebook Pages connected.</TableCell></TableRow>}
+            {!loading && !pages.length && <TableRow><TableCell colSpan={7} align="center">No Facebook Pages connected.</TableCell></TableRow>}
           </TableBody>
         </Table>
       </TableContainer>

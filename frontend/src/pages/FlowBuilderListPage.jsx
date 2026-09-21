@@ -103,13 +103,16 @@ function FlowBuilderListPage() {
   const [analyticsFlow, setAnalyticsFlow] = useState(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   const load = async () => {
     const res = await getFlows();
     setFlows(res.data.data || []);
   };
 
-  useEffect(() => { load().catch((err) => setError(err.response?.data?.message || 'Unable to load flows.')); }, []);
+  useEffect(() => {
+    load().catch((err) => setError(err.response?.data?.message || 'Unable to load flows.')).finally(() => setLoading(false));
+  }, []);
 
   const create = async () => {
     const keywords = normalizeKeywords(form.triggerKeywords);
@@ -187,7 +190,7 @@ function FlowBuilderListPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {flows.length === 0 && <TableRow><TableCell colSpan={8}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">No flows yet. Create your first WhatsApp automation.</Typography></TableCell></TableRow>}
+              {!loading && flows.length === 0 && <TableRow><TableCell colSpan={8}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">No flows yet. Create your first WhatsApp automation.</Typography></TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>

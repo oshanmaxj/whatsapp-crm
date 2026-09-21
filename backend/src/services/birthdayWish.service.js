@@ -13,6 +13,11 @@ const whatsappService = require('./whatsapp.service');
 const notificationTemplateService = require('./notificationTemplate.service');
 const studentMessageAutomationService = require('./studentMessageAutomation.service');
 
+// See feeReminder.service.js MAX_REMINDERS_PER_RUN — same incident, same
+// defense: a bulk run must never be able to send an unbounded number of
+// automated messages in one pass.
+const MAX_WISHES_PER_RUN = Math.max(1, Number(process.env.BIRTHDAY_WISH_MAX_PER_RUN || 50));
+
 const DEFAULT_SETTINGS = {
   birthday_auto_send_enabled: false,
   birthday_send_to_students_enabled: true,
@@ -307,7 +312,8 @@ class BirthdayWishService {
     await this.generateBirthdayWishes();
     const pending = await BirthdayWish.findAll({
       where: { status: 'pending', birthdayDate: { [Op.lte]: dateKey() } },
-      order: [['birthday_date', 'ASC'], ['created_at', 'ASC']]
+      order: [['birthday_date', 'ASC'], ['created_at', 'ASC']],
+      limit: MAX_WISHES_PER_RUN
     });
     const results = [];
     for (const wish of pending) {

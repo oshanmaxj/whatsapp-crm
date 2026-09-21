@@ -16,6 +16,14 @@ const whatsappService = require('./whatsapp.service');
 const notificationTemplateService = require('./notificationTemplate.service');
 const studentMessageAutomationService = require('./studentMessageAutomation.service');
 
+// INCIDENT (2026-09-22): a bulk run must never be able to send an unbounded
+// number of automated messages in one pass — see automationScheduler.service.js
+// for why a large, months-accumulated backlog of pending reminder rows could
+// suddenly all become "due" for the first time. Oldest-due rows are sent
+// first (sendBulkReminders already orders by scheduled_date/created_at
+// ascending); anything beyond the cap simply stays pending for the next run.
+const MAX_REMINDERS_PER_RUN = Math.max(1, Number(process.env.FEE_REMINDER_MAX_PER_RUN || 50));
+
 const UPCOMING_TYPES = [
   { days: 7, type: 'upcoming_7' },
   { days: 3, type: 'upcoming_3' },
@@ -227,7 +235,8 @@ class FeeReminderService {
     const pending = await FeeReminder.findAll({
       where: { status: 'pending', scheduledDate: { [Op.lte]: dateKey() } },
       include: this.reminderInclude(),
-      order: [['scheduled_date', 'ASC'], ['created_at', 'ASC']]
+      order: [['scheduled_date', 'ASC'], ['created_at', 'ASC']],
+      limit: MAX_REMINDERS_PER_RUN
     });
     const results = [];
     for (const reminder of pending) {
@@ -240,6 +249,28 @@ class FeeReminderService {
     const reminder = await FeeReminder.findByPk(reminderId, { include: this.reminderInclude() });
     if (!reminder) throw Object.assign(new Error('Fee reminder not found'), { status: 404 });
     if (reminder.status === 'sent') return reminder;
+
+    // INCIDENT (2026-09-22): fail-closed re-check. This FeeReminder row may
+    // have been created a long time ago — e.g. every time anyone opened the
+    // Fee Reminders dashboard, getDue() -> generateAll() silently created a
+    // 'pending' row for each then-outstanding installment, and nothing ever
+    // actually sent them (no autonomous trigger existed) — so a row's mere
+    // existence proves nothing about whether it's still actually due now.
+    // reminder.installment is loaded fresh above; treat any missing/paid/
+    // cancelled/zero-balance installment, or any failure to confirm its
+    // state, as reason to skip (fail closed) rather than send.
+    const installment = reminder.installment;
+    if (!installment || ['paid', 'cancelled'].includes(installment.status) || outstanding(installment) <= 0) {
+      await reminder.update({
+        status: 'cancelled',
+        response: {
+          mode: 'skipped_already_settled',
+          installmentStatus: installment?.status || 'not_found',
+          outstanding: installment ? outstanding(installment) : null
+        }
+      });
+      return FeeReminder.findByPk(reminder.id, { include: this.reminderInclude() });
+    }
 
     try {
       const student = reminder.student || reminder.fee?.student;

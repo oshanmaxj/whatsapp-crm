@@ -138,6 +138,14 @@ function resultMessage(result = {}) {
 }
 
 class AutomationService {
+  // Exposes the private calculateNextRun() to other modules (the incident
+  // scheduler's stale-schedule resync) without duplicating the schedule-math
+  // logic — this stays the single source of truth for "what is the next
+  // occurrence of this schedule".
+  calculateNextRunAt(scheduleType, scheduleValue, from = new Date()) {
+    return calculateNextRun(scheduleType, scheduleValue, from);
+  }
+
   async ensureDefaults() {
     for (const definition of DEFAULT_AUTOMATIONS) {
       const [automation, created] = await Automation.findOrCreate({

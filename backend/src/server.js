@@ -61,8 +61,11 @@ const startServer = async () => {
     reminderSequenceService.start();
     if (process.env.SMS_CAMPAIGN_WORKER_ENABLED !== 'false') smsCampaignWorkerService.start();
     else logger.warn('sms_campaign_worker_disabled', { reason: 'SMS_CAMPAIGN_WORKER_ENABLED=false' });
-    if (process.env.AUTOMATION_SCHEDULER_ENABLED !== 'false') automationSchedulerService.start();
-    else logger.warn('automation_scheduler_disabled', { reason: 'AUTOMATION_SCHEDULER_ENABLED=false' });
+    // Fail-closed by design: this must default to OFF, not merely "off when
+    // explicitly disabled" — see automationScheduler.service.js incident
+    // notes. Only an explicit AUTOMATION_SCHEDULER_ENABLED=true starts it.
+    if (process.env.AUTOMATION_SCHEDULER_ENABLED === 'true') await automationSchedulerService.start();
+    else logger.warn('automation_scheduler_disabled', { reason: 'AUTOMATION_SCHEDULER_ENABLED is not "true"' });
   } catch (error) {
     logger.error('server_start_failed', error);
     process.exit(1);

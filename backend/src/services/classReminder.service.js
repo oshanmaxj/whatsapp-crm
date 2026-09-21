@@ -16,6 +16,10 @@ const notificationTemplateService = require('./notificationTemplate.service');
 const studentMessageAutomationService = require('./studentMessageAutomation.service');
 
 const DEFAULT_CLASS_TIME = process.env.CLASS_REMINDER_DEFAULT_TIME || '09:00';
+// See feeReminder.service.js MAX_REMINDERS_PER_RUN — same incident, same
+// defense: a bulk run must never be able to send an unbounded number of
+// automated messages in one pass.
+const MAX_REMINDERS_PER_RUN = Math.max(1, Number(process.env.CLASS_REMINDER_MAX_PER_RUN || 50));
 
 function dateKey(date = new Date()) {
   return new Date(date).toISOString().slice(0, 10);
@@ -275,7 +279,8 @@ class ClassReminderService {
     const pending = await ClassReminder.findAll({
       where: { status: 'pending', reminderType: { [Op.in]: enabledTypes }, scheduledTime: { [Op.lte]: new Date() } },
       include: this.include(),
-      order: [['scheduled_time', 'ASC']]
+      order: [['scheduled_time', 'ASC']],
+      limit: MAX_REMINDERS_PER_RUN
     });
     const results = [];
     for (const reminder of pending) {

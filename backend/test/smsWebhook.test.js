@@ -48,6 +48,12 @@ models.SmsWebhookEvent.update = async (patch, { where: { eventKey } }) => {
   return [1];
 };
 
+// Phase 2's webhook tests are not campaign-related — none of these
+// sms_messages rows are linked to a campaign recipient, so the Phase 3
+// delivery cascade (smsWebhook.service.js -> smsCampaignDelivery.service.js)
+// must see no matching row and no-op, exactly like a real non-campaign send.
+models.SmsCampaignRecipient.findOne = async () => null;
+
 let smsMessageStore;
 let lastFindOneOptions;
 models.SmsMessage.findOne = async (options) => {

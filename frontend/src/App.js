@@ -55,6 +55,8 @@ import ReminderSequencesPage from './pages/ReminderSequencesPage';
 import AiProviderSettingsPage from './pages/AiProviderSettingsPage';
 import SmsGatewaySettingsPage from './pages/SmsGatewaySettingsPage';
 import SmsHistoryPage from './pages/SmsHistoryPage';
+import SmsCampaignsPage from './pages/SmsCampaignsPage';
+import SmsCampaignDetailPage from './pages/SmsCampaignDetailPage';
 import LeadStatusSettingsPage from './pages/LeadStatusSettingsPage';
 import PaymentVerificationPage from './pages/PaymentVerificationPage';
 import PaymentReceiptsPage from './pages/PaymentReceiptsPage';
@@ -181,6 +183,8 @@ function App() {
             <Route path="/settings/ai-providers" element={permit('ai_providers.view', <AiProviderSettingsPage />)} />
             <Route path="/settings/sms-gateway" element={permit('settings.view', <SmsGatewaySettingsPage />)} />
             <Route path="/sms-history" element={permit('sms.view', <SmsHistoryPage />)} />
+            <Route path="/sms-campaigns" element={permit('sms_campaigns.view', <SmsCampaignsPage />)} />
+            <Route path="/sms-campaigns/:id" element={permit('sms_campaigns.view', <SmsCampaignDetailPage />)} />
             <Route path="/settings/lead-statuses" element={permit('lead_statuses.view', <LeadStatusSettingsPage />)} />
             <Route path="/settings" element={permit('settings.view', <ProductionSettingsPage />)} />
             <Route path="/settings/integrations/zoom" element={permit('settings.view', <CourseSchedulerPage settingsOnly />)} />

@@ -1,5 +1,6 @@
 const { SmsMessage, sequelize } = require('../models');
 const logger = require('../config/logger');
+const smsCampaignDeliveryService = require('./smsCampaignDelivery.service');
 
 // Canonical lifecycle. Higher rank = further along / more final. 'delivered'
 // is the only state treated as strictly terminal below — once reached, no
@@ -99,6 +100,16 @@ async function applyDeliveryEvent(event) {
 
     await record.update(patch, { transaction });
     logger.info('sms_webhook_status_applied', { provider, providerMessageId, status: incomingStatus, recordId: record.id });
+
+    // If this sms_messages row belongs to a campaign recipient, cascade the
+    // status into sms_campaign_recipients + the campaign's aggregate
+    // counters in the same transaction — this is the only place that
+    // happens; there is no second, campaign-specific webhook system.
+    await smsCampaignDeliveryService.onSmsMessageStatusChanged(
+      { smsMessageId: record.id, status: incomingStatus, timestamp, error: event.error || null },
+      transaction
+    );
+
     return { matched: true, applied: true, recordId: record.id };
   });
 }

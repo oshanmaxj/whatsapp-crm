@@ -56,6 +56,7 @@ const facebookCommentRoutes = require('./facebookComment.routes');
 const facebookSettingsRoutes = require('./facebookSettings.routes');
 const smsGatewaySettingsRoutes = require('./smsGatewaySettings.routes');
 const smsRoutes = require('./sms.routes');
+const smsCampaignRoutes = require('./smsCampaign.routes');
 
 const router = express.Router();
 
@@ -97,6 +98,7 @@ router.use('/facebook-comments', facebookCommentRoutes);
 router.use('/settings/facebook', facebookSettingsRoutes);
 router.use('/settings/sms-gateway', smsGatewaySettingsRoutes);
 router.use('/sms', smsRoutes);
+router.use('/sms-campaigns', smsCampaignRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/commissions', commissionRoutes);
 router.use('/ai-agents', aiAgentRoutes);

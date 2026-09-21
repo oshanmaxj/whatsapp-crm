@@ -1452,21 +1452,43 @@ class EducationService {
       await fee.update({ paidAmount, balance, status: feeStatus(fee.totalAmount, paidAmount, fee.paymentType) }, { transaction });
     });
 
+    // Everything below this line is a SIDE EFFECT of the already-committed
+    // financial transaction above, not part of it. Each one (receipt,
+    // WhatsApp notification, SMS notification, commission) is independently
+    // failure-isolated: none of them can undo the payment, and none of them
+    // can block another from being attempted. Previously, receipt generation
+    // was NOT wrapped in try/catch here — if it threw, the whole method
+    // rejected right here and neither the WhatsApp notification nor
+    // commission generation ever ran, even though the payment was already
+    // correctly recorded.
     let receiptResult = null;
     const receiptSettings = await paymentReceiptSettingsService.get();
     if (receiptSettings.autoGenerate && transactionId) {
-      receiptResult = await paymentReceiptService.generatePaymentReceipt({
-        paymentId: transactionId,
-        actorType: 'USER',
-        actorUserId: userId || null,
-        generationSource: 'MANUAL_PAYMENT'
-      });
+      try {
+        receiptResult = await paymentReceiptService.generatePaymentReceipt({
+          paymentId: transactionId,
+          actorType: 'USER',
+          actorUserId: userId || null,
+          generationSource: 'MANUAL_PAYMENT'
+        });
+      } catch (error) {
+        logger.warn('payment_receipt_generation_failed', { installmentId: id, error: error.message });
+      }
     }
 
     const notification = alreadyConfirmed
       ? { status: 'skipped', reason: 'already_confirmed' }
       : await this.sendPaymentSuccessMessage(id, userId).catch((error) => {
           logger.warn('payment_success_notification_failed', { installmentId: id, error: error.message });
+          return { status: 'failed', warning: error.message };
+        });
+    // SMS is independent of the WhatsApp result above — it must not require
+    // a successful (or even attempted) WhatsApp send, an active WhatsApp
+    // account, or conversation resolution (see WHATSAPP_ACCOUNT_AMBIGUOUS).
+    const smsNotification = alreadyConfirmed
+      ? { status: 'skipped', reason: 'already_confirmed' }
+      : await this.sendPaymentSuccessSms(id, userId, { receiptNumber: receiptResult?.receipt?.receiptNumber || null }).catch((error) => {
+          logger.warn('payment_success_sms_failed', { installmentId: id, error: error.message });
           return { status: 'failed', warning: error.message };
         });
     if (!alreadyConfirmed) {
@@ -1481,6 +1503,7 @@ class EducationService {
       receipt: receiptResult?.receipt || null,
       receiptCreated: receiptResult?.created || false,
       notification,
+      smsNotification,
       message: 'Payment confirmed and income recorded.'
     };
   }
@@ -1603,6 +1626,56 @@ class EducationService {
       whatsappAccountId: installment.whatsappAccountId || installment.accountingTransaction?.whatsappAccountId || null,
       paymentId: installment.accountingTransactionId || null,
       createdBy: userId
+    });
+  }
+
+  // Payment confirmation SMS: reuses the SAME `payment_confirmation`
+  // template key as the WhatsApp message above (dispatchSms looks up
+  // `payment_confirmation_sms`, its SMS-channel counterpart in the same
+  // StudentMessageTemplate table) and the same generic SMS infrastructure
+  // used by the rest of the student SMS notifications. Deliberately
+  // independent of sendPaymentSuccessMessage/WhatsApp: it never resolves a
+  // WhatsApp conversation or account, so a WHATSAPP_ACCOUNT_AMBIGUOUS
+  // condition (or any other WhatsApp failure) can never block it.
+  async sendPaymentSuccessSms(installmentId, userId, { receiptNumber = null } = {}) {
+    const installment = await FeeInstallment.findByPk(installmentId, {
+      include: [
+        {
+          model: StudentFee,
+          as: 'fee',
+          include: [
+            { model: Student, as: 'student' },
+            { model: Course, as: 'course' },
+            { model: Batch, as: 'batch' }
+          ]
+        },
+        { model: AccountingTransaction, as: 'accountingTransaction', required: false }
+      ]
+    });
+    const student = installment?.fee?.student;
+    if (!student) throw new Error('Student was not found for payment SMS.');
+    // The durable, unique-per-payment-event identifier this SMS is deduped
+    // on: a NEW AccountingTransaction is created for each genuinely new
+    // payment (full or partial) confirmed on this installment, so two
+    // legitimate partial payments get two distinct ids (and two SMS), while
+    // reprocessing the same confirmation reuses the same id (and sends at
+    // most one SMS) — see smsMessage.service.js sendAutomated()'s
+    // dedupe_key uniqueness for the actual guarantee.
+    const paymentEventId = installment.accountingTransactionId || installment.accountingTransaction?.id;
+    return studentMessageAutomationService.dispatchSms('payment_confirmation', student.id, {
+      eventId: `installment:${installment.id}:confirmed`,
+      smsOccurrenceKey: paymentEventId ? `payment-confirmation:${paymentEventId}` : `installment:${installment.id}:confirmed`,
+      eventDate: installment.paidDate || todayDate(),
+      paymentAmount: installment.accountingTransaction?.amount || installment.paidAmount,
+      paymentDate: installment.paidDate || new Date(),
+      paymentMethod: installment.paymentMethod,
+      installmentNo: installment.installmentNo,
+      installmentDueDate: installment.dueDate,
+      createdBy: userId,
+      variables: {
+        remaining_balance: installment.fee?.balance != null ? installment.fee.balance : '',
+        receipt_number: receiptNumber || ''
+      }
     });
   }
 

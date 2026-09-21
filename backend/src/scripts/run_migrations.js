@@ -71,6 +71,7 @@ const smsWebhookEventsMigration = require('../../migrations/068_sms_webhook_even
 const smsCampaignsMigration = require('../../migrations/069_sms_campaigns');
 const facebookCommentAutoHideMigration = require('../../migrations/070_facebook_comment_auto_hide');
 const studentSmsNotificationsMigration = require('../../migrations/071_student_sms_notifications');
+const paymentConfirmationSmsMigration = require('../../migrations/072_payment_confirmation_sms');
 const MIGRATION_RUNNER_LOCK = 570000;
 
 function originalDatabaseError(error) {
@@ -318,6 +319,8 @@ async function run() {
     console.log('Applied: Facebook comment keyword auto-hide rules and audit columns');
     await runMigration('071_student_sms_notifications.js', studentSmsNotificationsMigration, queryInterface);
     console.log('Applied: student SMS notifications (welcome/class reminder/birthday/payment) and permissions');
+    await runMigration('072_payment_confirmation_sms.js', paymentConfirmationSmsMigration, queryInterface);
+    console.log('Applied: payment confirmation SMS template');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

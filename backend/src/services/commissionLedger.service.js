@@ -7,6 +7,41 @@ const can = (actor, permission) => actor?.isSystemAdmin || actor?.permissions?.i
   (permission === 'commission.view' && ['commission.view_all','commission.view_team'].some(p=>actor?.permissions?.includes(p)));
 const fail = (message,status=422,code='COMMISSION_ERROR')=>Object.assign(new Error(message),{status,code});
 
+// INCIDENT (2026-09-22): commission_generation_failed was logging
+// "current transaction is aborted, commands ignored until end of
+// transaction block" — a Postgres 25P02, not the real error. Root cause:
+// Model.findOrCreate({..., transaction}) has a confirmed bug in Sequelize
+// ^6.37.8 (node_modules/sequelize/lib/model.js ~L1421-1452) — when the
+// underlying INSERT races another concurrent caller and hits the unique
+// constraint (23505, here on commission_ledger.idempotency_key), Sequelize
+// catches that UniqueConstraintError but issues its fallback findOne() on
+// the SAME transaction WITHOUT rolling it back first. Postgres has already
+// marked that transaction aborted, so the fallback SELECT itself fails with
+// 25P02 — which is what actually propagates, masking the real 23505 and
+// rolling back the ENTIRE commission-generation transaction (wiping out any
+// other, genuinely-new components computed for the same payment in the same
+// pass).
+//
+// Fix: do findOrCreate ourselves, correctly. The lookup happens first (as
+// normal). The create is scoped to its own SAVEPOINT via the *callback* form
+// of sequelize.transaction({transaction}, cb) — unlike Sequelize's internal
+// findOrCreate, that form DOES roll back to the savepoint on failure (see
+// sequelize.js transaction()'s catch block), so if we lose the race, the
+// outer transaction is healthy again and a follow-up findOne() on it works.
+async function findOrCreateSafely(Model, { where, defaults, transaction }) {
+  const existing = await Model.findOne({ where, transaction });
+  if (existing) return [existing, false];
+  try {
+    const created = await sequelize.transaction({ transaction }, (savepoint) => Model.create(defaults, { transaction: savepoint }));
+    return [created, true];
+  } catch (error) {
+    if (error?.name !== 'SequelizeUniqueConstraintError') throw error;
+    const winner = await Model.findOne({ where, transaction });
+    if (!winner) throw error;
+    return [winner, false];
+  }
+}
+
 class CommissionLedgerService {
   scope(actor, where={}) {
     if (can(actor,'commission.view')) return where;
@@ -20,7 +55,7 @@ class CommissionLedgerService {
       const created=[];
       for (const component of result.components) {
         const idempotencyKey=[sourcePaymentId,component.beneficiaryType,component.beneficiaryId,component.ruleId||component.lecturerAgreementId||0,component.earningComponent].join(':');
-        const [ledger,isNew]=await CommissionLedger.findOrCreate({ where:{idempotencyKey}, defaults:{
+        const [ledger,isNew]=await findOrCreateSafely(CommissionLedger, { where:{idempotencyKey}, defaults:{
           sourcePaymentId,sourceAccountingTransactionId:context.accountingTransactionId,earningType:component.earningType,
           earningComponent:component.earningComponent,beneficiaryType:component.beneficiaryType,beneficiaryId:component.beneficiaryId,
           ruleId:component.ruleId||null,lecturerAgreementId:component.lecturerAgreementId||null,studentId:context.fee.studentId,enrollmentId:context.fee.enrollmentId,
@@ -46,7 +81,7 @@ class CommissionLedgerService {
       const reversals=[];
       for(const original of originals){
         const key=`reversal:${original.id}`;
-        const [reversal]=await CommissionLedger.findOrCreate({where:{idempotencyKey:key},defaults:{...original.get({plain:true}),id:undefined,
+        const [reversal]=await findOrCreateSafely(CommissionLedger, {where:{idempotencyKey:key},defaults:{...original.get({plain:true}),id:undefined,
           amount:decimal.format(-decimal.parse(original.amount)),grossPayment:decimal.format(-decimal.parse(original.grossPayment)),
           calculationBasis:decimal.format(-decimal.parse(original.calculationBasis)),instituteMargin:decimal.format(-decimal.parse(original.instituteMargin)),
           status:'reversed',reversalOfId:original.id,payoutId:null,idempotencyKey:key},transaction});
@@ -76,3 +111,4 @@ class CommissionLedgerService {
   }
 }
 module.exports=new CommissionLedgerService();
+module.exports.findOrCreateSafely = findOrCreateSafely; // exposed for direct regression testing of the incident fix

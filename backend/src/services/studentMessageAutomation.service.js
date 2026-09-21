@@ -13,7 +13,7 @@ const SUPPORTED_VARIABLES = [
   'class_date', 'class_time', 'lesson_id', 'lesson_name', 'recording_url', 'payment_amount',
   'payment_date', 'payment_method', 'installment_no', 'installment_due_date', 'certificate_url'
   , 'portal_username', 'whatsapp_group_link', 'whatsapp_group_name', 'enrollment_id',
-  'lesson_title', 'portal_lesson_link', 'recording_link'
+  'lesson_title', 'portal_lesson_link', 'recording_link', 'remaining_balance', 'receipt_number'
 ];
 const zoomUrlPattern = /(?:https?:\/\/)?(?:[\w-]+\.)?zoom\.(?:us|com)\//i;
 const formatDate = (value) => value ? new Date(value).toLocaleDateString('en-GB') : '';

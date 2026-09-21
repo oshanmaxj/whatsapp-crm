@@ -3,6 +3,7 @@ const logger = require('../config/logger');
 const { FacebookPage, FacebookWebhookEvent } = require('../models');
 const facebookMessengerService = require('../services/facebookMessenger.service');
 const facebookCommentService = require('../services/facebookComment.service');
+const facebookCommentAutoHideRuleService = require('../services/facebookCommentAutoHideRule.service');
 const facebookSettingsService = require('../services/facebookSettings.service');
 
 function signatureMatches(rawBody, signature, secret) {
@@ -87,7 +88,7 @@ async function processFeedChange(page, change) {
       const { FacebookComment } = require('../models');
       await FacebookComment.update({ message: value.message || null }, { where: { metaCommentId: value.comment_id } });
     } else {
-      await facebookCommentService.ingestComment({
+      const { comment, created } = await facebookCommentService.ingestComment({
         facebookPageId: page.id,
         metaCommentId: value.comment_id,
         metaPostId: value.post_id,
@@ -97,6 +98,21 @@ async function processFeedChange(page, change) {
         message: value.message || null,
         createdTime: value.created_time ? new Date(Number(value.created_time) * 1000) : new Date()
       });
+      // Auto-hide evaluation is a best-effort side effect: the comment is
+      // already durably stored above, so a Meta outage or a bad rule here
+      // must NEVER fail this webhook or cause Facebook to retry delivery
+      // (which would otherwise risk duplicate CRM comments/replies).
+      // Version 1 only evaluates genuinely NEW comments (created === true) —
+      // historical comments are never scanned/hidden retroactively.
+      if (created) {
+        try {
+          await facebookCommentAutoHideRuleService.evaluateAndHide(comment);
+        } catch (autoHideError) {
+          logger.error('facebook_comment_auto_hide_evaluation_failed', {
+            facebookPageId: page.id, commentId: comment.id, message: autoHideError.message
+          });
+        }
+      }
     }
     await markEventStatus(eventKey, 'processed');
   } catch (error) {

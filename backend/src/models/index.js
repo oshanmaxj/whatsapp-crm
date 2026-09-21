@@ -81,6 +81,7 @@ const FacebookPage = require('./facebookPage.model');
 const FacebookContact = require('./facebookContact.model');
 const FacebookComment = require('./facebookComment.model');
 const FacebookWebhookEvent = require('./facebookWebhookEvent.model');
+const FacebookCommentAutoHideRule = require('./facebookCommentAutoHideRule.model');
 const UserFacebookPage = require('./userFacebookPage.model');
 const WhatsAppRoutingRule = require('./whatsappRoutingRule.model');
 const WhatsAppRoutingRuleAgent = require('./whatsappRoutingRuleAgent.model');
@@ -229,6 +230,7 @@ const models = {
   FacebookContact: FacebookContact(sequelize, Sequelize.DataTypes),
   FacebookComment: FacebookComment(sequelize, Sequelize.DataTypes),
   FacebookWebhookEvent: FacebookWebhookEvent(sequelize, Sequelize.DataTypes),
+  FacebookCommentAutoHideRule: FacebookCommentAutoHideRule(sequelize, Sequelize.DataTypes),
   UserFacebookPage: UserFacebookPage(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingRule: WhatsAppRoutingRule(sequelize, Sequelize.DataTypes),
   WhatsAppRoutingRuleAgent: WhatsAppRoutingRuleAgent(sequelize, Sequelize.DataTypes),
@@ -524,6 +526,7 @@ models.FacebookPage.hasMany(models.Flow, { foreignKey: 'facebook_page_id', as: '
 models.FacebookPage.hasMany(models.FlowRun, { foreignKey: 'facebook_page_id', as: 'flowRuns' });
 models.FacebookPage.hasMany(models.FacebookContact, { foreignKey: 'facebook_page_id', as: 'facebookContacts' });
 models.FacebookPage.hasMany(models.FacebookComment, { foreignKey: 'facebook_page_id', as: 'facebookComments' });
+models.FacebookPage.hasMany(models.FacebookCommentAutoHideRule, { foreignKey: 'facebook_page_id', as: 'commentAutoHideRules' });
 models.Contact.hasMany(models.FacebookContact, { foreignKey: 'contact_id', as: 'facebookContacts' });
 models.Contact.hasMany(models.FacebookComment, { foreignKey: 'contact_id', as: 'facebookComments' });
 models.Lead.hasMany(models.FacebookComment, { foreignKey: 'lead_id', as: 'facebookComments' });

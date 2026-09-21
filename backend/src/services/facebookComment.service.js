@@ -112,6 +112,50 @@ class FacebookCommentService {
     socketService.emit('facebook.comment.replied', { id: comment.id, facebookPageId: comment.facebookPageId });
     return comment;
   }
+
+  // Shared low-level Graph call for both manual hide/unhide (hideComment/
+  // unhideComment below) and the automatic keyword auto-hide flow
+  // (facebookCommentAutoHideRule.service.js) — there is exactly one place
+  // in the codebase that ever sets a comment's is_hidden state on Meta.
+  // No userId/access check here: callers are expected to have already
+  // authorized the request (via get()/assertAccess) or to be an internal
+  // system caller (the webhook-triggered auto-hide path).
+  async setHiddenState(comment, hidden) {
+    const config = await facebookPageService.runtimeConfig(comment.facebookPageId);
+    try {
+      await facebookPageService.graphRequest(config, 'post', comment.metaCommentId, '', { is_hidden: hidden });
+    } catch (error) {
+      logger.error('facebook_comment_hide_state_failed', {
+        facebookPageId: comment.facebookPageId,
+        commentId: comment.id,
+        hidden,
+        message: error.response?.data?.error?.message || error.message
+      });
+      throw Object.assign(new Error(error.response?.data?.error?.message || `Failed to ${hidden ? 'hide' : 'unhide'} this Facebook comment`), {
+        status: 502, code: 'FACEBOOK_COMMENT_HIDE_FAILED', exposeMessage: true
+      });
+    }
+    await comment.update({ hidden });
+    return comment;
+  }
+
+  async hideComment(id, userId = null) {
+    const comment = await this.get(id, userId);
+    if (comment.hidden) return comment; // already hidden — idempotent
+    await this.setHiddenState(comment, true);
+    logger.info('facebook_comment_manual_hide', { facebookPageId: comment.facebookPageId, commentId: comment.id, userId });
+    socketService.emit('facebook.comment.updated', { id: comment.id, facebookPageId: comment.facebookPageId, hidden: true });
+    return comment;
+  }
+
+  async unhideComment(id, userId = null) {
+    const comment = await this.get(id, userId);
+    if (!comment.hidden) return comment; // already visible — idempotent
+    await this.setHiddenState(comment, false);
+    logger.info('facebook_comment_manual_unhide', { facebookPageId: comment.facebookPageId, commentId: comment.id, userId });
+    socketService.emit('facebook.comment.updated', { id: comment.id, facebookPageId: comment.facebookPageId, hidden: false });
+    return comment;
+  }
 }
 
 module.exports = new FacebookCommentService();

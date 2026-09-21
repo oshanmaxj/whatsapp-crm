@@ -69,6 +69,7 @@ const flowMultiChannelMigration = require('../../migrations/066_flow_multi_chann
 const smsGatewayMigration = require('../../migrations/067_sms_gateway');
 const smsWebhookEventsMigration = require('../../migrations/068_sms_webhook_events');
 const smsCampaignsMigration = require('../../migrations/069_sms_campaigns');
+const facebookCommentAutoHideMigration = require('../../migrations/070_facebook_comment_auto_hide');
 const MIGRATION_RUNNER_LOCK = 570000;
 
 function originalDatabaseError(error) {
@@ -312,6 +313,8 @@ async function run() {
     console.log('Applied: SMS webhook idempotency ledger and view permission');
     await runMigration('069_sms_campaigns.js', smsCampaignsMigration, queryInterface);
     console.log('Applied: SMS bulk campaigns tables and permissions');
+    await runMigration('070_facebook_comment_auto_hide.js', facebookCommentAutoHideMigration, queryInterface);
+    console.log('Applied: Facebook comment keyword auto-hide rules and audit columns');
     console.log('Applied: canonical payment WhatsApp conversation context');
 
     // Leads

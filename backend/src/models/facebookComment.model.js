@@ -13,7 +13,17 @@ module.exports = (sequelize, DataTypes) => {
     createdTime: { type: DataTypes.DATE, allowNull: false, field: 'created_time' },
     hidden: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     deleted: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-    replied: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }
+    replied: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    autoHideMatched: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'auto_hide_matched' },
+    autoHideRuleId: { type: DataTypes.BIGINT, allowNull: true, field: 'auto_hide_rule_id' },
+    // Snapshots of the matched rule at hide-time — survive the rule being
+    // edited or deleted later, so the historical explanation never breaks.
+    autoHideKeyword: { type: DataTypes.STRING(255), allowNull: true, field: 'auto_hide_keyword' },
+    autoHideMatchType: { type: DataTypes.STRING(20), allowNull: true, field: 'auto_hide_match_type' },
+    autoHideStatus: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'not_matched', field: 'auto_hide_status' },
+    autoHiddenAt: { type: DataTypes.DATE, allowNull: true, field: 'auto_hidden_at' },
+    autoHideError: { type: DataTypes.TEXT, allowNull: true, field: 'auto_hide_error' },
+    autoHideAttemptedAt: { type: DataTypes.DATE, allowNull: true, field: 'auto_hide_attempted_at' }
   }, {
     tableName: 'facebook_comments',
     timestamps: true,
@@ -24,7 +34,9 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['meta_post_id'], name: 'facebook_comments_post_idx' },
       { fields: ['contact_id'], name: 'facebook_comments_contact_idx' },
       { fields: ['lead_id'], name: 'facebook_comments_lead_idx' },
-      { fields: ['assigned_user_id'], name: 'facebook_comments_assigned_user_idx' }
+      { fields: ['assigned_user_id'], name: 'facebook_comments_assigned_user_idx' },
+      { fields: ['auto_hide_rule_id'], name: 'facebook_comments_auto_hide_rule_idx' },
+      { fields: ['auto_hide_status'], name: 'facebook_comments_auto_hide_status_idx' }
     ]
   });
 
@@ -33,6 +45,7 @@ module.exports = (sequelize, DataTypes) => {
     FacebookComment.belongsTo(models.Contact, { foreignKey: 'contact_id', as: 'contact' });
     FacebookComment.belongsTo(models.Lead, { foreignKey: 'lead_id', as: 'lead' });
     FacebookComment.belongsTo(models.User, { foreignKey: 'assigned_user_id', as: 'assignedUser' });
+    FacebookComment.belongsTo(models.FacebookCommentAutoHideRule, { foreignKey: 'auto_hide_rule_id', as: 'autoHideRule' });
   };
 
   return FacebookComment;

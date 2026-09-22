@@ -22,6 +22,14 @@ const smsWebhookController = require('../src/controllers/smsWebhook.controller')
 const permission = require('../src/middleware/permission.middleware');
 
 const API_KEY = 'sandbox-webhook-test-key';
+// INCIDENT (2026-09-23): SMSGo signs webhooks with a DEDICATED webhook
+// secret (format `whsec_...`, obtained separately via SMSGo's SetWebhook
+// registration) — never the send API key — and the signature header value
+// is `sha256=<hex>`, not bare hex. This file previously signed fixtures
+// with the send API key and no prefix, matching the pre-fix (broken)
+// implementation; see smsgo.provider.js verifyWebhookSignature() for the
+// confirmed real scheme (sourced from SMSGo's own published Go SDK docs).
+const WEBHOOK_SECRET = 'whsec_test_webhook_secret';
 
 auditService.record = async () => {}; // no real AuditLog DB write
 
@@ -86,7 +94,7 @@ async function resetGatewayState() {
   fakeSettingsRow = { id: 1, value: {} };
   await settingsService.save({
     isEnabled: true, activeProvider: 'smsgo',
-    providerConfig: { mode: 'sandbox', sandboxApiKey: API_KEY, liveApiKey: '', defaultMask: 'TESTMASK' }
+    providerConfig: { mode: 'sandbox', sandboxApiKey: API_KEY, liveApiKey: '', defaultMask: 'TESTMASK', webhookSecret: WEBHOOK_SECRET }
   });
 }
 
@@ -100,7 +108,7 @@ test.beforeEach(async () => {
 
 function sign(bodyObject) {
   const rawBody = Buffer.from(JSON.stringify(bodyObject));
-  return crypto.createHmac('sha256', API_KEY).update(rawBody).digest('hex');
+  return `sha256=${crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('hex')}`;
 }
 
 function invoke(bodyObject, { signature = sign(bodyObject) } = {}) {

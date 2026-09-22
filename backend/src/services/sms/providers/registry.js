@@ -10,7 +10,13 @@ module.exports = {
   smsgo: {
     ProviderClass: SmsGoProvider,
     label: 'SMSGo.lk',
-    fields: ['mode', 'defaultMask', 'sandboxApiKey', 'liveApiKey'],
-    secretFields: ['sandboxApiKey', 'liveApiKey']
+    // webhookSecret: a SEPARATE credential from sandboxApiKey/liveApiKey —
+    // confirmed via SMSGo's own published Go SDK docs (pkg.go.dev), which
+    // document it as obtained via Client.SetWebhook() (format `whsec_...`)
+    // and used to verify "X-SMSGo-Signature: sha256=<hmac>" on incoming
+    // webhooks. The send API key was never the right secret for this — see
+    // smsgo.provider.js verifyWebhookSignature() for the incident notes.
+    fields: ['mode', 'defaultMask', 'sandboxApiKey', 'liveApiKey', 'webhookSecret'],
+    secretFields: ['sandboxApiKey', 'liveApiKey', 'webhookSecret']
   }
 };

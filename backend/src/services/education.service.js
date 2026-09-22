@@ -1263,14 +1263,24 @@ class EducationService {
     const paying = roundMoney(payload.amount === undefined || payload.amount === null ? remaining : payload.amount);
     if (paying <= 0) throw Object.assign(new Error('Payment amount must be greater than 0.'), { status: 400 });
     if (paying > remaining) throw Object.assign(new Error('Payment exceeds installment remaining amount.'), { status: 400 });
-    const student = await Student.findByPk(row.fee.studentId);
+    const student = await Student.findByPk(row.fee.studentId, { include: [{ model: Contact, as: 'contact', required: false }] });
     let conversation = null;
     if (student?.contactId) {
       try {
         conversation = await canonicalWhatsappConversationService.resolveCanonicalWhatsAppConversation({
           preferredConversationId: payload.conversationId || payload.conversation_id || null,
           contactId: student.contactId,
-          whatsappAccountId: payload.whatsappAccountId || payload.whatsapp_account_id || null
+          // Explicit payload account wins when given; otherwise fall back to
+          // the Contact's own canonical account (set once, at contact
+          // creation — see contact.model.js) instead of letting the
+          // resolver guess among however many conversations happen to be
+          // open right now. This is the deterministic relationship already
+          // used elsewhere in the codebase (e.g. contact_created flow
+          // events) for "which account does this contact belong to" — using
+          // it here removes the single most common cause of
+          // WHATSAPP_ACCOUNT_AMBIGUOUS: a contact with more than one
+          // currently-open conversation across different accounts.
+          whatsappAccountId: payload.whatsappAccountId || payload.whatsapp_account_id || student.contact?.whatsappAccountId || null
         });
       } catch (error) {
         logger.warn('payment_whatsapp_context_unavailable', { installmentId: row.id, contactId: student.contactId, code: error.code || null });
@@ -1329,12 +1339,22 @@ class EducationService {
   async accountingPaymentContext(studentFeeId, transaction) {
     const fee = await StudentFee.findByPk(studentFeeId, { transaction });
     if (!fee) throw Object.assign(new Error('Fee record not found'), { status: 404 });
-    const [student, course, batch, enrollment] = await Promise.all([
-      Student.findByPk(fee.studentId, { transaction }),
-      fee.courseId ? Course.findByPk(fee.courseId, { transaction }) : null,
-      fee.batchId ? Batch.findByPk(fee.batchId, { transaction }) : null,
-      fee.enrollmentId ? StudentEnrollment.findByPk(fee.enrollmentId, { transaction }) : null
-    ]);
+    // INCIDENT (2026-09-23): these MUST run sequentially, not via
+    // Promise.all — a single Postgres connection/transaction can only run
+    // one query at a time. Issuing several queries "concurrently" against
+    // the SAME transaction produces the pg driver warning "Calling
+    // client.query() when the client is already executing a query is
+    // deprecated" and can leave the underlying pooled connection in a bad
+    // state that only surfaces later, as "current transaction is aborted",
+    // when a completely unrelated LATER transaction (e.g. commission
+    // generation, checked out fresh from the same pool) happens to reuse
+    // that same connection. This is the real root cause of
+    // commission_generation_failed — see commissionLedger.service.js and
+    // paymentReceipt.service.js for the sibling fixes.
+    const student = await Student.findByPk(fee.studentId, { transaction });
+    const course = fee.courseId ? await Course.findByPk(fee.courseId, { transaction }) : null;
+    const batch = fee.batchId ? await Batch.findByPk(fee.batchId, { transaction }) : null;
+    const enrollment = fee.enrollmentId ? await StudentEnrollment.findByPk(fee.enrollmentId, { transaction }) : null;
     if (!student) throw Object.assign(new Error('Student not found for fee payment'), { status: 404 });
     if (!registrationNumber(student)) {
       const generatedStudentNo = await studentRegistrationNumberService.next({ transaction });
@@ -1494,7 +1514,19 @@ class EducationService {
     if (!alreadyConfirmed) {
       const commissionService = require('./commission.service');
       await commissionService.generateForInstallment(id).catch((error) => {
-        logger.warn('commission_generation_failed', { installmentId: id, code: error.code, error: error.message });
+        const sqlState = error.original?.code || error.parent?.code || null;
+        // 25P02 ("current transaction is aborted") is NEVER the real cause —
+        // it only ever means an EARLIER query on this same connection/
+        // transaction already failed. Flagging it here is a diagnostic
+        // breadcrumb only (not a catch-and-suppress): if this ever appears
+        // again, the actual bug is an unfixed concurrent-query pattern
+        // (Promise.all sharing one `transaction`) somewhere upstream, not
+        // inside commission generation itself — see the 2026-09-23 incident
+        // notes in accountingPaymentContext()/paymentReceipt.service.js.
+        logger.warn('commission_generation_failed', {
+          installmentId: id, code: error.code, sqlState, error: error.message,
+          likelySecondarySymptom: sqlState === '25P02'
+        });
       });
     }
     return {
@@ -1546,10 +1578,10 @@ class EducationService {
       if (row.status !== 'confirmed' || !row.accountingTransactionId) {
         throw Object.assign(new Error('Only a confirmed payment with recorded income can be reversed.'), { status: 409 });
       }
-      const [originalTransaction, feeRecord] = await Promise.all([
-        AccountingTransaction.findByPk(row.accountingTransactionId, { transaction }),
-        StudentFee.findByPk(row.studentFeeId, { transaction })
-      ]);
+      // Sequential, not Promise.all — see accountingPaymentContext() above
+      // for why concurrent queries on one shared transaction are unsafe.
+      const originalTransaction = await AccountingTransaction.findByPk(row.accountingTransactionId, { transaction });
+      const feeRecord = await StudentFee.findByPk(row.studentFeeId, { transaction });
       if (!originalTransaction) throw Object.assign(new Error('The original accounting income transaction was not found.'), { status: 409 });
 
       let category = await AccountingCategory.findOne({ where: { name: 'Other Expenses', type: 'expense' }, transaction });

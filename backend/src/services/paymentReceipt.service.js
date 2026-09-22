@@ -66,12 +66,19 @@ function createPaymentReceiptService(dependencies = {}) {
     if (!student) throw appError('Student for payment was not found', 404, 'RECEIPT_STUDENT_NOT_FOUND');
     const courseId = fee?.courseId || payment.relatedCourseId || student.courseId || null;
     const batchId = fee?.batchId || student.batchId || null;
-    const [course, batch, verifier, receiptSettings] = await Promise.all([
-      courseId ? Course.findByPk(courseId, { transaction }) : null,
-      batchId ? Batch.findByPk(batchId, { transaction }) : null,
-      installment?.confirmedBy ? User.findByPk(installment.confirmedBy, { transaction }) : null,
-      settings.get()
-    ]);
+    // Sequential, not Promise.all: Course/Batch/User all share `transaction`
+    // — issuing them concurrently on one Postgres connection can corrupt
+    // that pooled connection in a way that only surfaces later, in a
+    // completely different transaction that happens to reuse it (this is
+    // the real root cause behind commission_generation_failed's "current
+    // transaction is aborted" — see education.service.js
+    // accountingPaymentContext() and commissionLedger.service.js for the
+    // sibling fixes). settings.get() doesn't take a transaction, so it's
+    // safe to run independently, but is kept sequential here too for clarity.
+    const course = courseId ? await Course.findByPk(courseId, { transaction }) : null;
+    const batch = batchId ? await Batch.findByPk(batchId, { transaction }) : null;
+    const verifier = installment?.confirmedBy ? await User.findByPk(installment.confirmedBy, { transaction }) : null;
+    const receiptSettings = await settings.get();
 
     const receiptDate = payment.date ? new Date(`${payment.date}T00:00:00.000Z`) : new Date();
     const receiptNumber = await receiptNumbers.next({ receiptDate, transaction });

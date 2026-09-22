@@ -12,7 +12,7 @@ const emptySettings = {
   availableProviders: [{ id: 'smsgo', label: 'SMSGo.lk' }],
   capabilities: {},
   webhookUrl: null,
-  providerConfig: { mode: 'sandbox', defaultMask: '', sandboxApiKeyConfigured: false, liveApiKeyConfigured: false },
+  providerConfig: { mode: 'sandbox', defaultMask: '', sandboxApiKeyConfigured: false, liveApiKeyConfigured: false, webhookSecretConfigured: false },
   lastTestStatus: null,
   lastTestAt: null,
   lastTestError: null
@@ -29,7 +29,7 @@ function formatBalance(balance) {
 
 export default function SmsGatewaySettingsPage() {
   const [settings, setSettings] = React.useState(emptySettings);
-  const [form, setForm] = React.useState({ isEnabled: false, activeProvider: 'smsgo', mode: 'sandbox', defaultMask: '', sandboxApiKey: '', liveApiKey: '' });
+  const [form, setForm] = React.useState({ isEnabled: false, activeProvider: 'smsgo', mode: 'sandbox', defaultMask: '', sandboxApiKey: '', liveApiKey: '', webhookSecret: '' });
   // null = not yet fetched (show free-text entry); [] = fetched, none
   // approved yet (show the friendly empty-state); non-empty = show a picker.
   const [masks, setMasks] = React.useState(null);
@@ -55,7 +55,8 @@ export default function SmsGatewaySettingsPage() {
         mode: data.data.providerConfig?.mode || 'sandbox',
         defaultMask: data.data.providerConfig?.defaultMask || '',
         sandboxApiKey: '',
-        liveApiKey: ''
+        liveApiKey: '',
+        webhookSecret: ''
       });
     } catch (error) {
       setMessage({ severity: 'error', text: error.response?.data?.message || error.message });
@@ -70,10 +71,10 @@ export default function SmsGatewaySettingsPage() {
       const { data } = await service.saveSmsGatewaySettings({
         isEnabled: form.isEnabled,
         activeProvider: form.activeProvider,
-        providerConfig: { mode: form.mode, defaultMask: form.defaultMask, sandboxApiKey: form.sandboxApiKey, liveApiKey: form.liveApiKey }
+        providerConfig: { mode: form.mode, defaultMask: form.defaultMask, sandboxApiKey: form.sandboxApiKey, liveApiKey: form.liveApiKey, webhookSecret: form.webhookSecret }
       });
       setSettings(data.data);
-      setForm((prev) => ({ ...prev, sandboxApiKey: '', liveApiKey: '' }));
+      setForm((prev) => ({ ...prev, sandboxApiKey: '', liveApiKey: '', webhookSecret: '' }));
       setMessage({ severity: 'success', text: 'SMS Gateway settings saved.' });
     } catch (error) {
       const fieldErrors = error.response?.data?.errors || {};
@@ -253,6 +254,14 @@ export default function SmsGatewaySettingsPage() {
             </InputAdornment>
           }}
           onFocus={(e) => e.target.select()}
+        />
+        <TextField
+          type="password" autoComplete="new-password" fullWidth sx={{ mt: 2 }}
+          label={settings.providerConfig?.webhookSecretConfigured ? 'Webhook signing secret (configured — leave blank to keep)' : 'Webhook signing secret'}
+          value={form.webhookSecret}
+          error={Boolean(errors.webhookSecret)}
+          helperText={errors.webhookSecret || 'A separate secret the provider gives you when you register the URL above (SMSGo: format "whsec_..." — not your API key). Required for delivery status callbacks to be accepted; without it every callback is rejected.'}
+          onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
         />
       </CardContent>
     </Card>}

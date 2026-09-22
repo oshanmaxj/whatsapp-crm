@@ -79,6 +79,7 @@ class SmsGoProvider extends BaseSmsProvider {
     this.apiKey = this.mode === 'live' ? config.liveApiKey : config.sandboxApiKey;
     this.defaultMask = config.defaultMask || null;
     this.baseUrl = config.baseUrl || DEFAULT_BASE_URL;
+    this.webhookSecret = config.webhookSecret || null;
   }
 
   get name() { return 'smsgo'; }
@@ -183,26 +184,29 @@ class SmsGoProvider extends BaseSmsProvider {
     return { mode: this.mode, balance };
   }
 
-  // SMSGo signs with HMAC-SHA256 keyed by the active API key, sent in the
-  // `X-SMSGo-Signature` header. Express lower-cases incoming header names.
-  // ASSUMED, NOT INDEPENDENTLY CONFIRMED: "X-SMSGo-Signature is HMAC-SHA256
-  // keyed by the account's API key" comes only from this integration's
-  // original spec, not from SMSGo's own published documentation (no SMSGo
-  // docs were fetched or reviewed while building this adapter). Verify this
-  // against a real signed delivery — or against SMSGo's docs directly —
-  // before relying on it to reject traffic in production. If it turns out
-  // SMSGo instead uses a separate webhook-signing secret, that only means
-  // changing this method plus `registry.js`'s `smsgo` field list (e.g. add
-  // `webhookSecret` as a new secret field) and the settings UI — nothing
-  // above this adapter (generic controller, sms.service.js, business logic)
-  // needs to change, since none of it knows how a signature is computed.
+  // CONFIRMED (2026-09-23) against SMSGo's own published Go SDK
+  // documentation (pkg.go.dev/github.com/sms-go/smsgo-sdk-go —
+  // VerifyWebhookSignature godoc): "Each request carries
+  // `X-SMSGo-Signature: sha256=<hmac>` — the HMAC-SHA256 of the raw body
+  // with your `secret`", where that secret is a DEDICATED webhook secret
+  // (format `whsec_...`, obtained via the SDK's Client.SetWebhook() when
+  // registering the callback URL with SMSGo) — NOT the send API key. The
+  // previous version of this method got both of these wrong: it keyed the
+  // HMAC with `this.apiKey` (the send credential) instead of a webhook
+  // secret, and compared against the header's raw value instead of
+  // stripping the documented `sha256=` prefix — so even a correct secret
+  // could never have matched, and every real webhook was rejected with 401
+  // regardless of payload validity. Express lower-cases incoming header
+  // names, hence `x-smsgo-signature` here.
   verifyWebhookSignature({ headers, rawBody }) {
-    if (!this.apiKey) return false;
+    if (!this.webhookSecret) return false;
     const signatureHeader = headers?.['x-smsgo-signature'];
     if (!signatureHeader || !rawBody) return false;
-    const expected = crypto.createHmac('sha256', this.apiKey).update(rawBody).digest('hex');
+    const match = /^sha256=([0-9a-f]+)$/i.exec(String(signatureHeader).trim());
+    if (!match) return false;
+    const expected = crypto.createHmac('sha256', this.webhookSecret).update(rawBody).digest('hex');
     const expectedBuffer = Buffer.from(expected, 'utf8');
-    const providedBuffer = Buffer.from(String(signatureHeader), 'utf8');
+    const providedBuffer = Buffer.from(match[1].toLowerCase(), 'utf8');
     if (expectedBuffer.length !== providedBuffer.length) return false;
     return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
   }

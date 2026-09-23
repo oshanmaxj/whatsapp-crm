@@ -16,7 +16,18 @@ function replyFromRaw(raw = {}) {
 function mediaFromMessage(json, raw) {
   const source = raw.media || raw.mediaBinding || raw.file || null;
   const type = source?.type || source?.mediaType || (['image', 'video', 'audio', 'document', 'sticker'].includes(json.type) ? json.type : null);
-  const url = json.mediaUrl || source?.url || source?.crmUrl || source?.publicUrl || null;
+  let url = json.mediaUrl || source?.url || source?.crmUrl || source?.publicUrl || null;
+  // Backward compatibility for inbound WhatsApp messages stored before
+  // media became authenticated-only: a still-present raw /uploads/whatsapp/
+  // URL (a path no longer served publicly) is rewritten to the same
+  // authenticated-by-WhatsApp-media-id endpoint new messages already use.
+  // Deliberately does NOT fire when url is falsy — a null mediaUrl on an
+  // inbound message with a mediaId is how a classified/privatized payment
+  // slip is already (intentionally) hidden from ordinary chat rendering,
+  // and that must stay hidden here, not get resurrected.
+  if (json.direction === 'inbound' && json.mediaId && typeof url === 'string' && url.startsWith('/uploads/whatsapp/')) {
+    url = `/api/media/whatsapp/${json.mediaId}/download`;
+  }
   if (!type && !url && !json.mediaId) return null;
   return {
     type: type || json.type,

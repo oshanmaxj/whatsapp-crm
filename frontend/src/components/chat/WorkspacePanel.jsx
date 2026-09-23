@@ -14,7 +14,8 @@ import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
 import PersonAddAltOutlinedIcon from '@mui/icons-material/PersonAddAltOutlined';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
-import { agentName, contactName, formatDateTime, initials, resolveMediaUrl, safeArray } from './chatUtils';
+import { agentName, contactName, formatDateTime, initials, safeArray } from './chatUtils';
+import AuthenticatedMedia, { acquireAuthenticatedMedia, releaseAuthenticatedMedia } from './AuthenticatedMedia';
 import { getAccessPayload } from '../../utils/access';
 import useLeadStatuses from '../../hooks/useLeadStatuses';
 import LabelMultiSelect from '../LabelMultiSelect';
@@ -226,24 +227,38 @@ export function NotesTab({ notes, noteText, onNoteTextChange, onAddNote }) {
 }
 
 export function MediaTab({ media, onDownload }) {
+  // Media (including any WhatsApp-inbound image/video, which may be a
+  // customer's payment slip) is no longer reachable through a raw
+  // /uploads/... URL — see media.routes.js / app.js. Thumbnails go through
+  // the same authenticated, conversation-access-checked endpoint the chat
+  // view already uses (AuthenticatedMedia); "Open" fetches the same way
+  // before opening a new tab, since a plain href can't carry an auth header.
+  const openMedia = async (item) => {
+    const source = `/api/media/${item.id}/download`;
+    try {
+      const url = await acquireAuthenticatedMedia(source);
+      window.open(url, '_blank', 'noopener');
+    } finally {
+      releaseAuthenticatedMedia(source);
+    }
+  };
   return (
     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1 }}>
       {safeArray(media).map((item) => {
-        const url = resolveMediaUrl(item.publicUrl);
         const isImage = item.mediaType === 'image';
         const isVideo = item.mediaType === 'video';
         return (
           <Paper key={item.id} variant="outlined" sx={{ overflow: 'hidden', borderRadius: 2 }}>
             <Box sx={{ height: 105, bgcolor: 'action.hover', display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
-              {isImage && <Box component="img" src={url} alt={item.originalName || 'Media'} loading="lazy" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-              {isVideo && <Box component="video" src={url} preload="metadata" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-              {!isImage && !isVideo && <TuneOutlinedIcon color="disabled" />}
+              {(isImage || isVideo)
+                ? <AuthenticatedMedia source={`/api/media/${item.id}/download`} mediaType={item.mediaType} fileName={item.originalName || item.fileName} alt={item.originalName || 'Media'} />
+                : <TuneOutlinedIcon color="disabled" />}
             </Box>
             <Box sx={{ p: 1 }}>
               <Typography variant="caption" fontWeight={800} noWrap display="block">{item.originalName || item.fileName}</Typography>
               <Typography variant="caption" color="text.disabled">{Math.max(1, Math.round((item.size || 0) / 1024))} KB</Typography>
               <Stack direction="row" sx={{ mt: 0.5 }}>
-                <Button size="small" href={url} target="_blank">Open</Button>
+                <Button size="small" onClick={() => openMedia(item)}>Open</Button>
                 <IconButton size="small" onClick={() => onDownload(item)}><DownloadIcon fontSize="small" /></IconButton>
               </Stack>
             </Box>

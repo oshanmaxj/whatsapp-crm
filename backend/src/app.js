@@ -57,14 +57,24 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev', {
   }
 }));
 app.use(rateLimit({ windowMs: Number(process.env.API_RATE_LIMIT_WINDOW_MS || 60000), max: Number(process.env.API_RATE_LIMIT_MAX || 240) }));
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), {
+// Only these subdirectories of uploads/ are genuinely public (LMS course
+// materials, campaign/template header media, template samples). WhatsApp
+// message media (uploads/whatsapp/) is deliberately NOT mounted here — it
+// may contain a customer's payment proof, and is served only through the
+// authenticated GET /api/media/... endpoints (see media.routes.js), which
+// enforce conversation access and, once classified as a payment slip, the
+// stricter payment-confirmation/payment-slip-review permissions instead.
+const publicUploadStaticOptions = {
   fallthrough: false,
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
   setHeaders(res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=86400' : 'no-store');
   }
-}));
+};
+['lms-materials', 'media', 'template-samples'].forEach((subdir) => {
+  app.use(`/uploads/${subdir}`, express.static(path.join(__dirname, '..', 'uploads', subdir), publicUploadStaticOptions));
+});
 
 app.use(clearApiCache);
 app.use(auditMiddleware);

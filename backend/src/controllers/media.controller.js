@@ -63,6 +63,26 @@ class MediaController {
   async download(req, res, next) {
     try {
       const media = await inboxService.getMedia(req.params.id, req.user.id);
+      return await this.streamMediaFile(media, req, res, next);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // Same authenticated streaming used by download() above, reached instead
+  // by WhatsApp's own external media id — the shape a message's inline
+  // mediaUrl now carries (see whatsapp.service.js / messagePresentation.service.js).
+  async downloadByWhatsappMediaId(req, res, next) {
+    try {
+      const media = await inboxService.getMediaByWhatsappMediaId(req.params.whatsappMediaId, req.user.id);
+      return await this.streamMediaFile(media, req, res, next);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async streamMediaFile(media, req, res, next) {
+    try {
       const stat = await fs.promises.stat(media.storagePath).catch((error) => {
         if (error.code === 'ENOENT') {
           throw Object.assign(new Error('Media file not found.'), { status: 404, code: 'MEDIA_FILE_NOT_FOUND' });

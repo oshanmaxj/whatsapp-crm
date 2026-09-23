@@ -36,7 +36,8 @@ function ensureUploadDir() {
 }
 
 const normalizeWhatsAppNumber = normalizePhone;
-const cursorSecret = () => process.env.INBOX_CURSOR_SECRET || process.env.JWT_SECRET || 'development-inbox-cursor-secret';
+const { requiredSecret } = require('../utils/secrets');
+const cursorSecret = () => requiredSecret('INBOX_CURSOR_SECRET', { fallbackEnvKey: 'JWT_ACCESS_SECRET' });
 function encodeCursor(row) {
   const payload = Buffer.from(JSON.stringify({ t: row.lastMessageAt || row.updatedAt || row.createdAt, id: String(row.id) })).toString('base64url');
   const signature = crypto.createHmac('sha256', cursorSecret()).update(payload).digest('base64url');
@@ -832,6 +833,30 @@ class InboxService {
     });
   }
 
+  // Once a message's media has been classified as a payment slip (a
+  // PaymentSlip row exists for it), ordinary conversation access is no
+  // longer sufficient — it must go through Payment Verification
+  // (payment-slips.view) or the registration preview (canConfirmPayment)
+  // instead. This closes the gap where an agent with only inbox access
+  // could otherwise fetch a confirmed payment slip by its plain media id.
+  // Shared by getMedia() and getMediaByWhatsappMediaId() below so both id
+  // shapes enforce the exact same authorization, against an already-fetched
+  // row (no redundant second lookup).
+  async authorizeMediaAccess(media, userId) {
+    if (media.messageId) {
+      const { PaymentSlip } = require('../models');
+      const slip = await PaymentSlip.findOne({ where: { whatsappMessageId: media.messageId }, attributes: ['id'] });
+      if (slip) {
+        const error = new Error('This media is a classified payment slip. Use Payment Verification to review it.');
+        error.status = 403;
+        error.code = 'PAYMENT_SLIP_REQUIRES_PAYMENT_AUTH';
+        throw error;
+      }
+    }
+    await conversationAccessService.assertConversationAccess(media.conversationId, userId);
+    return media;
+  }
+
   async getMedia(id, userId) {
     const media = await Media.findByPk(id);
     if (!media) {
@@ -839,8 +864,26 @@ class InboxService {
       error.status = 404;
       throw error;
     }
-    await conversationAccessService.assertConversationAccess(media.conversationId, userId);
-    return media;
+    return this.authorizeMediaAccess(media, userId);
+  }
+
+  // Resolves media by WhatsApp's own external media id (what a message's
+  // mediaUrl is now built from — see whatsapp.service.js's inbound handler)
+  // rather than the internal Media.id.
+  async getMediaByWhatsappMediaId(whatsappMediaId, userId) {
+    const message = await Message.findOne({ where: { mediaId: whatsappMediaId }, attributes: ['id'] });
+    if (!message) {
+      const error = new Error('Media not found');
+      error.status = 404;
+      throw error;
+    }
+    const media = await Media.findOne({ where: { messageId: message.id } });
+    if (!media) {
+      const error = new Error('Media not found');
+      error.status = 404;
+      throw error;
+    }
+    return this.authorizeMediaAccess(media, userId);
   }
 
   async listLabels() {

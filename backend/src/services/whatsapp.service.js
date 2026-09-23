@@ -1005,25 +1005,22 @@ class WhatsappService {
 
     let attachment = null;
     if (mediaId) {
-      const downloadedMedia = await this.downloadAndStoreMedia(mediaId, { fileName, mimeType, whatsappAccountId }).catch((error) => {
+      const downloadedMedia = await this.downloadAndStoreMedia(mediaId, { fileName, mimeType, whatsappAccountId, private: true }).catch((error) => {
         logger.warn('whatsapp_media_download_failed', error);
         return null;
       });
 
       if (downloadedMedia) {
-        if (messageRecord) {
-          await messageRecord.update({
-            mediaUrl: downloadedMedia.storageUrl,
-            mediaId
-          }).catch((error) => {
-            logger.error('whatsapp_media_message_update_failed', {
-              whatsappMessageId: message.id,
-              message: error.message,
-              stack: error.stack
-            });
-          });
-        }
-
+        // Customer-submitted media (which may turn out to be a payment
+        // slip) is never given a public /uploads URL — see
+        // downloadAndStoreMedia({private:true}) above. The Media row is
+        // created FIRST so its own id can back an authenticated download
+        // URL, which is what both the message record and the attachment
+        // record then expose — not the raw storage path. Ordinary
+        // conversation-access users still see it inline exactly as before
+        // (via GET /api/media/whatsapp/:mediaId/download), they just can no
+        // longer reach it by guessing/knowing the old public path, and an
+        // unauthenticated request can't reach it at all.
         attachment = await this.saveMediaAttachment({
           conversationId: assignmentResult?.conversation?.id || null,
           messageId: messageRecord?.id,
@@ -1033,12 +1030,25 @@ class WhatsappService {
           mimeType: downloadedMedia.mimeType,
           size: downloadedMedia.fileSize,
           storagePath: downloadedMedia.storagePath,
-          publicUrl: downloadedMedia.storageUrl,
+          publicUrl: `/api/media/whatsapp/${mediaId}/download`,
           caption: text
         }).catch((error) => {
           logger.warn('whatsapp_media_attachment_save_failed', error);
           return null;
         });
+
+        if (messageRecord) {
+          await messageRecord.update({
+            mediaUrl: attachment?.publicUrl || `/api/media/whatsapp/${mediaId}/download`,
+            mediaId
+          }).catch((error) => {
+            logger.error('whatsapp_media_message_update_failed', {
+              whatsappMessageId: message.id,
+              message: error.message,
+              stack: error.stack
+            });
+          });
+        }
       }
     }
 
@@ -1286,11 +1296,11 @@ class WhatsappService {
         if (nextStatus === 'delivered') reminderUpdate.deliveredAt = updatedAt;
         if (nextStatus === 'read') reminderUpdate.readAt = updatedAt;
         if (nextStatus === 'failed') Object.assign(reminderUpdate, { failedAt: updatedAt, errorCode: errors.errorCode || 'META_REJECTED', errorMessage: errors.errorMessage || 'Meta rejected the reminder message.' });
-        await reminderExecution.update(reminderUpdate).catch(() => null);
+        await reminderExecution.update(reminderUpdate).catch((error) => logger.error('whatsapp_status_reminder_update_failed', { whatsappMessageId: status.id, message: error.message }));
       }
       const queueUpdate = { externalMessageId: status.id };
       if (['delivered', 'read', 'sent'].includes(status.status)) queueUpdate.status = 'sent';
-      await MessageQueue.update(queueUpdate, { where: { externalMessageId: status.id } }).catch(() => null);
+      await MessageQueue.update(queueUpdate, { where: { externalMessageId: status.id } }).catch((error) => logger.error('whatsapp_status_queue_update_failed', { whatsappMessageId: status.id, message: error.message }));
       const queueItem = await MessageQueue.findOne({ where: { externalMessageId: status.id } }).catch(() => null);
       const receiptJob = await PaymentReceiptJob.findOne({ where: { externalMessageId: status.id } }).catch(() => null);
       if (receiptJob) {
@@ -1319,20 +1329,32 @@ class WhatsappService {
         if (nextStatus === 'sent') recipientUpdate.sentAt = updatedAt;
         if (nextStatus === 'delivered') recipientUpdate.deliveredAt = updatedAt;
         if (nextStatus === 'read') recipientUpdate.readAt = updatedAt;
-        await CampaignRecipient.update(recipientUpdate, { where: { id: queueItem.campaignRecipientId } }).catch(() => null);
+        await CampaignRecipient.update(recipientUpdate, { where: { id: queueItem.campaignRecipientId } }).catch((error) => logger.error('whatsapp_status_campaign_recipient_update_failed', { whatsappMessageId: status.id, campaignRecipientId: queueItem.campaignRecipientId, message: error.message }));
         await CampaignEvent.create({
           campaignId: queueItem.campaignId,
           recipientId: queueItem.campaignRecipientId,
           eventType: nextStatus,
           payload: { whatsappMessageId: status.id, status }
-        }).catch(() => null);
+        }).catch((error) => logger.error('whatsapp_status_campaign_event_create_failed', { whatsappMessageId: status.id, campaignRecipientId: queueItem.campaignRecipientId, message: error.message }));
+        // This webhook reconciliation path is the last line of defense against a
+        // campaign stuck at "Processing" (e.g. if the queue worker's own
+        // bookkeeping failed) — always try to refresh status here too.
+        await require('./messageQueue.service').refreshCampaignStatus(queueItem.campaignId).catch((error) => logger.error('whatsapp_status_campaign_refresh_failed', { campaignId: queueItem.campaignId, message: error.message }));
       }
     }
 
     return existing;
   }
 
-  async downloadAndStoreMedia(mediaId, { fileName, mimeType, whatsappAccountId = null }) {
+  // `private: true` (used only by the inbound customer-message path — see
+  // handleInboundMessage/processInboundWebhook below) stores the file
+  // outside the public uploads/ tree instead of under uploads/whatsapp/,
+  // so a message's media is never reachable through the unauthenticated
+  // /uploads static route, from the moment it is downloaded — regardless
+  // of whether it later turns out to be a payment slip. Flow-builder's two
+  // callers of this method (outbound automation media) are unaffected:
+  // they don't pass `private`, so behavior for them is unchanged.
+  async downloadAndStoreMedia(mediaId, { fileName, mimeType, whatsappAccountId = null, private: isPrivate = false }) {
     const config = await this.getRuntimeConfig(whatsappAccountId);
     const mediaInfo = await this.getMediaUrl(mediaId, config);
     const downloadUrl = mediaInfo?.url;
@@ -1355,11 +1377,12 @@ class WhatsappService {
     const actualFileName = fileName || mediaInfo?.filename || `${mediaId}${extension}`;
     const storagePath = `whatsapp/${mediaId}/${actualFileName}`;
 
-    const uploadResult = await this.uploadToStorage({ path: storagePath, buffer, mimeType: resolvedMimeType });
+    const uploadResult = await this.uploadToStorage({ path: storagePath, buffer, mimeType: resolvedMimeType, private: isPrivate });
 
     logger.info('whatsapp_media_download_success', {
       mediaId,
       storageUrl: uploadResult.url,
+      private: isPrivate,
       mimeType: resolvedMimeType,
       fileSize: buffer.length
     });
@@ -1373,14 +1396,18 @@ class WhatsappService {
     };
   }
 
-  async uploadToStorage({ path, buffer, mimeType }) {
+  async uploadToStorage({ path, buffer, mimeType, private: isPrivate = false }) {
     if (!storageService || typeof storageService.uploadToSupabase !== 'function') {
       const error = new Error('Storage service is not available');
       error.status = 500;
       throw error;
     }
 
-    return storageService.uploadToSupabase({ path, buffer, contentType: mimeType });
+    if (!isPrivate) return storageService.uploadToSupabase({ path, buffer, contentType: mimeType });
+    return storageService.uploadToSupabase({
+      path, buffer, contentType: mimeType, makePublicUrl: false,
+      root: process.env.WHATSAPP_MEDIA_PRIVATE_ROOT || require('path').join(__dirname, '..', '..', 'private', 'whatsapp-media')
+    });
   }
 
   async saveMediaAttachment(payload) {

@@ -533,15 +533,24 @@ class EducationService {
         : [];
     return source.map((item) => {
       const rawInstallments = item.installments ?? item.installmentCount ?? item.installment_count;
+      const rawDiscount = item.discountValue ?? item.discount_value ?? item.discount;
       return {
         id: optionalId(item.id),
         courseId: optionalId(item.courseId || item.course_id),
         batchId: optionalId(item.batchId || item.batch_id),
         enrollmentStatus: item.status || item.enrollmentStatus || item.enrollment_status || 'active',
         feePlan: item.feePlan || item.fee_plan || item.paymentType || item.payment_type || 'full',
+        // Installments are no longer accepted as manual staff input — the
+        // Course's own configured installment count is always the source of
+        // truth (see validateEnrollments() below). This field only remains
+        // to tolerate legacy callers that still send it; a fresh
+        // registration payload will omit it entirely.
         installments: rawInstallments === '' || rawInstallments === undefined || rawInstallments === null
           ? null
           : Number(rawInstallments),
+        discountValue: rawDiscount === '' || rawDiscount === undefined || rawDiscount === null
+          ? 0
+          : Number(rawDiscount),
         enrolledAt: item.enrolledAt || new Date(),
         completedAt: item.completedAt || null
       };
@@ -564,14 +573,27 @@ class EducationService {
         enrollment.batchId ? Batch.findByPk(enrollment.batchId) : null
       ]);
       if (!course) throw Object.assign(new Error('Enrollment course not found'), { status: 400 });
-      if (enrollment.feePlan === 'installment' && (!Number.isInteger(enrollment.installments) || enrollment.installments < 1)) {
-        enrollment.installments = Math.max(Number(course.defaultInstallmentCount) || 1, 1);
-      }
-      if (enrollment.feePlan !== 'installment') {
+      if (enrollment.feePlan === 'installment') {
+        // Installment count is never taken from staff input — the Course's
+        // own configured default is the sole source of truth. A Course with
+        // no valid installment configuration must fail clearly rather than
+        // silently default to 1.
+        const configured = Math.floor(Number(course.defaultInstallmentCount));
+        if (!Number.isInteger(configured) || configured < 1) {
+          throw Object.assign(new Error('This course has no valid installment configuration. Set its default installment count before enrolling students on an installment plan.'), { status: 422, code: 'COURSE_INSTALLMENT_CONFIG_MISSING' });
+        }
+        enrollment.installments = configured;
+      } else {
         enrollment.installments = 1;
       }
       if (!Number.isInteger(enrollment.installments) || enrollment.installments < 1) {
         throw Object.assign(new Error('Enrollment installments must be at least 1'), { status: 400 });
+      }
+      if (!Number.isFinite(enrollment.discountValue) || enrollment.discountValue < 0) {
+        throw Object.assign(new Error('Enrollment discount cannot be negative'), { status: 400 });
+      }
+      if (enrollment.discountValue > amount(course.feeAmount)) {
+        throw Object.assign(new Error('Enrollment discount cannot exceed the course fee'), { status: 400 });
       }
       if (enrollment.batchId && (!batch || String(batch.courseId) !== String(enrollment.courseId))) {
         throw Object.assign(new Error('Enrollment batch must belong to its selected course'), { status: 400 });
@@ -821,6 +843,8 @@ class EducationService {
           batchId: enrollment.batchId,
           paymentType: enrollment.feePlan,
           installmentCount: enrollment.installments,
+          discountType: enrollment.discountValue > 0 ? 'fixed' : 'none',
+          discountValue: enrollment.discountValue,
           notes: payload.notes || null
         }, userId ? { id: userId } : null);
       }
@@ -832,18 +856,13 @@ class EducationService {
     }).catch((error) => logger.warn('enrollment_welcome_queue_failed', { enrollmentId: enrollment.id, error: error.message }))));
     await studentCanonicalIdentityService.publishStudentChanged(student.id).catch(() => null);
     const created = serialize(await this.getStudent(student.id));
-    await studentMessageAutomationService.dispatch('student_welcome', student.id, {
-      eventId: `student:${student.id}`,
-      eventDate: new Date().toISOString().slice(0, 10),
-      originEvent: 'student_registration',
-      portalPassword: portalPassword || generatedPortalPassword || ''
-    }).catch((error) => logger.warn('student_welcome_queue_failed', { studentId: student.id, error: error.message }));
-    await studentMessageAutomationService.dispatchSms('student_welcome', student.id, {
-      eventId: `student:${student.id}`,
-      eventDate: new Date().toISOString().slice(0, 10),
-      originEvent: 'student_registration',
-      createdBy: userId
-    }).catch((error) => logger.warn('student_welcome_sms_failed', { studentId: student.id, error: error.message }));
+    // Student Welcome (WhatsApp + SMS) deliberately does NOT fire here.
+    // Registration alone must never notify the student — the automatic
+    // welcome now fires only once a qualifying payment is confirmed (see
+    // sendPaymentConfirmedWelcome(), called from confirmInstallmentPayment()
+    // below). Enrollment welcome and the LMS user guide are unaffected —
+    // they carry no payment-gated business meaning and are safe at
+    // registration time, same as before.
     if (process.env.LMS_GUIDE_AUTOMATION_ENABLED !== 'false') {
       await studentMessageAutomationService.dispatch('lms_user_guide', student.id, {
         eventId: `student:${student.id}`,
@@ -1529,6 +1548,16 @@ class EducationService {
         });
       });
     }
+    // Student Welcome (WhatsApp + SMS) fires here, not at registration — see
+    // createStudent() above. Isolated exactly like the notifications and
+    // commission generation above it: a welcome-delivery failure can never
+    // undo the payment, and the payment can never block the welcome.
+    const welcome = alreadyConfirmed
+      ? { status: 'skipped', reason: 'already_confirmed' }
+      : await this.sendPaymentConfirmedWelcome(id, userId).catch((error) => {
+          logger.warn('payment_confirmed_welcome_failed', { installmentId: id, error: error.message });
+          return { status: 'failed', warning: error.message };
+        });
     return {
       fee: await this.getFee(studentFeeId),
       accountingTransactionId: transactionId,
@@ -1536,8 +1565,49 @@ class EducationService {
       receiptCreated: receiptResult?.created || false,
       notification,
       smsNotification,
+      welcome,
       message: 'Payment confirmed and income recorded.'
     };
+  }
+
+  // Fires the automatic Student Welcome WhatsApp/SMS the first time ANY
+  // installment for this student is confirmed — never on registration, never
+  // again on subsequent installments/enrollments. "First qualifying payment"
+  // is decided by claimPaymentWelcome()'s atomic, durable claim row (same
+  // table student_welcome's own dedupe already uses), so concurrent
+  // confirmations can't both decide they're first. The WhatsApp template
+  // requires a plaintext portal password (dispatch()'s pending_configuration
+  // guard); the one generated at registration was never communicated (no
+  // welcome went out then) and its hash can't be recovered, so a fresh
+  // temporary one is generated here — mirroring resetStudentPortalPassword()
+  // exactly — but only on the winning claim, never on repeat installments.
+  async sendPaymentConfirmedWelcome(installmentId, userId) {
+    const installment = await FeeInstallment.findByPk(installmentId, {
+      include: [{ model: StudentFee, as: 'fee', include: [{ model: Student, as: 'student' }] }]
+    });
+    const student = installment?.fee?.student;
+    if (!student) throw new Error('Student was not found for welcome dispatch.');
+
+    const claimed = await studentMessageAutomationService.claimPaymentWelcome(student.id);
+    let portalPassword = '';
+    if (claimed) {
+      portalPassword = `Stu-${crypto.randomBytes(5).toString('base64url')}`;
+      await student.update({ portalPasswordHash: portalPassword });
+    }
+    const whatsapp = await studentMessageAutomationService.dispatch('student_welcome', student.id, {
+      eventId: `student:${student.id}`,
+      eventDate: new Date().toISOString().slice(0, 10),
+      originEvent: 'payment_confirmed',
+      portalPassword,
+      createdBy: userId
+    });
+    const sms = await studentMessageAutomationService.dispatchSms('student_welcome', student.id, {
+      eventId: `student:${student.id}`,
+      eventDate: new Date().toISOString().slice(0, 10),
+      originEvent: 'payment_confirmed',
+      createdBy: userId
+    });
+    return { status: claimed ? 'first_qualifying_payment' : 'already_welcomed', whatsapp, sms };
   }
 
   async rejectInstallmentPayment(id, payload = {}, userId) {

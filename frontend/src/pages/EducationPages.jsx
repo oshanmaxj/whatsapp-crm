@@ -20,7 +20,7 @@ import {
   deleteBatch, deleteCertificate, deleteCourse, deleteFee, deleteStudent, listAttendance, listBatches,
   listCertificates, listCourses, listFees, listStudents, payInstallment, rejectInstallmentPayment, reverseInstallmentPayment, sendFeeReminder, updateAttendance,
   updateBatch, updateCertificate, updateCourse, updateFee, updateStudent, resetStudentPortalPassword,
-  searchStudents, searchCourses, searchBatches
+  searchStudents, searchCourses, searchBatches, getRegistrationPaymentSlip, fetchRegistrationPaymentSlipFile
 } from '../services/education.service';
 import { getAccessPayload, hasAnyPermission } from '../utils/access';
 
@@ -57,7 +57,7 @@ const modules = {
     remove: deleteStudent,
     initial: {
       name: '', phone: '', email: '', contactId: '', leadId: '', dateOfBirth: '',
-      enrollments: [{ courseId: '', batchId: '', status: 'active', feePlan: 'full', installments: 1 }],
+      enrollments: [{ courseId: '', batchId: '', status: 'active', feePlan: 'full', discountValue: 0 }],
       leadSource: '', status: 'enrolled', studentPortalPassword: '', notes: ''
     },
     fields: ['name', 'phone', 'email', 'dateOfBirth', 'leadSource', 'status', 'studentPortalPassword', 'notes'],
@@ -137,17 +137,16 @@ function normalizeStudentEnrollments(enrollments = []) {
     .filter((row) => row.courseId || row.course_id)
     .map((row) => {
       const feePlan = row.feePlan || row.fee_plan || row.paymentType || row.payment_type || 'full';
-      const rawInstallments = row.installments ?? row.installmentCount ?? row.installment_count;
-      const installmentCount = Number(rawInstallments);
       return {
         ...(row.id ? { id: row.id } : {}),
         courseId: row.courseId || row.course_id,
         batchId: row.batchId || row.batch_id || null,
         status: row.status || row.enrollmentStatus || row.enrollment_status || 'active',
         feePlan,
-        installments: feePlan === 'installment' && Number.isFinite(installmentCount) && installmentCount >= 1
-          ? Math.floor(installmentCount)
-          : feePlan === 'installment' ? null : 1
+        // Installment count is never sent from here — it is always derived
+        // server-side from the Course's own configured installment plan
+        // (see validateEnrollments() in education.service.js).
+        discountValue: Math.max(money(row.discountValue), 0)
       };
     });
 }
@@ -163,11 +162,6 @@ function batchLabel(batch) {
 function safeInstallmentCount(value) {
   const count = Number(value);
   return Number.isFinite(count) && count >= 1 ? Math.floor(count) : 1;
-}
-
-function courseDefaultInstallments(courses, courseId) {
-  const course = courses.find((item) => String(item.id) === String(courseId));
-  return safeInstallmentCount(course?.defaultInstallmentCount);
 }
 
 function studentLabel(student) {
@@ -215,11 +209,14 @@ function studentFormFromNavigation(initial, state, lookups) {
     email: contact.email || '',
     contactId: contact.id || conversation.contactId || '',
     leadId: lead.id || conversation.leadId || '',
+    // Private (stripped before submit by normalizePayload) — used only to
+    // resolve a relevant payment slip for the secure preview panel below.
+    _conversationId: conversationId || '',
     courseId,
     batchId,
     leadSource,
     status: 'enrolled',
-    enrollments: courseId ? [{ courseId, batchId: batchId || '', status: 'active', feePlan: 'full', installments: 1 }] : initial.enrollments,
+    enrollments: courseId ? [{ courseId, batchId: batchId || '', status: 'active', feePlan: 'full', discountValue: 0 }] : initial.enrollments,
     notes: sourceNote
   };
 }
@@ -269,6 +266,21 @@ function Field({ name, value, onChange, moduleKey, form, lookups }) {
   return <TextField label={label} type={type} value={value || ''} onChange={(e) => onChange(name, e.target.value)} multiline={name === 'notes' || name === 'description'} minRows={name === 'notes' || name === 'description' ? 3 : undefined} InputLabelProps={type === 'date' ? { shrink: true } : undefined} fullWidth />;
 }
 
+function enrollmentFeeSummary(enrollment, courseOption) {
+  const feePlan = enrollment.feePlan || enrollment.paymentType || 'full';
+  const courseFee = money(courseOption?.feeAmount);
+  // Mirrors calculateDiscount() in education.service.js: a free_card plan is
+  // always a full waiver server-side, regardless of any discount value sent.
+  const discount = feePlan === 'free_card' ? courseFee : Math.min(Math.max(money(enrollment.discountValue), 0), courseFee);
+  const finalPayable = feePlan === 'free_card' ? 0 : Math.max(courseFee - discount, 0);
+  const installmentCount = safeInstallmentCount(courseOption?.defaultInstallmentCount);
+  const planLabel = feePlan === 'installment' ? `Installments (${installmentCount})`
+    : feePlan === 'free_card' ? 'Free Card'
+    : feePlan === 'scholarship' ? 'Scholarship'
+    : 'Full Payment';
+  return { courseFee, discount, finalPayable, planLabel };
+}
+
 function StudentEnrollmentFields({ form, setForm, lookups }) {
   const enrollments = form.enrollments || [];
   const update = (index, changes) => setForm((current) => ({
@@ -276,25 +288,13 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
     enrollments: (current.enrollments || []).map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item)
   }));
   const updateCourse = (index, courseId, courseOption) => {
-    const enrollment = enrollments[index] || {};
-    const feePlan = enrollment.feePlan || enrollment.paymentType || 'full';
-    update(index, {
-      courseId,
-      batchId: '',
-      _courseOption: courseOption || null,
-      _batchOption: null,
-      ...(feePlan === 'installment' ? { installments: safeInstallmentCount(courseOption?.defaultInstallmentCount) } : {})
-    });
+    // Changing the course must re-derive everything downstream (fee,
+    // installment plan) instead of keeping any stale value from the
+    // previous course — the discount is intentionally NOT carried over
+    // either, since it was validated against the old course's fee.
+    update(index, { courseId, batchId: '', discountValue: 0, _courseOption: courseOption || null, _batchOption: null });
   };
-  const updateFeePlan = (index, feePlan) => {
-    const enrollment = enrollments[index] || {};
-    update(index, {
-      feePlan,
-      installments: feePlan === 'installment'
-        ? courseDefaultInstallments(lookups.courses, enrollment.courseId)
-        : 1
-    });
-  };
+  const updateFeePlan = (index, feePlan) => update(index, { feePlan });
   const remove = (index) => setForm((current) => ({
     ...current,
     enrollments: (current.enrollments || []).filter((_, itemIndex) => itemIndex !== index)
@@ -303,40 +303,68 @@ function StudentEnrollmentFields({ form, setForm, lookups }) {
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
         <Box><Typography fontWeight={850}>Enrollments</Typography><Typography variant="body2" color="text.secondary">Add every course and batch this student belongs to.</Typography></Box>
-        <Button startIcon={<AddIcon />} onClick={() => setForm((current) => ({ ...current, enrollments: [...(current.enrollments || []), { courseId: '', batchId: '', status: 'active', feePlan: 'full', installments: 1 }] }))}>Add Enrollment</Button>
+        <Button startIcon={<AddIcon />} onClick={() => setForm((current) => ({ ...current, enrollments: [...(current.enrollments || []), { courseId: '', batchId: '', status: 'active', feePlan: 'full', discountValue: 0 }] }))}>Add Enrollment</Button>
       </Stack>
       <Stack spacing={1.5}>
         {enrollments.map((enrollment, index) => {
           const feePlan = enrollment.feePlan || enrollment.paymentType || 'full';
-          return <Box key={enrollment.id || index} sx={{
-            display: 'grid',
-            gridTemplateColumns: {
-              xs: '1fr',
-              md: 'minmax(240px, 2fr) minmax(200px, 1.5fr) minmax(140px, 1fr) minmax(160px, 1fr) minmax(120px, 0.8fr) 40px'
-            },
-            gap: 1.5,
-            alignItems: 'center',
-            minWidth: 0
-          }}>
-            <AsyncSearchSelect label="Course" value={enrollment.courseId} selectedOption={enrollment._courseOption || enrollment.course}
-              loadOptions={loadCourseOptions} filters={{ status: 'active' }} getOptionLabel={courseLabel} required
-              placeholder="Search course" onChange={(option) => updateCourse(index, option?.id || '', option)} />
-            <AsyncSearchSelect label="Batch (optional)" value={enrollment.batchId} selectedOption={enrollment._batchOption || enrollment.batch}
-              loadOptions={loadBatchOptions} filters={{ courseId: enrollment.courseId }} getOptionLabel={batchLabel}
-              disabled={!enrollment.courseId} placeholder="Search batch" onChange={(option) => update(index, { batchId: option?.id || '', _batchOption: option })} />
-            <TextField select label="Status" value={enrollment.status || enrollment.enrollmentStatus || 'active'} onChange={(event) => update(index, { status: event.target.value })} sx={{ minWidth: { xs: '100%', md: 140 } }}>
-              {['active', 'completed', 'suspended', 'cancelled', 'expired'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
-            </TextField>
-            <TextField select label="Fee plan" value={feePlan} onChange={(event) => updateFeePlan(index, event.target.value)} sx={{ minWidth: { xs: '100%', md: 150 } }}>
-              {paymentTypes.map((type) => <MenuItem value={type} key={type}>{type.replaceAll('_', ' ')}</MenuItem>)}
-            </TextField>
-            {feePlan === 'installment'
-              ? <TextField type="number" label="Installments" value={enrollment.installments || enrollment.installmentCount || 1} onChange={(event) => update(index, { installments: event.target.value })} inputProps={{ min: 1 }} sx={{ minWidth: 110 }} />
-              : <TextField type="number" label="Installments" value={1} disabled sx={{ minWidth: 110 }} />}
-            <IconButton color="error" onClick={() => remove(index)} disabled={enrollments.length === 1}><DeleteOutlineIcon /></IconButton>
+          const courseOption = enrollment._courseOption || enrollment.course || lookups.courses.find((item) => String(item.id) === String(enrollment.courseId));
+          const summary = enrollmentFeeSummary(enrollment, courseOption);
+          return <Box key={enrollment.id || index}>
+            <Box sx={{
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: '1fr',
+                md: 'minmax(240px, 2fr) minmax(200px, 1.5fr) minmax(140px, 1fr) minmax(160px, 1fr) minmax(120px, 0.8fr) 40px'
+              },
+              gap: 1.5,
+              alignItems: 'center',
+              minWidth: 0
+            }}>
+              <AsyncSearchSelect label="Course" value={enrollment.courseId} selectedOption={enrollment._courseOption || enrollment.course}
+                loadOptions={loadCourseOptions} filters={{ status: 'active' }} getOptionLabel={courseLabel} required
+                placeholder="Search course" onChange={(option) => updateCourse(index, option?.id || '', option)} />
+              <AsyncSearchSelect label="Batch (optional)" value={enrollment.batchId} selectedOption={enrollment._batchOption || enrollment.batch}
+                loadOptions={loadBatchOptions} filters={{ courseId: enrollment.courseId }} getOptionLabel={batchLabel}
+                disabled={!enrollment.courseId} placeholder="Search batch" onChange={(option) => update(index, { batchId: option?.id || '', _batchOption: option })} />
+              <TextField select label="Status" value={enrollment.status || enrollment.enrollmentStatus || 'active'} onChange={(event) => update(index, { status: event.target.value })} sx={{ minWidth: { xs: '100%', md: 140 } }}>
+                {['active', 'completed', 'suspended', 'cancelled', 'expired'].map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
+              </TextField>
+              <TextField select label="Fee plan" value={feePlan} onChange={(event) => updateFeePlan(index, event.target.value)} sx={{ minWidth: { xs: '100%', md: 150 } }}>
+                {paymentTypes.map((type) => <MenuItem value={type} key={type}>{type.replaceAll('_', ' ')}</MenuItem>)}
+              </TextField>
+              <TextField type="number" label="Discount" value={enrollment.discountValue || 0} onChange={(event) => update(index, { discountValue: event.target.value })} inputProps={{ min: 0, max: summary.courseFee || undefined }} disabled={feePlan === 'free_card'} sx={{ minWidth: 110 }} />
+              <IconButton color="error" onClick={() => remove(index)} disabled={enrollments.length === 1}><DeleteOutlineIcon /></IconButton>
+            </Box>
+            {enrollment.courseId && <Stack direction="row" spacing={2} flexWrap="wrap" sx={{ mt: 1, px: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">Course Fee: <strong>{moneyText(summary.courseFee)}</strong></Typography>
+              <Typography variant="caption" color="text.secondary">Discount: <strong>{moneyText(summary.discount)}</strong></Typography>
+              <Typography variant="caption" color="text.secondary">Final Payable: <strong>{moneyText(summary.finalPayable)}</strong></Typography>
+              <Typography variant="caption" color="text.secondary">Payment Plan: <strong>{summary.planLabel}</strong></Typography>
+            </Stack>}
           </Box>;
         })}
       </Stack>
+    </Paper>
+  </Grid>;
+}
+
+// Secure payment-slip preview for staff who already have the
+// payment-confirmation permission, shown when registration was opened from a
+// WhatsApp conversation/lead that has a relevant slip. Purely informational —
+// opening this panel never confirms a payment; confirmation stays a separate,
+// explicit action after the student is saved (see PaymentVerificationPage).
+function RegistrationPaymentSlipPanel({ slip }) {
+  if (slip.loading) return <Grid item xs={12}><Alert severity="info">Checking this conversation for a payment slip…</Alert></Grid>;
+  if (!slip.latest) return null;
+  return <Grid item xs={12}>
+    <Paper variant="outlined" sx={{ p: 2, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      {slip.previewUrl && <Box component="img" src={slip.previewUrl} alt="Payment slip" sx={{ maxWidth: 220, maxHeight: 220, objectFit: 'contain', border: '1px solid', borderColor: 'divider', borderRadius: 1 }} />}
+      <Box sx={{ flex: 1, minWidth: 200 }}>
+        <Typography fontWeight={850}>Payment Slip Found</Typography>
+        <Typography variant="body2" color="text.secondary">A payment slip was found for this conversation. Viewing it here does not confirm the payment — confirmation remains a separate, explicit action in Payment Verification after this student is saved.</Typography>
+        {slip.slips.length > 1 && <Typography variant="caption" color="text.secondary">{slip.slips.length} slips found; showing the most recent.</Typography>}
+      </Box>
     </Paper>
   </Grid>;
 }
@@ -422,6 +450,7 @@ function EducationModulePage({ moduleKey }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [installmentFee, setInstallmentFee] = useState(null);
+  const [registrationSlip, setRegistrationSlip] = useState({ loading: false, latest: null, slips: [], previewUrl: null });
   const [payTarget, setPayTarget] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ amount: '', paymentMethod: 'Cash', transactionReference: '', paidDate: new Date().toISOString().slice(0, 10), notes: '' });
   const [search, setSearch] = useState('');
@@ -436,6 +465,37 @@ function EducationModulePage({ moduleKey }) {
     hasAnyPermission(['fees.confirm_payment', 'accounting.confirm_income']);
   const canEditStudents = access.isSystemAdmin || access.permissions?.includes('students.edit');
   const canDelete = access.isSystemAdmin || hasAnyPermission([`${moduleKey}.delete`, 'education.delete']);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+    const conversationId = form._conversationId;
+    const leadId = form.leadId;
+    const contactId = form.contactId;
+    if (moduleKey !== 'students' || !dialogOpen || editing || !canConfirmPayment || (!conversationId && !leadId && !contactId)) {
+      setRegistrationSlip({ loading: false, latest: null, slips: [], previewUrl: null });
+      return undefined;
+    }
+    setRegistrationSlip({ loading: true, latest: null, slips: [], previewUrl: null });
+    (async () => {
+      try {
+        const response = await getRegistrationPaymentSlip({ conversationId, leadId, contactId });
+        const data = response.data?.data || { latest: null, slips: [] };
+        if (cancelled) return;
+        if (data.latest) {
+          const blob = (await fetchRegistrationPaymentSlipFile(data.latest.id)).data;
+          if (cancelled) return;
+          objectUrl = URL.createObjectURL(blob);
+        }
+        setRegistrationSlip({ loading: false, latest: data.latest || null, slips: data.slips || [], previewUrl: objectUrl });
+      } catch (err) {
+        // No slip, or this user lacks the payment-confirmation permission —
+        // fail silently here; the registration form itself must stay usable.
+        if (!cancelled) setRegistrationSlip({ loading: false, latest: null, slips: [], previewUrl: null });
+      }
+    })();
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [moduleKey, dialogOpen, editing, canConfirmPayment, form._conversationId, form.leadId, form.contactId]);
 
   const totals = useMemo(() => ({
     total: resultMeta.total || rows.length,
@@ -683,7 +743,7 @@ function EducationModulePage({ moduleKey }) {
       PaperProps={{ sx: { width: { xs: '95vw', md: 'min(1100px, 95vw)' }, maxWidth: '95vw', maxHeight: '92vh' } }}
     >
       <DialogTitle>{editing ? 'Edit Record' : 'Add Record'}</DialogTitle>
-      <DialogContent dividers sx={{ overflowY: 'auto' }}>{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value, option) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '', _courseOption: option, _batchOption: null } : {}), ...(name === 'batchId' ? { _batchOption: option } : {}), ...(name === 'studentId' ? { _studentOption: option } : {}) }))} /></Grid>)}{moduleKey === 'students' && <StudentEnrollmentFields form={form} setForm={setForm} lookups={lookups} />}</Grid>}</DialogContent>
+      <DialogContent dividers sx={{ overflowY: 'auto' }}>{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}{moduleKey === 'fees' ? <FeeFields form={form} setForm={setForm} lookups={lookups} /> : <Grid container spacing={2} sx={{ mt: 0.5 }}>{config.fields.map((field) => <Grid item xs={12} md={field === 'description' || field === 'notes' ? 12 : 6} key={field}><Field name={field} value={form[field]} moduleKey={moduleKey} form={form} lookups={lookups} onChange={(name, value, option) => setForm((current) => ({ ...current, [name]: value, ...(name === 'courseId' ? { batchId: '', _courseOption: option, _batchOption: null } : {}), ...(name === 'batchId' ? { _batchOption: option } : {}), ...(name === 'studentId' ? { _studentOption: option } : {}) }))} /></Grid>)}{moduleKey === 'students' && <RegistrationPaymentSlipPanel slip={registrationSlip} />}{moduleKey === 'students' && <StudentEnrollmentFields form={form} setForm={setForm} lookups={lookups} />}</Grid>}</DialogContent>
       <DialogActions><Button onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button><Button variant="contained" onClick={save} disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</Button></DialogActions>
     </Dialog>
 

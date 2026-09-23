@@ -2,17 +2,16 @@ import api from './api';
 
 const normalizeEnrollment = (row = {}) => {
   const feePlan = row.feePlan || row.fee_plan || row.paymentType || row.payment_type || 'full';
-  const rawInstallments = row.installments ?? row.installmentCount ?? row.installment_count;
-  const installmentCount = Number(rawInstallments);
+  const rawDiscount = row.discountValue ?? row.discount_value ?? row.discount;
   return {
     ...(row.id ? { id: row.id } : {}),
     courseId: row.courseId || row.course_id,
     batchId: row.batchId || row.batch_id || null,
     status: row.status || row.enrollmentStatus || row.enrollment_status || 'active',
     feePlan,
-    installments: feePlan === 'installment' && Number.isFinite(installmentCount) && installmentCount >= 1
-      ? Math.floor(installmentCount)
-      : feePlan === 'installment' ? null : 1
+    // Installment count is never sent from the client — it is always
+    // derived server-side from the Course's own configured installment plan.
+    discountValue: Number.isFinite(Number(rawDiscount)) ? Math.max(Number(rawDiscount), 0) : 0
   };
 };
 
@@ -38,6 +37,10 @@ export const deleteBatch = (id) => api.delete(`/batches/${id}`);
 
 export const listStudents = (params = {}) => api.get('/students', { params });
 export const searchStudents = (q = '', page = 1, limit = 20, filters = {}) => api.get('/students/search', { params: { q, page, limit, ...filters } });
+// Registration-time payment-slip preview — requires the payment-confirmation
+// permission (same boundary as confirming a payment); 403s for other users.
+export const getRegistrationPaymentSlip = (params = {}) => api.get('/students/registration-payment-slip', { params });
+export const fetchRegistrationPaymentSlipFile = (slipId) => api.get(`/students/registration-payment-slip/${slipId}/file`, { responseType: 'blob' });
 export const getStudentProfile = (id) => api.get(`/students/${id}/profile`);
 export const createStudent = (payload) => api.post('/students', normalizeStudentPayload(payload));
 export const updateStudent = (id, payload) => api.patch(`/students/${id}`, normalizeStudentPayload(payload));

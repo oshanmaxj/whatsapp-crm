@@ -268,6 +268,39 @@ class StudentMessageAutomationService {
     });
   }
 
+  // Whether a REAL student_welcome dispatch (WhatsApp) has ever gone out for
+  // this student — used by the payment-confirmation welcome trigger to
+  // decide whether this is the "first qualifying payment" without relying
+  // on an in-memory flag.
+  async hasDispatched(templateKey, studentId) {
+    const existing = await StudentAutomationDispatch.findOne({ where: { templateKey, studentId } });
+    return Boolean(existing);
+  }
+
+  // Atomically claims "the first qualifying payment for this student" using
+  // the SAME durable, unique-dedupeKey table student_welcome's own WhatsApp
+  // dispatch relies on. This is a synthetic claim row (templateKey
+  // 'payment_welcome_claim') — never itself rendered or sent — that exists
+  // purely so two installments confirmed at nearly the same instant can't
+  // both decide they're "first" and each generate a different temporary LMS
+  // password (only one of which would ever reach the student). Sequelize's
+  // findOrCreate on a unique column is the same pattern dispatch() already
+  // uses for its own dedupeKey, with no explicit transaction — safe here for
+  // the same reason: this call never shares a transaction with other
+  // queries, so the Postgres-aborted-transaction/25P02 failure mode fixed
+  // elsewhere in commissionLedger.service.js does not apply.
+  async claimPaymentWelcome(studentId) {
+    const dedupeKey = crypto.createHash('sha256').update(`payment_welcome_claim:${studentId}`).digest('hex');
+    const [, created] = await StudentAutomationDispatch.findOrCreate({
+      where: { dedupeKey },
+      defaults: {
+        templateKey: 'payment_welcome_claim', studentId, eventKey: 'payment_confirmed',
+        dedupeKey, status: 'claimed', originEvent: 'payment_confirmed'
+      }
+    });
+    return created;
+  }
+
   async onboardingStatus(studentId) {
     const student = await Student.findByPk(studentId);
     if (!student) throw Object.assign(new Error('Student not found'), { status: 404 });

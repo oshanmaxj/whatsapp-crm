@@ -1,4 +1,7 @@
+const path = require('path');
 const educationService = require('../services/education.service');
+const paymentSlipService = require('../services/paymentSlip.service');
+const auditService = require('../services/audit.service');
 
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
 
@@ -19,6 +22,20 @@ class EducationController {
 
   async listStudents(req, res, next) { try { return ok(res, await educationService.listStudents(req.query)); } catch (err) { next(err); } }
   async searchStudents(req, res, next) { try { return ok(res, await educationService.searchStudents(req.query)); } catch (err) { next(err); } }
+  async registrationPaymentSlip(req, res, next) {
+    try {
+      const { conversationId, leadId, contactId } = req.query;
+      return ok(res, await paymentSlipService.resolveRegistrationContextSlips({ conversationId, leadId, contactId }));
+    } catch (err) { next(err); }
+  }
+  async registrationPaymentSlipFile(req, res, next) {
+    try {
+      const file = await paymentSlipService.file(req.params.slipId);
+      await auditService.record({ userId: req.user.id, action: 'PAYMENT_SLIP_FILE_VIEWED', entityType: 'payment_slip', entityId: file.row.id, method: req.method, path: req.originalUrl });
+      res.type(file.mimeType).set('Content-Disposition', `inline; filename="${path.basename(file.name).replace(/"/g, '')}"`).set('Cache-Control', 'private, no-store');
+      res.sendFile(file.path);
+    } catch (err) { next(err); }
+  }
   async getStudentProfile(req, res, next) { try { return ok(res, await educationService.getStudentProfile(req.params.id)); } catch (err) { next(err); } }
   async getStudent(req, res, next) { try { return ok(res, await educationService.getStudent(req.params.id)); } catch (err) { next(err); } }
   async listStudentEnrollments(req, res, next) { try { return ok(res, await educationService.listStudentEnrollments(req.params.id)); } catch (err) { next(err); } }

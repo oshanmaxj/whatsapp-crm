@@ -23,6 +23,11 @@ router.delete('/batches/:id', educationController.deleteBatch.bind(educationCont
 
 router.get('/students', educationController.listStudents.bind(educationController));
 router.get('/students/search', educationController.searchStudents.bind(educationController));
+// Registration-time payment-slip preview: gated by the SAME payment-
+// confirmation permission as /fees/installments/:id/confirm (canConfirmPayment),
+// not by payment-slips.view — see paymentSlip.service.js#resolveRegistrationContextSlips.
+router.get('/students/registration-payment-slip', canConfirmPayment, educationController.registrationPaymentSlip.bind(educationController));
+router.get('/students/registration-payment-slip/:slipId/file', canConfirmPayment, educationController.registrationPaymentSlipFile.bind(educationController));
 router.get('/students/:id/profile', educationController.getStudentProfile.bind(educationController));
 router.get('/students/:id/notes', educationController.listStudentNotes.bind(educationController));
 router.post('/students/:id/notes', educationController.createStudentNote.bind(educationController));

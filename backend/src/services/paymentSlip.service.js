@@ -316,6 +316,25 @@ class PaymentSlipService {
     return this.enrich(row, detailed);
   }
 
+  // Resolves the payment slip(s) relevant to a registration being opened
+  // from a WhatsApp conversation/lead/contact — latest first, no error if
+  // none exist. Deliberately a SEPARATE code path from get()/file() above:
+  // this is consumed by a registration-flow endpoint gated by
+  // canConfirmPayment (the payment-confirmation permission), not by the
+  // payment-slips.view permission that already governs the standalone
+  // Payment Verification page — the two access boundaries are intentionally
+  // independent (see education.routes.js).
+  async resolveRegistrationContextSlips({ conversationId, leadId, contactId } = {}) {
+    const clauses = [];
+    if (conversationId) clauses.push({ conversationId });
+    if (leadId) clauses.push({ leadId });
+    if (contactId) clauses.push({ contactId });
+    if (!clauses.length) return { latest: null, slips: [] };
+    const rows = await PaymentSlip.findAll({ where: { [Op.or]: clauses }, order: [['created_at', 'DESC']], limit: 10 });
+    const slips = rows.map((row) => ({ ...publicSlip(row, false), previewUrl: `/api/education/students/registration-payment-slip/${row.id}/file` }));
+    return { latest: slips[0] || null, slips };
+  }
+
   async file(id) {
     const row = await PaymentSlip.findByPk(id);
     if (!row?.fileUrl) throw safeError('Payment slip file not found.', 404, 'SLIP_MEDIA_MISSING');

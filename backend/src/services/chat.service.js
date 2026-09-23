@@ -10,16 +10,17 @@ const { normalizeMessagePresentation } = require('./messagePresentation.service'
 const { createTemplateSnapshot, renderTemplateSnapshot } = require('./templateMessage.service');
 const crypto = require('crypto');
 const logger = require('../config/logger');
+const { requiredSecret } = require('../utils/secrets');
 
 function messageCursor(row) {
   const payload = Buffer.from(JSON.stringify({ t: row.createdAt, id: String(row.id) })).toString('base64url');
-  const signature = crypto.createHmac('sha256', process.env.INBOX_CURSOR_SECRET || process.env.JWT_SECRET || 'development-inbox-cursor-secret').update(payload).digest('base64url');
+  const signature = crypto.createHmac('sha256', requiredSecret('INBOX_CURSOR_SECRET', { fallbackEnvKey: 'JWT_ACCESS_SECRET' })).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
 function parseMessageCursor(value) {
   if (!value) return null;
   const [payload, signature] = String(value).split('.');
-  const expected = crypto.createHmac('sha256', process.env.INBOX_CURSOR_SECRET || process.env.JWT_SECRET || 'development-inbox-cursor-secret').update(payload || '').digest('base64url');
+  const expected = crypto.createHmac('sha256', requiredSecret('INBOX_CURSOR_SECRET', { fallbackEnvKey: 'JWT_ACCESS_SECRET' })).update(payload || '').digest('base64url');
   if (!signature || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw Object.assign(new Error('Invalid message cursor'), { status: 400 });
   const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
   return { t: new Date(parsed.t), id: String(parsed.id) };

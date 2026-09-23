@@ -37,7 +37,7 @@ class EducationController {
     } catch (err) { next(err); }
   }
   async getStudentProfile(req, res, next) { try { return ok(res, await educationService.getStudentProfile(req.params.id)); } catch (err) { next(err); } }
-  async getStudent(req, res, next) { try { return ok(res, await educationService.getStudent(req.params.id)); } catch (err) { next(err); } }
+  async getStudent(req, res, next) { try { return ok(res, await educationService.getStudentForDisplay(req.params.id)); } catch (err) { next(err); } }
   async listStudentEnrollments(req, res, next) { try { return ok(res, await educationService.listStudentEnrollments(req.params.id)); } catch (err) { next(err); } }
   async createStudentEnrollment(req, res, next) { try { return ok(res, await educationService.createStudentEnrollment(req.params.id, req.body, req.user?.id || null), 201); } catch (err) { next(err); } }
   async updateEnrollment(req, res, next) { try { return ok(res, await educationService.updateEnrollment(req.params.id, req.body)); } catch (err) { next(err); } }

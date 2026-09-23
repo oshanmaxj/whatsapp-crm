@@ -106,6 +106,49 @@ function serialize(model) {
   return model && typeof model.toJSON === 'function' ? model.toJSON() : model;
 }
 
+// StudentEnrollment has no financial columns of its own (courseId, batchId,
+// enrollmentStatus, enrolledAt, completedAt only) — discount, the paid
+// course fee, payment plan and installment count all live on StudentFee,
+// linked by the stable StudentFee.enrollmentId FK (falling back to
+// courseId+batchId only for legacy fee rows predating that column). Without
+// this mapping, re-fetching a student for the Edit form silently showed
+// discount 0 and feePlan 'full' for every enrollment regardless of what was
+// actually saved — the fee was correct, it just never round-tripped back
+// onto the enrollment DTO the frontend reads.
+function matchEnrollmentFee(enrollment, fees = []) {
+  return fees.find((item) => (
+    String(item.enrollmentId || '') === String(enrollment.id)
+    || (!item.enrollmentId
+      && String(item.courseId) === String(enrollment.courseId)
+      && String(item.batchId || '') === String(enrollment.batchId || ''))
+  )) || null;
+}
+
+function enrollmentWithFee(enrollment, fees = []) {
+  const fee = matchEnrollmentFee(enrollment, fees);
+  return {
+    ...enrollment,
+    feeId: fee?.id || null,
+    feePlan: fee?.paymentType || enrollment.feePlan || null,
+    paymentType: fee?.paymentType || enrollment.feePlan || null,
+    discountType: fee?.discountType || 'none',
+    discountValue: fee ? amount(fee.discountValue) : 0,
+    discountAmount: fee ? amount(fee.discountAmount) : 0,
+    courseFee: fee ? amount(fee.originalAmount) : amount(enrollment.course?.feeAmount),
+    totalAmount: fee ? amount(fee.totalAmount) : null,
+    paidAmount: fee ? amount(fee.paidAmount) : null,
+    balance: fee ? amount(fee.balance) : null,
+    installmentCount: fee?.installmentCount || null,
+    feeStatus: fee?.status || null
+  };
+}
+
+function enrichStudentEnrollments(data) {
+  if (!data) return data;
+  data.enrollments = (data.enrollments || []).map((enrollment) => enrollmentWithFee(enrollment, data.fees || []));
+  return data;
+}
+
 function pageOptions(query = {}, defaultLimit = 20) {
   const page = Math.max(Number.parseInt(query.page, 10) || 1, 1);
   const limit = Math.min(Math.max(Number.parseInt(query.limit, 10) || defaultLimit, 1), 100);
@@ -329,9 +372,18 @@ class EducationService {
     }
     if (query.paymentStatus) where['$fees.status$'] = query.paymentStatus;
     const options = { where, include: this.studentInclude(), order: [['created_at', 'DESC']], distinct: true, subQuery: false };
-    if (!query.page && !query.limit) return Student.findAll(options);
+    // The Add/Edit Record modal is populated directly from this list (no
+    // separate fetch on "Edit") — enrollments must carry their own
+    // discount/fee state (see enrichStudentEnrollments()) or the edit form
+    // silently shows discount 0 for every enrollment.
+    if (!query.page && !query.limit) {
+      const rows = await Student.findAll(options);
+      return rows.map((row) => enrichStudentEnrollments(serialize(row)));
+    }
     const { page, limit, offset } = pageOptions(query);
-    return pagedResult(await Student.findAndCountAll({ ...options, limit, offset }), page, limit);
+    const paged = pagedResult(await Student.findAndCountAll({ ...options, limit, offset }), page, limit);
+    paged.items = paged.items.map((row) => enrichStudentEnrollments(serialize(row)));
+    return paged;
   }
 
   async searchStudents(query = {}) {
@@ -369,6 +421,15 @@ class EducationService {
     return row;
   }
 
+  // getStudent() above returns a live Sequelize instance and MUST keep
+  // doing so — updateStudent()/deleteStudent()/resetStudentPortalPassword()
+  // etc. call .update()/.destroy() directly on its result. This wrapper is
+  // for API responses only: a plain object with each enrollment's
+  // discount/fee state mapped back in (see enrichStudentEnrollments()).
+  async getStudentForDisplay(id) {
+    return enrichStudentEnrollments(serialize(await this.getStudent(id)));
+  }
+
   async getStudentProfile(id) {
     const student = await Student.findByPk(id, {
       include: [
@@ -397,15 +458,10 @@ class EducationService {
 
     const data = serialize(student);
     data.enrollments = (data.enrollments || []).map((enrollment) => {
-      const enrollmentFee = (data.fees || []).find((item) => (
-        String(item.enrollmentId || '') === String(enrollment.id)
-        || (!item.enrollmentId
-          && String(item.courseId) === String(enrollment.courseId)
-          && String(item.batchId || '') === String(enrollment.batchId || ''))
-      ));
+      const enrollmentFee = matchEnrollmentFee(enrollment, data.fees || []);
       const access = evaluateFeeAccess(enrollmentFee, enrollmentFee?.installments || []);
       return {
-        ...enrollment,
+        ...enrollmentWithFee(enrollment, data.fees || []),
         paymentStatus: access.paymentStatus,
         accessAllowed: enrollment.enrollmentStatus === 'active' && access.accessAllowed,
         accessReason: enrollment.enrollmentStatus === 'active' ? access.reason : 'enrollment_not_active'
@@ -855,7 +911,7 @@ class EducationService {
       portalPassword: portalPassword || generatedPortalPassword || ''
     }).catch((error) => logger.warn('enrollment_welcome_queue_failed', { enrollmentId: enrollment.id, error: error.message }))));
     await studentCanonicalIdentityService.publishStudentChanged(student.id).catch(() => null);
-    const created = serialize(await this.getStudent(student.id));
+    const created = enrichStudentEnrollments(serialize(await this.getStudent(student.id)));
     // Student Welcome (WhatsApp + SMS) deliberately does NOT fire here.
     // Registration alone must never notify the student — the automatic
     // welcome now fires only once a qualifying payment is confirmed (see
@@ -901,7 +957,7 @@ class EducationService {
       await this.syncEnrollments(row, payload, userId);
       await studentCanonicalIdentityService.publishStudentChanged(row.id).catch(() => null);
     }
-    return this.getStudent(id);
+    return this.getStudentForDisplay(id);
   }
 
   async updateClassSmsReminders(id, enabled, actor = null) {
@@ -1018,7 +1074,7 @@ class EducationService {
   }
 
   studentConversionPayload(student) {
-    const data = serialize(student);
+    const data = enrichStudentEnrollments(serialize(student));
     return {
       ...data,
       registration_no: registrationNumber(data),
@@ -1028,7 +1084,15 @@ class EducationService {
   }
 
   async listFees(query = {}) {
-    const where = {};
+    // Naturally-free courses (the Course's own configured fee is 0) still
+    // get a StudentFee record internally — enrollmentAccess.service.js
+    // needs one to grant LMS access — but showing a meaningless "LKR 0.00 /
+    // paid" row in the normal Fee & Installment Tracking list is
+    // misleading, so it's excluded here. A course fee that reaches 0
+    // through a 100% discount keeps originalAmount > 0 and is NOT excluded
+    // — that's a real financial concession, not a free course, and stays
+    // auditable in this list.
+    const where = { originalAmount: { [Op.gt]: 0 } };
     if (query.studentId) where.studentId = query.studentId;
     if (query.courseId) where.courseId = query.courseId;
     if (query.batchId) where.batchId = query.batchId;
@@ -1191,7 +1255,17 @@ class EducationService {
   async createFee(payload, user = null) {
     const feeData = await this.feePayload(payload);
     const fee = await StudentFee.create(feeData);
-    await this.replaceInstallments(fee, feeData, payload);
+    // A naturally-free course (the Course's own configured fee is 0 — not a
+    // real fee discounted down to 0, which keeps its normal installment for
+    // audit purposes; see feePayload()/calculateDiscount() above) gets no
+    // installment rows: there is nothing to schedule a payment for. The
+    // StudentFee itself is still created — enrollmentAccess.service.js's
+    // evaluateFeeAccess() requires a StudentFee to exist to grant LMS
+    // access, even for a free course — but it is excluded from the normal
+    // Fee & Installment Tracking list (see listFees() below).
+    if (feeData.originalAmount > 0) {
+      await this.replaceInstallments(fee, feeData, payload);
+    }
     let savedFee = await this.getFee(fee.id);
     const paymentAmount = roundMoney(payload.paymentAmount ?? payload.payment_amount ?? payload.paidAmount ?? payload.paid_amount);
     if (paymentAmount <= 0 || feeData.paymentType === 'free_card') {

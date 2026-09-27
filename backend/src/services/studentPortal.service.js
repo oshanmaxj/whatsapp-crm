@@ -125,6 +125,14 @@ function serializeLesson(row, detailed = false, paymentAllowed = true) {
   const lesson = typeof row.toJSON === 'function' ? row.toJSON() : row;
   const progress = lesson.progress?.[0] || null;
   const liveAccess = liveClassAccess(lesson, paymentAllowed);
+  // Mirrors joinLiveClass()'s own hidden/archived-for-this-batch gate, so a
+  // batch override that archives a lesson for one batch can't leave the
+  // join button enabled here while the join endpoint would reject it.
+  if (['hidden', 'archived'].includes(lesson.status)) {
+    liveAccess.canJoin = false;
+    liveAccess.reason = 'lesson_unavailable';
+    liveAccess.message = 'Lesson is unavailable for this batch.';
+  }
   const data = {
     id: lesson.id, topicId: lesson.topicId, title: lesson.title, description: lesson.description, summary: lesson.summary,
     lessonType: lesson.lessonType, lessonOrder: lesson.lessonOrder, sortOrder: lesson.sortOrder,

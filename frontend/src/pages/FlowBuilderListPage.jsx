@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid, Paper,
@@ -113,16 +113,20 @@ function FlowBuilderListPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
+  // Stabilized so the effect below can depend on it directly (satisfying
+  // react-hooks/exhaustive-deps genuinely, with no disable comment) — its
+  // identity only changes when whatsappAccountId does, which is exactly
+  // when a re-fetch should happen. publish()/duplicate()/remove() below
+  // also call this same function to refresh after their own action.
+  const load = useCallback(async () => {
     const res = await getFlows(whatsappAccountId ? { whatsappAccountId } : {});
     setFlows(res.data.data || []);
-  };
+  }, [whatsappAccountId]);
 
   useEffect(() => {
     setLoading(true);
     load().catch((err) => setError(err.response?.data?.message || 'Unable to load flows.')).finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [whatsappAccountId]);
+  }, [load]);
 
   // A flow's own WhatsApp/Facebook channel membership, mirroring the
   // backend's flowChannelCompatibility.flowChannels() exactly, so the

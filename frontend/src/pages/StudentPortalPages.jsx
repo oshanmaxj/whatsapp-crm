@@ -21,6 +21,7 @@ import {
   getStudentSupportCategories, listStudentSupportTickets, createStudentSupportTicket, getStudentSupportTicket, replyStudentSupportTicket, confirmStudentSupportTicket
 } from '../services/studentPortal.service';
 import { API_ORIGIN } from '../config/apiConfig';
+import { useDocumentMeta } from '../components/PublicLegalLayout';
 
 const paymentWarning = 'Your LMS access is temporarily disabled due to pending payment. Please contact the office.';
 const assetUrl = (value) => String(value || '').startsWith('/uploads/') ? `${API_ORIGIN}${value}` : value;
@@ -31,6 +32,10 @@ function saveSession(data) {
 
 export function StudentLoginPage() {
   const navigate = useNavigate();
+  // /student/login sits outside StudentPortalLayout's nested routes (it's a
+  // separate top-level route so an unauthenticated visitor never mounts the
+  // authenticated layout), so it needs its own title call.
+  useDocumentMeta('Student Portal', 'Student Learning Management Portal');
   const [mode, setMode] = useState('password');
   const [form, setForm] = useState({ identifier: '', password: '', otp: '' });
   const [challenge, setChallenge] = useState(null);
@@ -142,6 +147,13 @@ const nav = [
 export function StudentPortalLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  // Every nested student route (dashboard, courses, live classes, lessons,
+  // materials, payments, profile, support) renders through this single
+  // layout's <Outlet/>, so setting the tab title here covers all of them at
+  // once. useDocumentMeta restores the previous title on unmount, so
+  // navigating back to the Admin CRM (a separate, non-nested route tree)
+  // restores its own title automatically — this never touches it directly.
+  useDocumentMeta('Student Portal', 'Student Learning Management Portal');
   return <Box sx={{ minHeight: '100vh', bgcolor: '#f5f8f7', pb: { xs: 9, sm: 3 } }}>
     <AppBar position="sticky" elevation={0} sx={{ bgcolor: '#0b3d32' }}>
       <Toolbar><SchoolIcon sx={{ mr: 1 }} /><Typography fontWeight={900} sx={{ flex: 1 }}>Student LMS</Typography><Button color="inherit" onClick={() => { localStorage.removeItem('studentPortalToken'); navigate('/student/login'); }}>Logout</Button></Toolbar>
@@ -265,13 +277,31 @@ function LessonCards({ lessons, empty = 'No lessons available.' }) {
 
 function JoinButton({ lesson }) {
   const [error, setError] = useState('');
+  const [fallbackUrl, setFallbackUrl] = useState('');
+  const [joining, setJoining] = useState(false);
   const join = async () => {
+    if (joining) return;
+    setJoining(true);
+    setError('');
+    setFallbackUrl('');
     try {
-      setError('');
       const response = await joinStudentLiveClass(lesson.id);
-      window.open(response.data.data.liveClassUrl || response.data.data.zoomLink, '_blank', 'noopener,noreferrer');
+      const url = response.data.data.liveClassUrl || response.data.data.zoomLink;
+      if (!url) {
+        setError('No meeting link is available for this class yet. Please contact support.');
+      } else {
+        // window.open returns null when the popup is blocked instead of throwing,
+        // so a silently-failed join looked identical to a successful one.
+        const opened = window.open(url, '_blank', 'noopener,noreferrer');
+        if (!opened) {
+          setError('Your browser blocked the meeting popup. Allow popups for this site, or use the link below.');
+          setFallbackUrl(url);
+        }
+      }
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Unable to join this class.');
+    } finally {
+      setJoining(false);
     }
   };
   if (!lesson.canJoin) {
@@ -279,7 +309,11 @@ function JoinButton({ lesson }) {
       : lesson.classStatus === 'completed' ? 'Class ended' : 'Upcoming';
     return <Stack alignItems={{ sm: 'flex-end' }} spacing={0.5}><Chip label={label} color={lesson.joinStatus === 'payment_blocked' ? 'warning' : 'default'} />{lesson.joinMessage && <Typography variant="caption" color="text.secondary">{lesson.joinMessage}</Typography>}</Stack>;
   }
-  return <Stack alignItems={{ sm: 'flex-end' }} spacing={0.5}><Button variant="contained" color="success" startIcon={<VideoCallIcon />} onClick={join}>{lesson.joinButtonLabel || 'Join Live Class'}</Button>{error && <Typography variant="caption" color="error">{error}</Typography>}</Stack>;
+  return <Stack alignItems={{ sm: 'flex-end' }} spacing={0.5}>
+    <Button variant="contained" color="success" startIcon={<VideoCallIcon />} onClick={join} disabled={joining}>{joining ? 'Joining…' : (lesson.joinButtonLabel || 'Join Live Class')}</Button>
+    {error && <Typography variant="caption" color="error">{error}</Typography>}
+    {fallbackUrl && <Button component="a" href={fallbackUrl} target="_blank" rel="noopener noreferrer" size="small">Open meeting link</Button>}
+  </Stack>;
 }
 
 export function StudentLessonsPage() {
@@ -374,14 +408,18 @@ export function StudentMaterialsPage() {
 
 export function StudentPaymentsPage() {
   const [data, setData] = useState(null);
-  useEffect(() => { getStudentPayments().then((res) => setData(res.data.data)); }, []);
+  const [error, setError] = useState('');
+  useEffect(() => { getStudentPayments().then((res) => setData(res.data.data)).catch((e) => setError(e.response?.data?.message || 'Unable to load payments.')); }, []);
+  if (error) return <Alert severity="error" sx={{ ml: { sm: 20 } }}>{error}</Alert>;
   if (!data) return <PageLoading />;
   return <Stack spacing={2.5} sx={{ ml: { sm: 20 } }}><Typography variant="h4" fontWeight={900}>Payments & Access</Typography><PaymentBanner access={data} />{data.allowed && <Alert severity="success">At least one course is available.</Alert>}{data.enrollments.map((enrollment) => <Paper key={enrollment.enrollmentId} variant="outlined" sx={{ p: 2.5, borderColor: enrollment.allowed ? 'success.light' : 'warning.main' }}><Stack direction="row" justifyContent="space-between" alignItems="flex-start"><Box><Typography fontWeight={850}>{enrollment.course?.name || 'Course'}</Typography><Typography variant="body2" color="text.secondary">{enrollment.batch?.name || 'All batches'}</Typography></Box><Chip size="small" color={enrollment.allowed ? 'success' : 'warning'} label={enrollment.allowed ? 'Access active' : 'Access blocked'} /></Stack>{enrollment.fee ? <><Typography sx={{ mt: 1 }}>Payment plan: {enrollment.fee.paymentType}</Typography><Typography>Total: {enrollment.fee.totalAmount} · Paid: {enrollment.fee.paidAmount} · Balance: {enrollment.fee.balance}</Typography><Stack sx={{ mt: 2 }} divider={<Divider />}>{enrollment.fee.installments.map((item) => <Stack key={item.id} direction="row" justifyContent="space-between" sx={{ py: 1 }}><Typography>Installment {item.installmentNo} · due {item.dueDate}</Typography><Chip size="small" label={item.status} color={['paid', 'confirmed'].includes(item.status) ? 'success' : item.status === 'overdue' ? 'error' : 'default'} /></Stack>)}</Stack></> : <Alert severity="warning" sx={{ mt: 1.5 }}>No payment plan is linked to this enrollment.</Alert>}</Paper>)}</Stack>;
 }
 
 export function StudentProfilePage() {
   const [data, setData] = useState(null);
-  useEffect(() => { getStudentMe().then((res) => setData(res.data.data)); }, []);
+  const [error, setError] = useState('');
+  useEffect(() => { getStudentMe().then((res) => setData(res.data.data)).catch((e) => setError(e.response?.data?.message || 'Unable to load profile.')); }, []);
+  if (error) return <Alert severity="error" sx={{ ml: { sm: 20 } }}>{error}</Alert>;
   if (!data) return <PageLoading />;
   const student = data.student;
   return <Stack spacing={2.5} sx={{ ml: { sm: 20 } }}><Typography variant="h4" fontWeight={900}>My Profile</Typography><PaymentBanner access={data.paymentAccess} /><Paper variant="outlined" sx={{ p: 3 }}><Stack spacing={1.5}>{[['Registration number', student.studentNo], ['Name', student.name], ['Phone', student.phone], ['Email', student.email || '-'], ['Course', student.course?.name || '-'], ['Batch', student.batch?.name || '-'], ['Status', student.status]].map(([label, value]) => <Box key={label}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography fontWeight={750}>{value}</Typography></Box>)}</Stack></Paper></Stack>;

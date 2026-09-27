@@ -48,8 +48,26 @@ const lessonInclude = (studentId) => [
     model: LmsLessonComment, as: 'comments', required: false,
     include: [{ model: Student, as: 'student', attributes: ['id', 'name'] }]
   },
-  { model: LmsStudentProgress, as: 'progress', required: false, where: { studentId } }
+  { model: LmsStudentProgress, as: 'progress', required: false, where: { studentId } },
+  // Every batch's override for this lesson (not filtered to one batch here,
+  // since a single query serves students across several different batches —
+  // the correct one is picked per-student in resolveEffectiveLesson() below,
+  // the same override joinLiveClass() already applies at join time. Without
+  // this, canJoin/classStatus were computed from the base (possibly stale)
+  // schedule for any batch that has its own override, while the actual
+  // join click correctly used the override — an enabled button that failed.
+  { model: LmsLessonBatchOverride, as: 'batchOverrides', required: false }
 ];
+
+// Merges in the override for the specific batch the viewing student is
+// actually enrolled under (via their matched enrollmentAccess), mirroring
+// joinLiveClass()'s own override lookup so list/detail views and the join
+// endpoint can never disagree about a lesson's effective schedule/link.
+function resolveEffectiveLesson(row, batchId) {
+  const lesson = typeof row.toJSON === 'function' ? row.toJSON() : row;
+  const override = (lesson.batchOverrides || []).find((item) => String(item.batchId) === String(batchId || ''));
+  return applyBatchOverride(lesson, override);
+}
 
 function publicStudent(student) {
   const enrollments = (student.enrollments || []).map((enrollment) => ({
@@ -100,7 +118,11 @@ function safeBunnyUrl(lesson) {
 }
 
 function serializeLesson(row, detailed = false, paymentAllowed = true) {
-  const lesson = row.toJSON();
+  // Accepts either a live Sequelize row or an already-plain lesson object —
+  // the latter is how callers pass in a lesson that's had its per-batch
+  // override merged in first (see applyBatchOverride() below), since the
+  // override must be applied BEFORE canJoin/classStatus are computed.
+  const lesson = typeof row.toJSON === 'function' ? row.toJSON() : row;
   const progress = lesson.progress?.[0] || null;
   const liveAccess = liveClassAccess(lesson, paymentAllowed);
   const data = {
@@ -282,14 +304,14 @@ class StudentPortalService {
     };
   }
 
-  async paymentAccess(studentOrId) {
+  async paymentAccess(studentOrId, preloadedEnrollments = null) {
     const student = typeof studentOrId === 'object' ? studentOrId : await Student.findByPk(studentOrId);
     if (!student) return { allowed: false, allAllowed: false, warning: accessWarning, reason: 'student_not_found', fees: [], enrollments: [] };
-    const enrollments = await StudentEnrollment.findAll({
-      where: { studentId: student.id, enrollmentStatus: 'active' },
-      include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch', required: false }],
-      order: [['enrolled_at', 'ASC']]
-    });
+    // Reuses activeEnrollments() (identical query, now including the same
+    // ordering) instead of a second, separately-written but functionally
+    // duplicate StudentEnrollment fetch — one fewer redundant query on
+    // every request that already has this student's enrollments loaded.
+    const enrollments = preloadedEnrollments || await this.activeEnrollments(student);
     const fees = await StudentFee.findAll({
       where: { studentId: student.id, status: { [Op.ne]: 'cancelled' } },
       include: [{ model: FeeInstallment, as: 'installments', required: false }],
@@ -466,7 +488,8 @@ class StudentPortalService {
   async activeEnrollments(student) {
     return StudentEnrollment.findAll({
       where: { studentId: student.id, enrollmentStatus: 'active' },
-      include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch', required: false }]
+      include: [{ model: Course, as: 'course' }, { model: Batch, as: 'batch', required: false }],
+      order: [['enrolled_at', 'ASC']]
     });
   }
 
@@ -550,7 +573,8 @@ class StudentPortalService {
     const rows = await LmsLesson.findAll({ where: this.lessonWhere(enrollments), include: lessonInclude(student.id), order: [['lesson_order', 'ASC'], ['created_at', 'ASC']] });
     return rows.map((row) => {
       const enrollmentAccess = this.matchingAccess(row, access);
-      return { ...serializeLesson(row, false, Boolean(enrollmentAccess?.allowed)), enrollmentAccess };
+      const effectiveLesson = resolveEffectiveLesson(row, enrollmentAccess?.batchId);
+      return { ...serializeLesson(effectiveLesson, false, Boolean(enrollmentAccess?.allowed)), enrollmentAccess };
     });
   }
 
@@ -584,8 +608,10 @@ class StudentPortalService {
       navigation = { previousLessonId: accessibleLessons[lessonIndex - 1]?.id || null, nextLessonId: accessibleLessons[lessonIndex + 1]?.id || null };
     }
     await LmsStudentProgress.findOrCreate({ where: { studentId: student.id, lessonId: row.id }, defaults: { openedAt: new Date() } });
+    const refreshed = await LmsLesson.findByPk(row.id, { include: lessonInclude(student.id) });
+    const effectiveLesson = resolveEffectiveLesson(refreshed, enrollmentAccess?.batchId);
     return {
-      ...serializeLesson(await LmsLesson.findByPk(row.id, { include: lessonInclude(student.id) }), true, Boolean(enrollmentAccess?.allowed)),
+      ...serializeLesson(effectiveLesson, true, Boolean(enrollmentAccess?.allowed)),
       enrollmentAccess, ...navigation
     };
   }
@@ -640,7 +666,6 @@ class StudentPortalService {
   }
 
   async joinLiveClass(student, lessonId, request = {}) {
-    const payment = await this.paymentAccess(student);
     const enrollments = await this.activeEnrollments(student);
     const rawLesson = await LmsLesson.findOne({ where: { ...this.lessonWhere(enrollments), id: lessonId } });
     const enrollmentCheck = rawLesson
@@ -664,8 +689,13 @@ class StudentPortalService {
     });
     if (!access.canJoin) {
       const status = access.reason === 'lesson_unavailable' ? 404 : access.reason === 'payment_blocked' ? 403 : 400;
+      logger.warn('student_live_class_join_blocked', {
+        studentId: student.id, lessonId, reason: access.reason,
+        batchId: enrollmentAccess?.batchId || null, hasOverride: Boolean(override)
+      });
       throw Object.assign(new Error(access.message || 'This live class is not available to join.'), { status });
     }
+    logger.info('student_live_class_joined', { studentId: student.id, lessonId, batchId: enrollmentAccess?.batchId || null });
     const attendanceDate = new Date(effectiveLesson.liveClassAt).toISOString().slice(0, 10);
     const [attendance, created] = await AttendanceRecord.findOrCreate({
       where: { studentId: student.id, lessonId: rawLesson.id },

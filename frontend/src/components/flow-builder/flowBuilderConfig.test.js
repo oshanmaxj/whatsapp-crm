@@ -33,13 +33,9 @@ test('interactive media headers require a valid uploaded or pending source', () 
   expect(nodeConfigErrors('interactive_message', { message: 'Choose', headerType: 'image', headerMediaId: 'meta-1', headerMediaAccountId: 7, headerMediaMimeType: 'image/jpeg', headerMediaSize: 1024, buttons: [{ id: 'b', title: 'Go' }] }).headerMedia).toBeUndefined();
 });
 
-test('trigger priority is optional but must be a whole number when provided', () => {
-  expect(nodeConfigErrors('start', { source: 'any_message' }).priority).toBeUndefined();
-  expect(nodeConfigErrors('start', { source: 'any_message', priority: '' }).priority).toBeUndefined();
-  expect(nodeConfigErrors('start', { source: 'any_message', priority: 10 }).priority).toBeUndefined();
-  expect(nodeConfigErrors('start', { source: 'any_message', priority: '10' }).priority).toBeUndefined();
-  expect(nodeConfigErrors('start', { source: 'any_message', priority: '10.5' }).priority).toMatch(/whole number/i);
-  expect(nodeConfigErrors('start', { source: 'any_message', priority: 'abc' }).priority).toMatch(/whole number/i);
+test('priority is no longer a validated field — a stray priority value on a start node never produces an error', () => {
+  expect(nodeConfigErrors('start', { source: 'any_message', priority: 'abc' }).priority).toBeUndefined();
+  expect(nodeConfigErrors('start', { source: 'any_message', priority: '10.5' }).priority).toBeUndefined();
 });
 
 test('node save applies the successful multipart upload result and removes embedded base64', () => {

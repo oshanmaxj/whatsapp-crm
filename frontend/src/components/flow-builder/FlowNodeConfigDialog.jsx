@@ -431,11 +431,9 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
       let nextConfig = { ...config };
       if (node.data.nodeType === 'start') {
         nextConfig = { ...nextConfig, keywords: normalizeKeywords(nextConfig.keywords), keywordMatchMode: nextConfig.matchType || nextConfig.keywordMatchMode || 'contains' };
-        // Blank priority is not written at all — the effective default (100) is
-        // applied at match time (flowTriggerMatcher/handleDomainEvent), so a flow
-        // the admin never touches this field on stays byte-for-byte unchanged.
-        if (nextConfig.priority === '' || nextConfig.priority === null || nextConfig.priority === undefined) delete nextConfig.priority;
-        else nextConfig.priority = Math.trunc(Number(nextConfig.priority));
+        // Priority no longer exists — never write it, even if a flow saved
+        // before its removal still carries a stray value in storage.
+        delete nextConfig.priority;
       }
       if (node.data.nodeType === 'image_message' && nextConfig.sourceType === 'upload' && nextConfig.fileDataBase64 && !nextConfig.whatsappMediaId) {
         const response = await uploadFlowMedia(flowId, {
@@ -539,20 +537,9 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
       <FormControlLabel control={<Checkbox checked={config.caseInsensitive !== false} onChange={(event) => set('caseInsensitive', event.target.checked)} />} label="Case insensitive" />
       <FormControlLabel control={<Checkbox checked={config.normalizeWhitespace !== false} onChange={(event) => set('normalizeWhitespace', event.target.checked)} />} label="Trim and normalize whitespace" />
     </Section>
-    <Section title="Trigger precedence" description="Controls what happens when more than one published flow could match the same incoming message.">
-      <TextField
-        label="Trigger priority"
-        type="number"
-        inputProps={{ step: 1 }}
-        value={config.priority ?? ''}
-        onChange={(event) => set('priority', event.target.value)}
-        placeholder="100"
-        error={Boolean(errors.priority)}
-        helperText={errors.priority || 'When multiple flows match the same incoming message, the flow with the lower priority number runs first. Leave blank for the default (100). Examples: 10 = high priority, 100 = normal/default, 200 = lower priority.'}
-        fullWidth
-      />
+    <Section title="Trigger precedence" description="Controls what happens when more than one published flow could match the same incoming message. When several flows match, the older flow (created first) is evaluated first.">
       <FormControlLabel control={<Checkbox checked={config.stopAfterMatch !== false} onChange={(event) => set('stopAfterMatch', event.target.checked)} />} label="Stop after this flow matches" />
-      <Typography variant="caption" color="text.secondary">When enabled, lower-priority matching flows will not run after this flow starts. Turn this off if you want other matching flows to also run.</Typography>
+      <Typography variant="caption" color="text.secondary">When enabled, other matching flows evaluated after this one will not run once this flow starts. Turn this off if you want them to also run.</Typography>
     </Section>
     <Section title="Automation actions" description="Actions can run before or after this flow starts."><AutomationActionsEditor value={config.automationActions || []} onChange={(automationActions) => set('automationActions', automationActions)} options={actionOptions} optionsLoading={actionOptionsLoading} optionsError={actionOptionsError} onRefreshOptions={onRefreshActionOptions} onLabelOptionsChange={onLabelOptionsChange} /></Section></>;
   } else if (type === 'interactive_message') {

@@ -321,9 +321,9 @@ function Editor() {
     setNotice('Flow saved.');
     await refreshValidation();
   };
-  // Best-effort, non-blocking: surfaces trigger-priority conflicts and other
-  // publish-time warnings (e.g. unsupported nodes for a channel) as soon as
-  // they're known, without ever gating Save or Publish on this call succeeding.
+  // Best-effort, non-blocking: surfaces publish-time warnings (e.g.
+  // unsupported nodes for a channel) as soon as they're known, without ever
+  // gating Save or Publish on this call succeeding.
   const refreshValidation = async () => {
     try {
       const response = await validateFlow(id);
@@ -351,9 +351,9 @@ function Editor() {
       const response = await publishFlow(id);
       setFlow(response.data.data);
       setError(''); setNotice('Flow published.');
-      // A successful publish can still carry non-blocking warnings (e.g. another
-      // published flow may race this one at the same trigger priority) — refresh
-      // rather than clear, so that warning stays visible instead of being hidden.
+      // A successful publish can still carry non-blocking warnings (e.g. an
+      // unsupported node for one of this flow's channels) — refresh rather
+      // than clear, so that warning stays visible instead of being hidden.
       await refreshValidation();
     } catch (requestError) {
       const body = requestError.response?.data || {};

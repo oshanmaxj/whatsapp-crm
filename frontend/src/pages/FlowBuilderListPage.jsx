@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid, Paper,
-  Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography
+  Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
@@ -91,7 +91,15 @@ function FlowAnalyticsDialog({ flow, onClose }) {
 
 function FlowBuilderListPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const whatsappAccountId = searchParams.get('whatsappAccountId') || '';
+  const setWhatsappAccountId = (value) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set('whatsappAccountId', value); else next.delete('whatsappAccountId');
+    setSearchParams(next, { replace: true });
+  };
   const [flows, setFlows] = useState([]);
+  const [filterAccounts, setFilterAccounts] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ name: 'New WhatsApp Flow', description: '', triggerKeywords: 'start', channels: ['whatsapp'], whatsappAccountId: '', facebookPageId: '' });
   const toggleCreateChannel = (value) => {
@@ -106,13 +114,33 @@ function FlowBuilderListPage() {
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
-    const res = await getFlows();
+    const res = await getFlows(whatsappAccountId ? { whatsappAccountId } : {});
     setFlows(res.data.data || []);
   };
 
   useEffect(() => {
+    setLoading(true);
     load().catch((err) => setError(err.response?.data?.message || 'Unable to load flows.')).finally(() => setLoading(false));
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whatsappAccountId]);
+
+  // A flow's own WhatsApp/Facebook channel membership, mirroring the
+  // backend's flowChannelCompatibility.flowChannels() exactly, so the
+  // "WhatsApp number" column never mislabels a Facebook-only flow as a
+  // global/default WhatsApp flow just because both leave whatsappAccountId null.
+  const flowChannels = (flow) => (Array.isArray(flow.channels) && flow.channels.length ? flow.channels : [flow.channel || 'whatsapp']);
+  // Resolved from the SAME accounts already fetched for the filter dropdown
+  // below (via onAccountsLoaded) — no separate per-row/N+1 lookup.
+  const accountLabel = useMemo(() => {
+    const byId = new Map(filterAccounts.map((account) => [String(account.id), account]));
+    return (flow) => {
+      if (flow.whatsappAccountId) {
+        const account = byId.get(String(flow.whatsappAccountId));
+        return account ? `${account.name}${account.phoneNumber ? ` · ${account.phoneNumber}` : ''}` : `Account #${flow.whatsappAccountId}`;
+      }
+      return flowChannels(flow).includes('whatsapp') ? 'All numbers (default)' : '—';
+    };
+  }, [filterAccounts]);
 
   const create = async () => {
     const keywords = normalizeKeywords(form.triggerKeywords);
@@ -159,25 +187,43 @@ function FlowBuilderListPage() {
             <Typography variant="h5" fontWeight={850}>WhatsApp Flow Builder</Typography>
             <Typography color="text.secondary">Build ManyChat-style visual automations for WhatsApp conversations.</Typography>
           </Box>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>Create Flow</Button>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => {
+              // Preselect the currently-filtered number where technically
+              // appropriate (a WhatsApp-channel create); the agent can still
+              // change it (or pick none) if their permissions allow other numbers.
+              setForm((current) => ({ ...current, whatsappAccountId: current.channels.includes('whatsapp') ? whatsappAccountId : '' }));
+              setCreateOpen(true);
+            }}
+          >Create Flow</Button>
         </Stack>
+      </Paper>
+
+      <Paper sx={{ p: 2, border: '1px solid', borderColor: 'divider' }} elevation={0}>
+        <Box sx={{ maxWidth: 320 }}>
+          <WhatsAppAccountSelect
+            label="WhatsApp Number"
+            value={whatsappAccountId}
+            onChange={setWhatsappAccountId}
+            onAccountsLoaded={setFilterAccounts}
+            allowAll
+            fullWidth
+          />
+        </Box>
       </Paper>
 
       <Paper sx={{ border: '1px solid', borderColor: 'divider', overflow: 'hidden' }} elevation={0}>
         <TableContainer sx={{ overflowX: 'auto' }}>
           <Table>
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Trigger</TableCell><TableCell>Priority</TableCell><TableCell>WhatsApp number</TableCell><TableCell>Status</TableCell><TableCell>Updated</TableCell><TableCell>Runs</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Trigger</TableCell><TableCell>WhatsApp number</TableCell><TableCell>Status</TableCell><TableCell>Updated</TableCell><TableCell>Runs</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
             <TableBody>
               {flows.map((flow) => (
                 <TableRow key={flow.id} hover>
                   <TableCell><Typography fontWeight={850}>{flow.name}</Typography><Typography variant="body2" color="text.secondary">{flow.description || '-'}</Typography></TableCell>
                   <TableCell>{(flow.triggerKeywords || []).join(', ') || '-'}</TableCell>
-                  <TableCell>
-                    <Tooltip title="Lower number runs first when more than one flow matches the same message. Default is 100.">
-                      <Chip size="small" variant="outlined" label={`Priority ${Number(flow.triggerConfig?.priority ?? 100) || 100}`} />
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>{flow.whatsappPhoneNumberId || 'Default'}</TableCell>
+                  <TableCell>{accountLabel(flow)}</TableCell>
                   <TableCell><Chip size="small" label={flow.status} color={flow.status === 'published' ? 'success' : 'default'} /></TableCell>
                   <TableCell>{flow.updatedAt ? new Date(flow.updatedAt).toLocaleString() : '-'}</TableCell>
                   <TableCell>{flow.executions || 0}</TableCell>
@@ -190,7 +236,7 @@ function FlowBuilderListPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {!loading && flows.length === 0 && <TableRow><TableCell colSpan={8}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">No flows yet. Create your first WhatsApp automation.</Typography></TableCell></TableRow>}
+              {!loading && flows.length === 0 && <TableRow><TableCell colSpan={7}><Typography sx={{ py: 4, textAlign: 'center' }} color="text.secondary">{whatsappAccountId ? 'No flows for this WhatsApp number.' : 'No flows yet. Create your first WhatsApp automation.'}</Typography></TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>

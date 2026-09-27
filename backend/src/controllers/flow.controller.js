@@ -40,7 +40,7 @@ class FlowController {
     try { return res.json({ success: true, data: await flowService.actionOptions(req.user?.id, req.query.currentFlowId) }); } catch (err) { next(err); }
   }
   async list(req, res, next) {
-    try { return res.json({ success: true, data: await flowService.list(req.user?.id) }); } catch (err) { next(err); }
+    try { return res.json({ success: true, data: await flowService.list(req.user?.id, { whatsappAccountId: req.query.whatsappAccountId }) }); } catch (err) { next(err); }
   }
   async inboxList(req, res, next) {
     try { return res.json({ success: true, data: await flowService.listForInbox({ conversationId: req.query.conversationId, search: req.query.search, userId: req.user?.id }) }); } catch (err) { next(err); }

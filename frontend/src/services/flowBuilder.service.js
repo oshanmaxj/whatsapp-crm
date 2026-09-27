@@ -1,6 +1,6 @@
 import api from './api';
 
-export const getFlows = () => api.get('/flows');
+export const getFlows = (params = {}) => api.get('/flows', { params });
 export const getInboxFlows = (conversationId, search = '') => api.get('/flows/inbox/available', { params: { conversationId, search } });
 export const startInboxFlow = (id, conversationId, variables = {}) => api.post(`/flows/inbox/${id}/start`, { conversationId, variables });
 export const getFlow = (id) => api.get(`/flows/${id}`);

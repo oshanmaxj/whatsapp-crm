@@ -213,22 +213,62 @@ class FlowService {
     ];
   }
 
-  async list(userId = null) {
+  async list(userId = null, filters = {}) {
     // Was two separate calls (whereForUser() + userContext()) — whereForUser()
     // calls userContext() internally, so this ran the same User.findByPk
     // (with its Role/WhatsAppAccount includes) twice per request. Resolve it
-    // once and derive accessWhere the same way whereForUser() does.
+    // once and derive accessWhere the same way whereForUser() does. The
+    // Facebook-page context is a second, genuinely distinct lookup (a
+    // different service/table), not a duplicate of this fix.
     const context = userId ? await whatsappAccountAccessService.userContext(userId) : null;
-    const accessWhere = context ? (context.unrestricted ? {} : { whatsappAccountId: { [Op.in]: context.accountIds } }) : {};
+    const facebookContext = userId ? await facebookPageAccessService.userContext(userId) : null;
+    // A flow with no whatsappAccountId/facebookPageId is never excluded by
+    // that channel's own restriction — it's either genuinely unscoped for
+    // that channel (e.g. a WhatsApp-only flow has no facebookPageId at all)
+    // or a deliberately global/default flow for that channel. Only an
+    // EXPLICIT account/page id the user can't access excludes a row. This
+    // is also what fixes a pre-existing gap: a WhatsApp-restricted user
+    // could never see Facebook-only flows at all, since the old accessWhere
+    // was a plain whatsappAccountId IN (...) with no NULL branch.
+    const whatsappScope = context && !context.unrestricted
+      ? { [Op.or]: [{ whatsappAccountId: null }, { whatsappAccountId: { [Op.in]: context.accountIds } }] }
+      : null;
+    const facebookScope = facebookContext && !facebookContext.unrestricted
+      ? { [Op.or]: [{ facebookPageId: null }, { facebookPageId: { [Op.in]: facebookContext.pageIds } }] }
+      : null;
     const departmentWhere = context && !context.isAdmin
       ? { [Op.or]: [{ departmentId: null }, { departmentId: { [Op.in]: (context.user.roles || []).map((role) => role.id) } }] }
-      : {};
+      : null;
+    const requestedAccountId = filters.whatsappAccountId === undefined || filters.whatsappAccountId === null || filters.whatsappAccountId === ''
+      ? null : filters.whatsappAccountId;
+    let requestedAccountWhere = null;
+    if (requestedAccountId) {
+      // Equivalent to whatsappAccountAccessService.assertAccess(), but reuses
+      // the userContext() already resolved above instead of a second
+      // User.findByPk — the exact redundant-lookup pattern this list() was
+      // already fixed once for (see the comment above).
+      if (context && !context.unrestricted && !context.accountIds.map(String).includes(String(requestedAccountId))) {
+        throw Object.assign(new Error('You do not have access to this WhatsApp account'), { status: 403 });
+      }
+      // A specific number shows that number's own flows PLUS any
+      // unscoped/global flow — but only if that global flow actually
+      // applies to WhatsApp; a null-account Facebook-only flow must not
+      // masquerade as a "global WhatsApp" flow just because both leave
+      // whatsappAccountId null. Channel compatibility is filtered in JS
+      // below (flowChannelCompatibility.flowChannels), not in SQL, since
+      // `channels` is a plain JSON column (no jsonb containment operator).
+      requestedAccountWhere = { [Op.or]: [{ whatsappAccountId: requestedAccountId }, { whatsappAccountId: null }] };
+    }
+    const clauses = [whatsappScope, facebookScope, departmentWhere, requestedAccountWhere].filter(Boolean);
     const flows = await Flow.findAll({
-      where: Object.keys(departmentWhere).length ? { [Op.and]: [accessWhere, departmentWhere] } : accessWhere,
+      where: clauses.length > 1 ? { [Op.and]: clauses } : (clauses[0] || {}),
       include: [{ model: FlowRun, as: 'runs', attributes: ['id', 'status'], required: false }],
       order: [['updated_at', 'DESC']]
     });
-    return flows.map(serializeFlow);
+    const filtered = requestedAccountId
+      ? flows.filter((flow) => flow.whatsappAccountId != null || channelCompat.flowChannels(flow).includes('whatsapp'))
+      : flows;
+    return filtered.map(serializeFlow);
   }
 
   async listForInbox({ conversationId, search = '', userId }) {
@@ -697,50 +737,7 @@ class FlowService {
       } else if (await this.flowReferenceReaches(ref.target, flow.id, new Set())) errors.push({ nodeKey: ref.node.nodeKey, message: 'Circular flow reference detected.' });
     }
     errors.push(...channelCompat.nodeCompatibilityIssues(flow));
-    errors.push(...await this.triggerPriorityConflicts(flow));
     return errors;
-  }
-
-  // Conservative, non-blocking heads-up (never an error — see normalizeValidation's
-  // severity split) that another published flow could plausibly race this one for
-  // the same inbound event under today's first-match-wins/tied-priority semantics
-  // (see handleDomainEvent). This is not a full overlap solver: it only compares
-  // channel/account/page scope, tied triggerConfig.priority, and whether both
-  // triggers are message-driven — deliberately simple so it stays understandable.
-  async triggerPriorityConflicts(flow) {
-    const MESSAGE_LIKE_SOURCES = new Set([
-      'inbound_message', 'any_message', 'first_message',
-      'facebook_message_received', 'facebook_comment_received', 'facebook_comment_keyword'
-    ]);
-    const source = flow.triggerConfig?.source || flow.triggerType || 'inbound_message';
-    if (!MESSAGE_LIKE_SOURCES.has(source)) return [];
-    const channels = channelCompat.flowChannels(flow);
-    const priority = Number(flow.triggerConfig?.priority ?? 100) || 100;
-    const others = await Flow.findAll({
-      where: { status: 'published', id: { [Op.ne]: flow.id } },
-      attributes: ['id', 'name', 'channel', 'channels', 'whatsappAccountId', 'facebookPageId', 'triggerConfig', 'triggerType']
-    });
-    const warnings = [];
-    for (const other of others) {
-      const otherSource = other.triggerConfig?.source || other.triggerType || 'inbound_message';
-      if (!MESSAGE_LIKE_SOURCES.has(otherSource)) continue;
-      const otherPriority = Number(other.triggerConfig?.priority ?? 100) || 100;
-      if (otherPriority !== priority) continue;
-      const otherChannels = channelCompat.flowChannels(other);
-      const sharedChannels = channels.filter((channel) => otherChannels.includes(channel));
-      if (!sharedChannels.length) continue;
-      const scopeOverlaps = sharedChannels.some((channel) => (channel === 'whatsapp'
-        ? (!flow.whatsappAccountId || !other.whatsappAccountId || String(flow.whatsappAccountId) === String(other.whatsappAccountId))
-        : (!flow.facebookPageId || !other.facebookPageId || String(flow.facebookPageId) === String(other.facebookPageId))));
-      if (!scopeOverlaps) continue;
-      warnings.push({
-        severity: 'warning',
-        field: 'triggerConfig.priority',
-        code: 'FLOW_TRIGGER_PRIORITY_CONFLICT',
-        message: `Another published flow ("${other.name}") may match the same messages at Priority ${priority}. Execution order may depend on which matching flow is evaluated first.`
-      });
-    }
-    return warnings;
   }
 
   async flowReferenceReaches(currentFlowId, targetFlowId, visited) {
@@ -1906,12 +1903,17 @@ class FlowService {
           { [Op.or]: [{ departmentId: null }, { departmentId: conversation?.assignedRoleId || null }] }
         ]
       },
-      include: this.includeBuilder()
+      include: this.includeBuilder(),
+      // Priority no longer exists — when more than one published flow matches
+      // the same incoming message, the older flow (by creation time, ties
+      // broken by id) is evaluated first. Deterministic and DB-ordered rather
+      // than a JS post-filter sort, so it can never silently fall back to
+      // insertion order.
+      order: [['created_at', 'ASC'], ['id', 'ASC']]
     });
     const conversationMessageCount = conversation?.id ? await Message.count({ where: { conversationId: conversation.id } }) : null;
     const event = { text, messageType, interactiveType, buttonPayload, replyToWhatsappMessageId, whatsappAccountId, facebookPageId, channel, contact, lead, isFirstMessage: conversationMessageCount === 1 };
-    const matched = flows.filter((candidate) => triggerMatcher.matchesTrigger(candidate, event, { allowRegex: candidate.triggerConfig?.regexPrivileged === true }))
-      .sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
+    const matched = flows.filter((candidate) => triggerMatcher.matchesTrigger(candidate, event, { allowRegex: candidate.triggerConfig?.regexPrivileged === true }));
     if (!matched.length) return null;
     const results = [];
     for (const flow of matched) {
@@ -1962,7 +1964,11 @@ class FlowService {
         status: 'published',
         [Op.or]: [...legacyChannelScope, { channels: { [Op.ne]: null } }]
       },
-      include: this.includeBuilder()
+      include: this.includeBuilder(),
+      // Priority no longer exists — see the matching order() comment in
+      // handleInboundMessage above for why this is DB-ordered rather than a
+      // JS sort keyed on a removed field.
+      order: [['created_at', 'ASC'], ['id', 'ASC']]
     });
     const evalContext = { ...event, contact, lead, whatsappAccountId, facebookPageId };
     const evaluations = candidates.map((candidate) => ({
@@ -1971,8 +1977,7 @@ class FlowService {
     }));
     const matched = evaluations
       .filter((entry) => entry.matched)
-      .map((entry) => entry.candidate)
-      .sort((a, b) => Number(a.triggerConfig?.priority || 100) - Number(b.triggerConfig?.priority || 100));
+      .map((entry) => entry.candidate);
     const results = [];
     const eventKey = event.eventId ? `event:${event.eventType}:${event.eventId}` : null;
     const startedFlowIds = [];

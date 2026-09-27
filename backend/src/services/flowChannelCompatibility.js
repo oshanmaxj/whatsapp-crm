@@ -1,11 +1,13 @@
 const CHANNELS = ['whatsapp', 'facebook_messenger', 'facebook_comment'];
 
 // Node types that only make sense on WhatsApp: WhatsApp Flows is a WhatsApp
-// Business Platform product with no Messenger equivalent; list_message and
-// appointment_booking (built on list_message rendering) need WhatsApp's
-// sections+rows list UI, which Messenger has no equivalent of; Messenger has
-// no outbound "send a location" message type for businesses.
-const WHATSAPP_ONLY_NODE_TYPES = new Set(['whatsapp_flow', 'list_message', 'appointment_booking', 'location']);
+// Business Platform product with no Messenger equivalent; appointment_booking
+// is built on WhatsApp's own list_message rendering with no conversion layer;
+// Messenger has no outbound "send a location" message type for businesses.
+// list_message itself is NOT WhatsApp-only — flowListMessageMessenger.service.js
+// converts it into Quick Replies / a Generic Template carousel / a Button
+// Template for facebook_messenger and facebook_comment (see executeFacebookMessageNode).
+const WHATSAPP_ONLY_NODE_TYPES = new Set(['whatsapp_flow', 'appointment_booking', 'location']);
 
 // facebook_comment_reply posts a public reply to a Facebook Page comment —
 // it is meaningless outside a flow that is enabled for facebook_comment.

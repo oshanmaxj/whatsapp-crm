@@ -70,7 +70,7 @@ test('scenario 19: flowChannels() falls back to the legacy single `channel` valu
 
 // 8 (design-time half): unsupported-node compatibility matrix.
 test('scenario 8 (design-time): WhatsApp-only node types are flagged unsupported on Facebook channels', () => {
-  for (const nodeType of ['whatsapp_flow', 'list_message', 'appointment_booking', 'location']) {
+  for (const nodeType of ['whatsapp_flow', 'appointment_booking', 'location']) {
     assert.equal(isNodeSupportedOnChannel(nodeType, 'whatsapp'), true, `${nodeType} must remain supported on whatsapp`);
     assert.equal(isNodeSupportedOnChannel(nodeType, 'facebook_messenger'), false, `${nodeType} must be unsupported on facebook_messenger`);
     assert.equal(isNodeSupportedOnChannel(nodeType, 'facebook_comment'), false, `${nodeType} must be unsupported on facebook_comment`);
@@ -78,6 +78,18 @@ test('scenario 8 (design-time): WhatsApp-only node types are flagged unsupported
   for (const nodeType of ['text_message', 'image_message', 'video_message', 'audio_message', 'file_document', 'button_message', 'interactive_message']) {
     assert.equal(isNodeSupportedOnChannel(nodeType, 'facebook_messenger'), true, `${nodeType} must be supported on facebook_messenger`);
   }
+});
+
+// list_message used to be WhatsApp-only (production error: `"List Message"
+// is not supported on facebook_messenger`). It now converts into a Messenger
+// format (see flowListMessageMessenger.service.js), so it is channel-
+// compatible everywhere — actual per-list format feasibility (option count,
+// title length) is a separate, list-specific design-time warning, not a
+// blanket channel-support rejection.
+test('list_message is channel-compatible everywhere; Messenger support comes from conversion, not exclusion', () => {
+  assert.equal(isNodeSupportedOnChannel('list_message', 'whatsapp'), true);
+  assert.equal(isNodeSupportedOnChannel('list_message', 'facebook_messenger'), true);
+  assert.equal(isNodeSupportedOnChannel('list_message', 'facebook_comment'), true);
 });
 
 test('facebook_comment_reply is only supported on the facebook_comment channel', () => {

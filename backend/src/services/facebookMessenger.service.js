@@ -13,6 +13,32 @@ const { buildInboundSocketPayload } = require('./inboundFacebookMessage.service'
 const { normalizeMessagePresentation } = require('./messagePresentation.service');
 
 const ATTACHMENT_TYPE_MAP = { image: 'image', video: 'video', audio: 'audio', file: 'document' };
+const MESSENGER_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Meta's Graph API error code 10 ("This message is sent outside of allowed
+// window" / policy-restricted sends) is permanent for the current window —
+// retrying the identical request will not succeed, unlike a transient
+// 429/500/502/503/504 (already excluded from retryRequest's own retry list
+// since Meta returns this as an HTTP 400, not one of those statuses; this
+// export lets callers upstream — e.g. flow run logging — classify it
+// explicitly instead of relying on that HTTP-status side effect).
+function isPermanentMessengerSendError(error) {
+  if (error?.code === 'FACEBOOK_MESSAGING_WINDOW_CLOSED' || error?.permanent === true) return true;
+  const metaCode = Number(error?.response?.data?.error?.code);
+  return metaCode === 10;
+}
+
+// Preserves the original Graph API error's `response` (so downstream
+// classification like whatsappService.safeApiError/isPermanentMessengerSendError
+// can still read error.response.data.error.code/error_subcode/fbtrace_id)
+// instead of the previous behavior of replacing it with a plain Error that
+// lost that information entirely.
+function wrapSendError(error) {
+  const metaError = error.response?.data?.error || null;
+  return Object.assign(new Error(metaError?.message || error.message || 'Failed to send Facebook message'), {
+    status: 502, code: 'FACEBOOK_SEND_FAILED', exposeMessage: true, response: error.response
+  });
+}
 
 function messageCursor(row) {
   return Buffer.from(`${new Date(row.createdAt).getTime()}:${row.id}`).toString('base64');
@@ -122,9 +148,7 @@ class FacebookMessengerService {
         conversationId,
         message: error.response?.data?.error?.message || error.message
       });
-      throw Object.assign(new Error(error.response?.data?.error?.message || 'Failed to send Facebook message'), {
-        status: 502, code: 'FACEBOOK_SEND_FAILED', exposeMessage: true
-      });
+      throw wrapSendError(error);
     }
 
     const facebookMessageId = response.data?.message_id || null;
@@ -188,9 +212,29 @@ class FacebookMessengerService {
       logger.error('facebook_messenger_send_failed', {
         facebookPageId, conversationId, message: error.response?.data?.error?.message || error.message
       });
-      throw Object.assign(new Error(error.response?.data?.error?.message || 'Failed to send Facebook message'), {
-        status: 502, code: 'FACEBOOK_SEND_FAILED', exposeMessage: true
-      });
+      throw wrapSendError(error);
+    }
+  }
+
+  // Every conversation this returns null for means "cannot verify the
+  // window is open" — including a lookup failure — never silently allows a
+  // send. A conversation with no prior inbound Messenger message at all
+  // (e.g. a Facebook Comments contact who has never actually messaged the
+  // Page) has no window open at all, so this also doubles as the guard
+  // against an unsolicited private message from a comment-only contact
+  // (see flow.service.js's Facebook Comment dispatch).
+  async _assertWithinMessagingWindow(conversationId) {
+    const lastInbound = await Message.findOne({
+      where: { conversationId, channel: 'facebook_messenger', direction: 'inbound' },
+      order: [['created_at', 'DESC']],
+      attributes: ['createdAt']
+    });
+    const withinWindow = lastInbound && (Date.now() - new Date(lastInbound.createdAt).getTime()) <= MESSENGER_WINDOW_MS;
+    if (!withinWindow) {
+      throw Object.assign(
+        new Error('This message cannot be sent because the 24-hour Messenger messaging window has closed for this conversation.'),
+        { status: 422, code: 'FACEBOOK_MESSAGING_WINDOW_CLOSED', exposeMessage: true, permanent: true }
+      );
     }
   }
 
@@ -255,6 +299,7 @@ class FacebookMessengerService {
     if (duplicate) return duplicate;
 
     const { conversation, config, facebookContact } = await this._resolveSendTarget(conversationId, userId);
+    await this._assertWithinMessagingWindow(conversationId);
     const payload = {
       recipient: { id: facebookContact.facebookPsid },
       message: { attachment: { type: 'template', payload: { template_type: 'button', text: String(text || '').slice(0, 640), buttons: normalized } } },
@@ -273,6 +318,87 @@ class FacebookMessengerService {
     });
     logger.info('facebook_messenger_send_success', { facebookPageId: conversation.facebookPageId, conversationId, facebookMessageId });
     await this._emitSent(conversation, messageRecord, text);
+    return messageRecord;
+  }
+
+  // Messenger's Quick Replies: up to 13 buttons shown above the compose bar,
+  // attached to a text message. They vanish once the recipient sends any
+  // next message (including tapping a different quick reply) — unlike
+  // Button Template buttons, which stay on their message permanently.
+  async sendQuickReplies({ conversationId, text, quickReplies = [], userId = null, clientMessageId = null }) {
+    const normalized = quickReplies.slice(0, 13).map((option) => ({
+      content_type: 'text',
+      title: String(option.title || '').trim().slice(0, 20),
+      payload: String(option.id || option.payload || '').slice(0, 1000)
+    })).filter((option) => option.title && option.payload);
+    if (!normalized.length) throw Object.assign(new Error('At least one quick reply option is required'), { status: 422, code: 'FACEBOOK_QUICK_REPLIES_REQUIRED' });
+    if (quickReplies.length > 13) throw Object.assign(new Error('Facebook Messenger supports at most 13 quick replies'), { status: 422, code: 'FACEBOOK_QUICK_REPLY_LIMIT_EXCEEDED' });
+
+    const duplicate = await this.findByClientMessageId(conversationId, clientMessageId);
+    if (duplicate) return duplicate;
+
+    const { conversation, config, facebookContact } = await this._resolveSendTarget(conversationId, userId);
+    await this._assertWithinMessagingWindow(conversationId);
+    const payload = {
+      recipient: { id: facebookContact.facebookPsid },
+      message: { text: String(text || 'Please choose an option').slice(0, 2000), quick_replies: normalized },
+      messaging_type: 'RESPONSE'
+    };
+
+    logger.info('facebook_messenger_send_attempt', { facebookPageId: conversation.facebookPageId, conversationId, quickReplies: normalized.length });
+    const response = await this._postMessage(config, payload, { facebookPageId: conversation.facebookPageId, conversationId });
+
+    const facebookMessageId = response.data?.message_id || null;
+    const messageRecord = await this.logMessage({
+      facebookMessageId, channel: 'facebook_messenger', conversationId: conversation.id, contactId: conversation.contactId,
+      facebookPageId: conversation.facebookPageId, sentByUserId: userId || null, direction: 'outbound', type: 'text',
+      text, status: 'sent', statusUpdatedAt: new Date(),
+      rawPayload: { quickReplies: normalized, clientMessageId: clientMessageId || undefined }
+    });
+    logger.info('facebook_messenger_send_success', { facebookPageId: conversation.facebookPageId, conversationId, facebookMessageId });
+    await this._emitSent(conversation, messageRecord, text);
+    return messageRecord;
+  }
+
+  // Messenger's Generic Template (carousel): up to 10 elements, each an
+  // independent card with its own title/subtitle/buttons — used for list
+  // options that carry a description or a title too long for a Quick Reply
+  // or Button Template button. Each element gets exactly one postback
+  // button (options never carry a real URL action today — see
+  // flowListMessageMessenger.service.js for why WhatsApp's own OPEN_URL
+  // option type isn't translated into a Messenger web_url button).
+  async sendGenericTemplate({ conversationId, elements = [], userId = null, clientMessageId = null }) {
+    const normalized = elements.slice(0, 10).map((element) => ({
+      title: String(element.title || '').trim().slice(0, 80),
+      ...(element.description ? { subtitle: String(element.description).trim().slice(0, 80) } : {}),
+      buttons: [{ type: 'postback', title: 'Select', payload: String(element.id || element.payload || '').slice(0, 1000) }]
+    })).filter((element) => element.title && element.buttons[0].payload);
+    if (!normalized.length) throw Object.assign(new Error('At least one carousel element is required'), { status: 422, code: 'FACEBOOK_CAROUSEL_ELEMENTS_REQUIRED' });
+    if (elements.length > 10) throw Object.assign(new Error('Facebook Messenger supports at most 10 carousel elements'), { status: 422, code: 'FACEBOOK_CAROUSEL_LIMIT_EXCEEDED' });
+
+    const duplicate = await this.findByClientMessageId(conversationId, clientMessageId);
+    if (duplicate) return duplicate;
+
+    const { conversation, config, facebookContact } = await this._resolveSendTarget(conversationId, userId);
+    await this._assertWithinMessagingWindow(conversationId);
+    const payload = {
+      recipient: { id: facebookContact.facebookPsid },
+      message: { attachment: { type: 'template', payload: { template_type: 'generic', elements: normalized } } },
+      messaging_type: 'RESPONSE'
+    };
+
+    logger.info('facebook_messenger_send_attempt', { facebookPageId: conversation.facebookPageId, conversationId, elements: normalized.length });
+    const response = await this._postMessage(config, payload, { facebookPageId: conversation.facebookPageId, conversationId });
+
+    const facebookMessageId = response.data?.message_id || null;
+    const messageRecord = await this.logMessage({
+      facebookMessageId, channel: 'facebook_messenger', conversationId: conversation.id, contactId: conversation.contactId,
+      facebookPageId: conversation.facebookPageId, sentByUserId: userId || null, direction: 'outbound', type: 'text',
+      text: normalized.map((element) => element.title).join(', '), status: 'sent', statusUpdatedAt: new Date(),
+      rawPayload: { elements: normalized, clientMessageId: clientMessageId || undefined }
+    });
+    logger.info('facebook_messenger_send_success', { facebookPageId: conversation.facebookPageId, conversationId, facebookMessageId });
+    await this._emitSent(conversation, messageRecord, `[${normalized.length} options]`);
     return messageRecord;
   }
 
@@ -363,6 +489,13 @@ class FacebookMessengerService {
       type = ATTACHMENT_TYPE_MAP[attachment.type] || 'document';
       mediaUrl = attachment.payload?.url || null;
     }
+    // A tapped Quick Reply arrives as a normal `message` event (with a real
+    // mid, unlike a postback) whose `quick_reply.payload` carries the same
+    // durable flowbtn:{flowId}:{nodeKey}:{optionId} reference a converted
+    // List Message option was sent with. Previously this field was never
+    // read at all, so a Quick Reply tap fell through to plain-text keyword
+    // matching instead of continuing the flow it was actually part of.
+    const quickReplyPayload = message.quick_reply?.payload || null;
 
     const timestamp = item.timestamp ? new Date(Number(item.timestamp)) : new Date();
     const displayName = await this.resolveProfileDisplayName(page, psid).catch(() => null);
@@ -394,7 +527,8 @@ class FacebookMessengerService {
             text,
             mediaUrl,
             status: 'delivered',
-            createdAt: timestamp
+            createdAt: timestamp,
+            ...(quickReplyPayload ? { buttonPayload: quickReplyPayload, interactiveType: 'button_reply' } : {})
           },
           transaction
         });
@@ -424,6 +558,19 @@ class FacebookMessengerService {
       // incompatible waiting run, and must never double-fire both paths.
       setImmediate(() => (async () => {
         const flowService = require('./flow.service');
+        if (quickReplyPayload) {
+          // Dispatched exactly like a Messenger postback (see
+          // handleInboundPostbackEvent below): one call, matchNewTriggers
+          // left at its default (true), since handleInboundMessage's own
+          // text-keyword fallback already covers a stale/foreign payload —
+          // no separate handleDomainEvent call is needed here.
+          await flowService.handleInboundMessage({
+            text, buttonPayload: quickReplyPayload, interactiveType: 'button_reply',
+            contact: resolved.contact, lead: null, conversation: resolved.conversation,
+            whatsappMessageId: mid, channel: 'facebook_messenger', facebookPageId: page.id
+          });
+          return;
+        }
         const resumed = await flowService.handleInboundMessage({
           text,
           contact: resolved.contact,
@@ -489,3 +636,4 @@ class FacebookMessengerService {
 }
 
 module.exports = new FacebookMessengerService();
+module.exports.isPermanentMessengerSendError = isPermanentMessengerSendError;

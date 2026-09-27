@@ -8,6 +8,41 @@ const node = (nodeKey, nodeType, configJson = {}, label = nodeKey) => ({ nodeKey
 const edge = (sourceNodeKey, targetNodeKey, sourceHandle = 'next') => ({ sourceNodeKey, targetNodeKey, sourceHandle, targetHandle: 'input' });
 const codes = (flow) => flowService.normalizeValidation(flow, flowService.validateFlow(flow)).errors.map((issue) => issue.code);
 
+// A list_message node's Messenger feasibility (option count / description /
+// title length — see flowListMessageMessenger.service.js) is a per-list
+// design-time WARNING, not a blanket "unsupported node type" error, and only
+// appears at all when the flow actually targets a Facebook channel.
+test('a list_message node gets a Messenger-format warning only when the flow targets a Facebook channel', () => {
+  const rows = [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }];
+  const whatsappOnly = {
+    channels: ['whatsapp'],
+    nodes: [node('start', 'start'), node('menu', 'list_message', { message: 'Pick', rows })],
+    connections: [edge('start', 'menu')]
+  };
+  const multiChannel = {
+    channels: ['whatsapp', 'facebook_messenger'],
+    nodes: [node('start', 'start'), node('menu', 'list_message', { message: 'Pick', rows })],
+    connections: [edge('start', 'menu')]
+  };
+  const whatsappWarnings = flowService.normalizeValidation(whatsappOnly, flowService.validateFlow(whatsappOnly)).warnings;
+  const multiChannelWarnings = flowService.normalizeValidation(multiChannel, flowService.validateFlow(multiChannel)).warnings;
+  assert.ok(!whatsappWarnings.some((issue) => issue.nodeId === 'menu'), 'a WhatsApp-only flow needs no Messenger-format warning');
+  assert.ok(multiChannelWarnings.some((issue) => issue.nodeId === 'menu' && /button template|quick repl|generic template/i.test(issue.message)));
+});
+
+test('a list_message node that cannot be represented on Messenger at all still gets a clear design-time warning, not a crash', () => {
+  const rows = Array.from({ length: 14 }, (_, i) => ({ id: `o${i}`, title: `Option ${i}` }));
+  const flow = {
+    channels: ['whatsapp', 'facebook_messenger'],
+    nodes: [node('start', 'start'), node('menu', 'list_message', { message: 'Pick', rows })],
+    connections: [edge('start', 'menu')]
+  };
+  const result = flowService.normalizeValidation(flow, flowService.validateFlow(flow));
+  const warning = result.warnings.find((issue) => issue.nodeId === 'menu');
+  assert.ok(warning, 'an unconvertible list still produces a warning instead of throwing out of validateFlow');
+  assert.match(warning.message, /13/);
+});
+
 test('valid flow with an intentional terminal message passes graph validation', () => {
   const flow = {
     nodes: [node('start', 'start'), node('welcome', 'text_message', { message: 'Welcome' })],

@@ -14,18 +14,24 @@ function patchFacebookSend(overrides = {}) {
   const originals = {
     sendTextMessage: facebookMessengerService.sendTextMessage,
     sendMediaMessage: facebookMessengerService.sendMediaMessage,
-    sendButtonMessage: facebookMessengerService.sendButtonMessage
+    sendButtonMessage: facebookMessengerService.sendButtonMessage,
+    sendQuickReplies: facebookMessengerService.sendQuickReplies,
+    sendGenericTemplate: facebookMessengerService.sendGenericTemplate
   };
-  const calls = { sendTextMessage: [], sendMediaMessage: [], sendButtonMessage: [] };
+  const calls = { sendTextMessage: [], sendMediaMessage: [], sendButtonMessage: [], sendQuickReplies: [], sendGenericTemplate: [] };
   facebookMessengerService.sendTextMessage = async (args) => { calls.sendTextMessage.push(args); return overrides.sendTextMessage ? overrides.sendTextMessage(args) : { id: 501, facebookMessageId: 'fbmid-1' }; };
   facebookMessengerService.sendMediaMessage = async (args) => { calls.sendMediaMessage.push(args); return overrides.sendMediaMessage ? overrides.sendMediaMessage(args) : { id: 502, facebookMessageId: 'fbmid-2' }; };
   facebookMessengerService.sendButtonMessage = async (args) => { calls.sendButtonMessage.push(args); return overrides.sendButtonMessage ? overrides.sendButtonMessage(args) : { id: 503, facebookMessageId: 'fbmid-3' }; };
+  facebookMessengerService.sendQuickReplies = async (args) => { calls.sendQuickReplies.push(args); return overrides.sendQuickReplies ? overrides.sendQuickReplies(args) : { id: 504, facebookMessageId: 'fbmid-4' }; };
+  facebookMessengerService.sendGenericTemplate = async (args) => { calls.sendGenericTemplate.push(args); return overrides.sendGenericTemplate ? overrides.sendGenericTemplate(args) : { id: 505, facebookMessageId: 'fbmid-5' }; };
   return {
     calls,
     restore() {
       facebookMessengerService.sendTextMessage = originals.sendTextMessage;
       facebookMessengerService.sendMediaMessage = originals.sendMediaMessage;
       facebookMessengerService.sendButtonMessage = originals.sendButtonMessage;
+      facebookMessengerService.sendQuickReplies = originals.sendQuickReplies;
+      facebookMessengerService.sendGenericTemplate = originals.sendGenericTemplate;
     }
   };
 }
@@ -138,11 +144,11 @@ test('scenario 8 (runtime): a location node on a Facebook Messenger run fails wi
   } finally { fb.restore(); restoreLog(); }
 });
 
-test('scenario 8 (runtime): whatsapp_flow, list_message, and appointment_booking are also rejected for Facebook Messenger', async () => {
+test('scenario 8 (runtime): whatsapp_flow and appointment_booking are still rejected for Facebook Messenger', async () => {
   const restoreLog = patchLog();
   const fb = patchFacebookSend();
   try {
-    for (const nodeType of ['whatsapp_flow', 'list_message', 'appointment_booking']) {
+    for (const nodeType of ['whatsapp_flow', 'appointment_booking']) {
       const node = { nodeKey: `n-${nodeType}`, nodeType, label: 'Unsupported', configJson: {} };
       const context = { channel: 'facebook_messenger', facebookPageId: 9, conversationId: 55, flowId: 1 };
       await assert.rejects(
@@ -151,6 +157,106 @@ test('scenario 8 (runtime): whatsapp_flow, list_message, and appointment_booking
         `${nodeType} should be rejected`
       );
     }
+  } finally { fb.restore(); restoreLog(); }
+});
+
+// list_message used to be unconditionally rejected on Facebook Messenger
+// (production error: `"List Message" is not supported on facebook_messenger`).
+// It now converts into whichever Messenger format actually fits the list —
+// see flowListMessageMessenger.service.js for the exact selection rules.
+test('a simple list_message (<=3 short options, no descriptions) converts to a Messenger Button Template', async () => {
+  const restoreLog = patchLog();
+  const fb = patchFacebookSend();
+  try {
+    const node = {
+      nodeKey: 'n1', nodeType: 'list_message', label: 'Pick a plan',
+      configJson: { message: 'Choose a plan', rows: [{ id: 'basic', title: 'Basic' }, { id: 'pro', title: 'Pro' }] }
+    };
+    const context = { channel: 'facebook_messenger', facebookPageId: 9, conversationId: 55, flowId: 42 };
+    const result = await flowService.executeNode({ run: baseRun, node, context, realSendEnabled: true });
+    assert.equal(result.sent, true);
+    assert.equal(fb.calls.sendButtonMessage.length, 1);
+    assert.equal(fb.calls.sendQuickReplies.length, 0);
+    assert.equal(fb.calls.sendGenericTemplate.length, 0);
+    const sent = fb.calls.sendButtonMessage[0];
+    assert.equal(sent.buttons.length, 2);
+    assert.equal(sent.buttons[0].id, 'flowbtn:42:n1:basic');
+    assert.equal(sent.buttons[1].id, 'flowbtn:42:n1:pro');
+  } finally { fb.restore(); restoreLog(); }
+});
+
+test('a simple list_message with more than 3 short options converts to Messenger Quick Replies, preserving every option', async () => {
+  const restoreLog = patchLog();
+  const fb = patchFacebookSend();
+  try {
+    const rows = Array.from({ length: 6 }, (_, i) => ({ id: `opt_${i + 1}`, title: `Option ${i + 1}` }));
+    const node = { nodeKey: 'n1', nodeType: 'list_message', label: 'Pick one', configJson: { message: 'Choose', rows } };
+    const context = { channel: 'facebook_messenger', facebookPageId: 9, conversationId: 55, flowId: 42 };
+    const result = await flowService.executeNode({ run: baseRun, node, context, realSendEnabled: true });
+    assert.equal(result.sent, true);
+    assert.equal(fb.calls.sendQuickReplies.length, 1);
+    assert.equal(fb.calls.sendButtonMessage.length, 0);
+    const sent = fb.calls.sendQuickReplies[0];
+    assert.equal(sent.quickReplies.length, 6, 'no option may be silently dropped');
+    assert.deepEqual(sent.quickReplies.map((option) => option.id), rows.map((row) => `flowbtn:42:n1:${row.id}`));
+  } finally { fb.restore(); restoreLog(); }
+});
+
+test('a list_message with option descriptions converts to a Messenger Generic Template carousel, preserving descriptions', async () => {
+  const restoreLog = patchLog();
+  const fb = patchFacebookSend();
+  try {
+    const node = {
+      nodeKey: 'n1', nodeType: 'list_message', label: 'Pick a course',
+      configJson: {
+        message: 'Which course?',
+        rows: [
+          { id: 'web', title: 'Web Development', description: 'Full-stack course, 12 weeks' },
+          { id: 'data', title: 'Data Science', description: 'Python & ML, 16 weeks' }
+        ]
+      }
+    };
+    const context = { channel: 'facebook_messenger', facebookPageId: 9, conversationId: 55, flowId: 42 };
+    const result = await flowService.executeNode({ run: baseRun, node, context, realSendEnabled: true });
+    assert.equal(result.sent, true);
+    assert.equal(fb.calls.sendGenericTemplate.length, 1);
+    const sent = fb.calls.sendGenericTemplate[0];
+    assert.equal(sent.elements.length, 2);
+    assert.equal(sent.elements[0].title, 'Web Development');
+    assert.equal(sent.elements[0].description, 'Full-stack course, 12 weeks');
+    assert.equal(sent.elements[0].id, 'flowbtn:42:n1:web');
+  } finally { fb.restore(); restoreLog(); }
+});
+
+test('a list_message that exceeds every Messenger format\'s capacity fails with a clear, classified error instead of silently dropping options', async () => {
+  const restoreLog = patchLog();
+  const fb = patchFacebookSend();
+  try {
+    const rows = Array.from({ length: 14 }, (_, i) => ({ id: `opt_${i + 1}`, title: `Option ${i + 1}` }));
+    const node = { nodeKey: 'n1', nodeType: 'list_message', label: 'Too many', configJson: { message: 'Choose', rows } };
+    const context = { channel: 'facebook_messenger', facebookPageId: 9, conversationId: 55, flowId: 42 };
+    await assert.rejects(
+      flowService.executeNode({ run: baseRun, node, context, realSendEnabled: true }),
+      (error) => error.code === 'FACEBOOK_LIST_MESSAGE_UNCONVERTIBLE'
+    );
+    assert.equal(fb.calls.sendQuickReplies.length, 0);
+    assert.equal(fb.calls.sendButtonMessage.length, 0);
+    assert.equal(fb.calls.sendGenericTemplate.length, 0);
+  } finally { fb.restore(); restoreLog(); }
+});
+
+test('a list_message node on a Facebook Comment run converts the same way as Messenger', async () => {
+  const restoreLog = patchLog();
+  const fb = patchFacebookSend();
+  try {
+    const node = {
+      nodeKey: 'n1', nodeType: 'list_message', label: 'Pick one',
+      configJson: { message: 'Choose', rows: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] }
+    };
+    const context = { channel: 'facebook_comment', facebookPageId: 9, conversationId: 55, flowId: 42 };
+    const result = await flowService.executeNode({ run: baseRun, node, context, realSendEnabled: true });
+    assert.equal(result.sent, true);
+    assert.equal(fb.calls.sendButtonMessage.length, 1);
   } finally { fb.restore(); restoreLog(); }
 });
 

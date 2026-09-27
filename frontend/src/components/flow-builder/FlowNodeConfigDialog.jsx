@@ -272,7 +272,7 @@ export function AutomationActionsEditor({ value, onChange, options = {}, onLabel
   </Stack>;
 }
 
-export function ButtonEditor({ value, onChange, errors = {}, options = {}, onLabelOptionsChange, context = 'flow' }) {
+export function ButtonEditor({ value, onChange, errors = {}, options = {}, onLabelOptionsChange, context = 'flow', mode = 'button' }) {
   const rows = Array.isArray(value) ? value : [];
   const add = () => {
     const number = rows.length + 1;
@@ -316,6 +316,14 @@ export function ButtonEditor({ value, onChange, errors = {}, options = {}, onLab
                 <DeleteOutlineIcon />
               </IconButton>
             </Stack>
+            {mode === 'list' && <TextField
+              size="small"
+              label="Description (optional)"
+              value={row.description || ''}
+              onChange={(event) => update(index, { description: event.target.value.slice(0, 80) })}
+              helperText={`${(row.description || '').length} / 80 — shown only when Messenger renders this option as a carousel card`}
+              fullWidth
+            />}
             {type === 'SEND_MESSAGE' && <MessageField label="Message sent when pressed" value={row.primaryActionConfig?.message || row.message || ''} onChange={(message) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), message } })} />}
             {type === 'START_FLOW' && <Stack spacing={1}><Autocomplete options={options.flows || []} value={(options.flows || []).find((item) => String(item.id) === String(row.primaryActionConfig?.targetFlowId || row.targetFlowId)) || null} getOptionLabel={(item) => item.name || ''} onChange={(_, item) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), targetFlowId: item?.id || '' } })} renderInput={(params) => <TextField {...params} label="Published flow" />} /><FormControlLabel control={<Checkbox checked={Boolean(row.primaryActionConfig?.pauseCurrentFlow)} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), pauseCurrentFlow: event.target.checked, stopCurrentFlow: event.target.checked ? false : row.primaryActionConfig?.stopCurrentFlow } })} />} label="Pause and resume this flow when the child completes" /><FormControlLabel control={<Checkbox checked={Boolean(row.primaryActionConfig?.stopCurrentFlow)} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), stopCurrentFlow: event.target.checked, pauseCurrentFlow: event.target.checked ? false : row.primaryActionConfig?.pauseCurrentFlow } })} />} label="Stop current flow after starting target" /></Stack>}
             {type === 'OPEN_URL' && <TextField size="small" label="HTTPS URL" value={row.primaryActionConfig?.url || row.url || ''} onChange={(event) => update(index, { primaryActionConfig: { ...(row.primaryActionConfig || {}), url: event.target.value } })} fullWidth />}
@@ -574,7 +582,7 @@ export default function FlowNodeConfigDialog({ node, open, onClose, onSave, onDe
   } else if (type === 'user_input') {
     form = <><Section title="Question"><MessageField value={config.question || ''} onChange={(value) => set('question', value)} error={errors.question} /></Section><Section title="Store the answer">{field('saveAs', 'Save answer field', { placeholder: 'custom.answer' })}{field('timeoutMinutes', 'Timeout (minutes)', { type: 'number', inputProps: { min: 1 } })}</Section></>;
   } else if (['button_message', 'list_message'].includes(type)) {
-    form = <><Section title="Message body"><MessageField value={config.message || ''} onChange={(value) => set('message', value)} error={errors.message} /></Section>{type === 'button_message' ? <Section title="Buttons"><ButtonEditor value={config.buttons} onChange={(value) => set('buttons', value)} errors={errors} options={actionOptions} onLabelOptionsChange={onLabelOptionsChange} /></Section> : <Section title="List options"><ButtonEditor value={config.rows} onChange={(value) => set('rows', value)} errors={{ ...errors, buttons: errors.rows }} options={actionOptions} onLabelOptionsChange={onLabelOptionsChange} />{field('sectionTitle', 'Section title')}{field('buttonText', 'Menu button text')}</Section>}</>;
+    form = <><Section title="Message body"><MessageField value={config.message || ''} onChange={(value) => set('message', value)} error={errors.message} /></Section>{type === 'button_message' ? <Section title="Buttons"><ButtonEditor value={config.buttons} onChange={(value) => set('buttons', value)} errors={errors} options={actionOptions} onLabelOptionsChange={onLabelOptionsChange} /></Section> : <Section title="List options" description="A description is shown when this list is sent on Facebook Messenger as a carousel card; WhatsApp shows it under the option title too."><ButtonEditor value={config.rows} onChange={(value) => set('rows', value)} errors={{ ...errors, buttons: errors.rows }} options={actionOptions} onLabelOptionsChange={onLabelOptionsChange} mode="list" />{field('sectionTitle', 'Section title')}{field('buttonText', 'Menu button text')}</Section>}</>;
   } else if (type === 'location') {
     form = <Section title="Location">{field('latitude', 'Latitude')}{field('longitude', 'Longitude')}{field('name', 'Location name')}{field('address', 'Address')}</Section>;
   } else if (type === 'whatsapp_flow') {

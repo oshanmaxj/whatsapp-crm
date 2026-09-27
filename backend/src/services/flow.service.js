@@ -30,6 +30,7 @@ const facebookPageAccessService = require('./facebookPageAccess.service');
 const flowActionService = require('./flowAction.service');
 const triggerMatcher = require('./flowTriggerMatcher.service');
 const channelCompat = require('./flowChannelCompatibility');
+const flowListMessageMessenger = require('./flowListMessageMessenger.service');
 const interactiveMediaService = require('./interactiveMedia.service');
 const logger = require('../config/logger');
 const conversationAccessService = require('./conversationAccess.service');
@@ -528,6 +529,7 @@ class FlowService {
     const nodes = flow.nodes || [];
     const edges = flow.connections || [];
     const errors = [];
+    const messengerChannels = channelCompat.flowChannels(flow).filter((channel) => channel !== 'whatsapp');
     const keys = new Set(nodes.map((node) => node.nodeKey));
     const starts = nodes.filter((node) => node.nodeType === 'start');
     if (!starts.length) errors.push({ field: 'nodes', message: 'A Start node is required.' });
@@ -619,6 +621,19 @@ class FlowService {
               message: `Option "${handle}" needs a branch or fallback.`
             });
           }
+        }
+      }
+      if (node.nodeType === 'list_message' && messengerChannels.length) {
+        const rows = config.rows || [];
+        const sections = config.sections?.length ? config.sections : [{ title: config.sectionTitle || 'Options', rows }];
+        try {
+          const plan = flowListMessageMessenger.planMessengerListMessage({ sections, flowId: flow.id, nodeKey: node.nodeKey });
+          errors.push({
+            nodeKey: node.nodeKey, severity: 'warning',
+            message: `On ${messengerChannels.join(', ')} this list will be sent as Messenger ${plan.format.replace('_', ' ')} (${plan.options.length} option${plan.options.length === 1 ? '' : 's'}); section titles are not shown on Messenger.`
+          });
+        } catch (error) {
+          errors.push({ nodeKey: node.nodeKey, severity: 'warning', message: `On ${messengerChannels.join(', ')}: ${error.message}` });
         }
       }
       if (node.nodeType === 'start') for (const issue of flowActionService.validateActions(config.automationActions || [])) errors.push({ nodeKey: node.nodeKey, message: `Trigger action ${issue.index + 1}: ${issue.message}` });
@@ -1645,6 +1660,39 @@ class FlowService {
         buttons: buttons.map((button) => ({ id: encodedButtonId(context.flowId, node.nodeKey, button.id), title: button.title })),
         userId: actorUserId
       });
+    } else if (node.nodeType === 'list_message') {
+      // Same section/row shape the WhatsApp branch below reads (config.rows
+      // as one implicit section, or config.sections when set) — the saved
+      // node is never rewritten just because Messenger executes it; only
+      // the OUTBOUND representation differs (see flowListMessageMessenger).
+      const rows = config.rows || [];
+      const sections = config.sections?.length ? config.sections : [{ title: config.sectionTitle || 'Options', rows }];
+      const plan = flowListMessageMessenger.planMessengerListMessage({ sections, flowId: context.flowId, nodeKey: node.nodeKey });
+      const bodyText = [text || node.label || '', config.footer || ''].filter(Boolean).join('\n');
+      if (plan.format === 'quick_replies') {
+        response = await facebookMessengerService.sendQuickReplies({
+          conversationId, text: bodyText,
+          quickReplies: plan.options.map((option) => ({ id: option.payload, title: option.title })),
+          userId: actorUserId
+        });
+      } else if (plan.format === 'button_template') {
+        response = await facebookMessengerService.sendButtonMessage({
+          conversationId, text: bodyText,
+          buttons: plan.options.map((option) => ({ id: option.payload, title: option.title })),
+          userId: actorUserId
+        });
+      } else {
+        // generic_template carousels have no top-level text field of their
+        // own, so the body/footer is sent as its own preceding message —
+        // the same "send accompanying content first" pattern already used
+        // above for an interactive message's media header.
+        if (bodyText) await facebookMessengerService.sendTextMessage({ conversationId, text: bodyText, userId: actorUserId });
+        response = await facebookMessengerService.sendGenericTemplate({
+          conversationId,
+          elements: plan.options.map((option) => ({ id: option.payload, title: option.title, description: option.description })),
+          userId: actorUserId
+        });
+      }
     } else {
       throw Object.assign(new Error(`"${node.label || node.nodeType}" is not supported on Facebook Messenger.`), { code: 'FLOW_NODE_UNSUPPORTED_FOR_CHANNEL', status: 422 });
     }

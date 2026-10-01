@@ -12,6 +12,15 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
 const FREE_ENTRY_WINDOW_MS = 72 * 60 * 60 * 1000;
 const QUALIFYING_RESPONSE_DEADLINE_MS = 24 * 60 * 60 * 1000;
 
+// A "qualifying business response" must have actually reached Meta — a
+// message still 'pending' in our own queue (not yet confirmed sent) or
+// 'failed' never left this system, so it can't be what opened a real
+// Free Entry Point conversation on Meta's side. Mirrors the exact same
+// "successfully sent" cumulative-funnel definition
+// whatsappCompliance.service.js's windowDashboard() uses for its message
+// counts, so the two can never disagree about what counts as sent.
+const SUCCESSFULLY_SENT_STATUSES = ['sent', 'delivered', 'read'];
+
 function calculateMessagingWindow(openedAt, now = new Date()) {
   if (!openedAt) return { isOpen: false, openedAt: null, expiresAt: null, remainingSeconds: 0, reason: 'NO_INBOUND_CUSTOMER_MESSAGE' };
   const opened = new Date(openedAt);
@@ -80,29 +89,49 @@ class MessagingWindowService {
   // Resolves the 72-hour Free Entry Point window from canonical Message
   // rows only — never from a contact/lead's recorded source, and never
   // from any field other than this conversation's own referral-tagged
-  // inbound message. The most recent referral-bearing inbound message is
-  // treated as the entry event (an older one, if any, would already be
-  // superseded or expired); "qualifying response" is the first outbound
-  // message sent afterward, matching the "reply within 24h" rule exactly —
-  // not any later outbound message.
+  // inbound messages.
+  //
+  // Considers EVERY referral-bearing inbound message still within the only
+  // span during which any of them could possibly matter (a window lasts at
+  // most 72h, and only opens for a response within 24h of its own referral
+  // — so anything older than 96h total is guaranteed resolved or expired),
+  // not just the latest one. A customer clicking a second ad while an
+  // earlier referral's window is already open and active must never hide
+  // that still-active window just because its own referral event is older
+  // — the result always prefers any candidate that is currently 'active'
+  // over a newer candidate that is merely 'pending_response'. Only when no
+  // candidate is active does it fall back to the single most recent
+  // referral's own status, which is what matters going forward once every
+  // older one is resolved. "Qualifying response" for each candidate is the
+  // first SUCCESSFULLY SENT outbound message after it, matching the "reply
+  // within 24h" rule exactly — never a later message, and never one that
+  // was only queued or failed.
   async getFreeEntryWindow(conversationId, whatsappAccountId, { transaction = null, now = new Date() } = {}) {
     if (!conversationId || !whatsappAccountId) throw Object.assign(new Error('Conversation and WhatsApp account are required.'), { status: 422, code: 'WHATSAPP_ACCOUNT_MISMATCH' });
     const conversation = await Conversation.findByPk(conversationId, { attributes: ['id', 'whatsappAccountId'], transaction });
     if (!conversation) throw Object.assign(new Error('Conversation not found.'), { status: 404, code: 'CONVERSATION_NOT_FOUND' });
     if (String(conversation.whatsappAccountId) !== String(whatsappAccountId)) throw Object.assign(new Error('Conversation belongs to a different WhatsApp account.'), { status: 409, code: 'WHATSAPP_ACCOUNT_MISMATCH' });
-    const referral = await Message.findOne({
+    const relevantSince = new Date(new Date(now).getTime() - (FREE_ENTRY_WINDOW_MS + QUALIFYING_RESPONSE_DEADLINE_MS));
+    const referrals = await Message.findAll({
       where: {
-        conversationId, whatsappAccountId, direction: 'inbound',
+        conversationId, whatsappAccountId, direction: 'inbound', createdAt: { [Op.gte]: relevantSince },
         [Op.or]: [{ referralSourceType: { [Op.ne]: null } }, { ctwaClid: { [Op.ne]: null } }]
       },
       attributes: ['createdAt'], order: [['created_at', 'DESC']], transaction
     });
-    if (!referral) return calculateFreeEntryWindow({ now });
-    const response = await Message.findOne({
-      where: { conversationId, whatsappAccountId, direction: 'outbound', createdAt: { [Op.gt]: referral.createdAt } },
-      attributes: ['createdAt'], order: [['created_at', 'ASC']], transaction
-    });
-    return calculateFreeEntryWindow({ referralAt: referral.createdAt, responseAt: response?.createdAt || null, now });
+    if (!referrals.length) return calculateFreeEntryWindow({ now });
+
+    const candidates = await Promise.all(referrals.map(async (referral) => {
+      const response = await Message.findOne({
+        where: {
+          conversationId, whatsappAccountId, direction: 'outbound', createdAt: { [Op.gt]: referral.createdAt },
+          status: { [Op.in]: SUCCESSFULLY_SENT_STATUSES }
+        },
+        attributes: ['createdAt'], order: [['created_at', 'ASC']], transaction
+      });
+      return calculateFreeEntryWindow({ referralAt: referral.createdAt, responseAt: response?.createdAt || null, now });
+    }));
+    return candidates.find((candidate) => candidate.status === 'active') || candidates[0];
   }
 
   // The single canonical lookup other code (inbox detail view, Flow Builder
@@ -139,3 +168,4 @@ module.exports.calculateFreeEntryWindow = calculateFreeEntryWindow;
 module.exports.WINDOW_MS = WINDOW_MS;
 module.exports.FREE_ENTRY_WINDOW_MS = FREE_ENTRY_WINDOW_MS;
 module.exports.QUALIFYING_RESPONSE_DEADLINE_MS = QUALIFYING_RESPONSE_DEADLINE_MS;
+module.exports.SUCCESSFULLY_SENT_STATUSES = SUCCESSFULLY_SENT_STATUSES;

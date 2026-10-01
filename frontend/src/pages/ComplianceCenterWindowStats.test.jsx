@@ -32,8 +32,8 @@ test('renders the 24H and 72H blocks as clearly separate stat sections with corr
   templateService.getWhatsAppComplianceStatus.mockReturnValue(response({ qualityRatings: [], logs: [] }));
   templateService.getWhatsAppWindowStats.mockReturnValue(response({
     scope: 'all',
-    serviceWindow24h: { activeConversations: 12, expiredConversations: 4, messages: { sent: 50, delivered: 45, read: 30, failed: 2 } },
-    freeEntryWindow72h: { activeConversations: 3, expiredConversations: 1, messages: { sent: 9, delivered: 8, read: 5, failed: 0 } },
+    serviceWindow24h: { activeConversations: 12, expiredConversations: 4, messages: { attempted: 57, sent: 50, delivered: 45, read: 30, failed: 2 } },
+    freeEntryWindow72h: { activeConversations: 3, expiredConversations: 1, messages: { attempted: 10, sent: 9, delivered: 8, read: 5, failed: 0 } },
     uniqueActiveCustomers: 14,
     pricing: { confirmedFree: 20, confirmedBillable: 10, unknown: 25 }
   }));

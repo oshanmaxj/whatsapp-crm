@@ -13,13 +13,19 @@ import WhatsAppAccountSelect from '../components/WhatsAppAccountSelect';
 // "24H active + 72H active" is not a meaningful "unique customers" figure;
 // see the dedicated uniqueActiveCustomers tile instead).
 function WindowStatBlock({ title, subtitle, data, color }) {
+  // A cumulative funnel, not five independent buckets: Attempted includes
+  // every outbound message regardless of outcome; Sent/Delivered/Read each
+  // include every later stage they imply (a read message was also sent and
+  // delivered — it isn't double-counted away from "Sent" just because it
+  // progressed). Failed is the one separate, terminal exception.
   const tiles = data ? [
     ['Active conversations', data.activeConversations, 'unique conversations'],
     ['Expired conversations', data.expiredConversations, 'unique conversations'],
-    ['Messages sent', data.messages?.sent, 'individual messages'],
-    ['Messages delivered', data.messages?.delivered, 'individual messages'],
+    ['Messages attempted', data.messages?.attempted, 'individual messages — every status, including pending/failed'],
+    ['Messages sent', data.messages?.sent, 'individual messages — includes delivered and read'],
+    ['Messages delivered', data.messages?.delivered, 'individual messages — includes read'],
     ['Messages read', data.messages?.read, 'individual messages'],
-    ['Messages failed', data.messages?.failed, 'individual messages']
+    ['Messages failed', data.messages?.failed, 'individual messages — terminal, never also counted as sent']
   ] : [];
   return (
     <Paper elevation={0} sx={{ p: 2.5, border: '1px solid', borderColor: 'divider', height: '100%' }}>

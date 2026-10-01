@@ -9,7 +9,12 @@ const {
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const messagingWindowService = require('./messagingWindow.service');
-const { FREE_ENTRY_WINDOW_MS, QUALIFYING_RESPONSE_DEADLINE_MS } = messagingWindowService;
+const { FREE_ENTRY_WINDOW_MS, QUALIFYING_RESPONSE_DEADLINE_MS, SUCCESSFULLY_SENT_STATUSES } = messagingWindowService;
+// Built from the same exported array messagingWindow.service.js's
+// getFreeEntryWindow() filters on — never a second, independently-typed
+// literal list — so the dashboard aggregate and the single-conversation
+// calculation can never silently drift apart on what counts as "sent".
+const SUCCESSFULLY_SENT_SQL_LIST = SUCCESSFULLY_SENT_STATUSES.map((status) => `'${status}'`).join(', ');
 
 // Builds the account-scope SQL fragment + bind parameters shared by every
 // query below, matching report()'s existing filter convention exactly:
@@ -18,12 +23,21 @@ const { FREE_ENTRY_WINDOW_MS, QUALIFYING_RESPONSE_DEADLINE_MS } = messagingWindo
 // null for a truly unrestricted admin) scopes it; both ultimately resolve
 // to the same whatsappAccountAccessService the rest of the app already uses
 // — this function never re-derives access on its own.
+// IN (:accountIds), never ANY(:accountIds::bigint[]) — verified directly
+// against Sequelize's actual named-replacement renderer
+// (lib/utils/sql.js:injectReplacements -> lib/sql-string.js:escape), which
+// for a named (":name") replacement always calls escape(..., format2=true).
+// That path renders a JS array as a bare comma list ("3, 9"), NEVER a
+// Postgres array literal — so ANY(:ids::bigint[]) previously rendered as
+// the invalid `ANY(3, 9::bigint[])` (ANY takes exactly one array
+// expression) and would have failed on every multi-account query. IN (3, 9)
+// is exactly what that same bare-list rendering produces correctly.
 function accountScope(filters = {}, column = 'whatsapp_account_id') {
   if (filters.whatsappAccountId) return { sql: `AND ${column} = :whatsappAccountId`, params: { whatsappAccountId: Number(filters.whatsappAccountId) } };
   if (Array.isArray(filters._accessibleAccountIds)) {
     const accountIds = filters._accessibleAccountIds.map(Number).filter(Number.isFinite);
     if (!accountIds.length) return { sql: `AND ${column} = -1`, params: {} }; // no accessible accounts: match nothing
-    return { sql: `AND ${column} = ANY(:accountIds::bigint[])`, params: { accountIds } };
+    return { sql: `AND ${column} IN (:accountIds)`, params: { accountIds } };
   }
   return { sql: '', params: {} }; // unrestricted admin, no account filter
 }
@@ -186,28 +200,49 @@ class WhatsAppComplianceService {
 
     // One CTE pipeline, reused by every 72h query below, so the "which
     // conversations have a verified free-entry window, and when" logic is
-    // computed exactly once and never duplicated across queries.
+    // computed exactly once and never duplicated across queries. Mirrors
+    // messagingWindow.service.js's getFreeEntryWindow() exactly, including
+    // considering every referral event still within the only span during
+    // which any of them could matter (96h = 72h window + 24h reply
+    // deadline) — not just the latest one per conversation — so a customer
+    // clicking a second ad never hides an earlier, still-active verified
+    // window just because its referral event is older.
+    const relevantSinceMs = FREE_ENTRY_WINDOW_MS + QUALIFYING_RESPONSE_DEADLINE_MS;
     const freeEntryCte = `
       WITH referral_entries AS (
-        SELECT DISTINCT ON (m.conversation_id) m.conversation_id, m.created_at AS referral_at
+        SELECT m.conversation_id, m.created_at AS referral_at
         FROM messages m
         WHERE m.direction = 'inbound' AND m.deleted_at IS NULL AND m.channel = 'whatsapp'
           AND (m.referral_source_type IS NOT NULL OR m.ctwa_clid IS NOT NULL)
+          AND m.created_at > NOW() - INTERVAL '${relevantSinceMs} milliseconds'
           ${scope.sql}
-        ORDER BY m.conversation_id, m.created_at DESC
       ),
       qualifying_responses AS (
+        -- A queued ('pending') or 'failed' outbound row never actually
+        -- reached Meta, so it cannot be the business response that opened
+        -- a real Free Entry Point conversation — only a confirmed-sent
+        -- status counts, matching messagingWindow.service.js's
+        -- getFreeEntryWindow() exactly (SUCCESSFULLY_SENT_STATUSES).
         SELECT re.conversation_id, re.referral_at,
           (SELECT MIN(r.created_at) FROM messages r
            WHERE r.conversation_id = re.conversation_id AND r.direction = 'outbound' AND r.deleted_at IS NULL
-             AND r.created_at > re.referral_at) AS response_at
+             AND r.created_at > re.referral_at AND r.status IN (${SUCCESSFULLY_SENT_SQL_LIST})) AS response_at
         FROM referral_entries re
       ),
-      free_entry_windows AS (
+      all_candidate_windows AS (
         SELECT conversation_id, referral_at, response_at,
           (response_at IS NOT NULL AND response_at <= referral_at + INTERVAL '${QUALIFYING_RESPONSE_DEADLINE_MS} milliseconds') AS qualified,
           (response_at + INTERVAL '${FREE_ENTRY_WINDOW_MS} milliseconds') AS expires_at
         FROM qualifying_responses
+      ),
+      free_entry_windows AS (
+        -- Per conversation: any candidate that is active RIGHT NOW wins
+        -- outright (true sorts before false in a DESC boolean ORDER BY);
+        -- only when none is active does the most recent referral's own
+        -- status (pending/not_qualified/expired) win instead.
+        SELECT DISTINCT ON (conversation_id) conversation_id, referral_at, response_at, qualified, expires_at
+        FROM all_candidate_windows
+        ORDER BY conversation_id, (qualified AND expires_at > NOW()) DESC, referral_at DESC
       )
     `;
 
@@ -284,13 +319,25 @@ class WhatsAppComplianceService {
       `, { replacements: { ...scope.params, ...convoScope.params }, type: QueryTypes.SELECT })
     ]);
 
+    // Message.status (pending/sent/delivered/read/failed) is a single
+    // CURRENT-STATE column, not a set of independent flags — a message
+    // currently "read" already passed through sent and delivered, but its
+    // row no longer shows those earlier statuses. Rows are therefore
+    // aggregated as a CUMULATIVE delivery funnel (attempted >= sent >=
+    // delivered >= read), each stage including every later one it implies,
+    // rather than five mutually-exclusive buckets that would undercount
+    // "sent" and "delivered" by whatever already progressed further.
+    // `failed` is the one terminal, non-cumulative exception: a failed
+    // message never progresses, so it is excluded from every success stage.
     const messageCounts = (rows) => {
       const byStatus = Object.fromEntries(rows.map((row) => [row.status, Number(row.count || 0)]));
+      const sumOf = (...statuses) => statuses.reduce((sum, status) => sum + (byStatus[status] || 0), 0);
       return {
-        sent: Object.values(byStatus).reduce((sum, n) => sum + n, 0),
-        delivered: byStatus.delivered || 0,
-        read: byStatus.read || 0,
-        failed: byStatus.failed || 0
+        attempted: Object.values(byStatus).reduce((sum, n) => sum + n, 0),
+        sent: sumOf('sent', 'delivered', 'read'),
+        delivered: sumOf('delivered', 'read'),
+        read: sumOf('read'),
+        failed: sumOf('failed')
       };
     };
 
@@ -300,14 +347,20 @@ class WhatsAppComplianceService {
         label: '24-Hour Customer Service Window',
         activeConversations: Number(serviceWindowConversations[0]?.active || 0),
         expiredConversations: Number(serviceWindowConversations[0]?.expired || 0),
-        unit: { conversations: 'unique conversations', messages: 'individual messages' },
+        unit: {
+          conversations: 'unique conversations', messages: 'individual messages',
+          messagesNote: 'cumulative funnel: attempted >= sent >= delivered >= read; failed is separate and terminal'
+        },
         messages: messageCounts(serviceWindowMessages)
       },
       freeEntryWindow72h: {
         label: '72-Hour Free Entry Point Window',
         activeConversations: Number(freeEntryConversations[0]?.active || 0),
         expiredConversations: Number(freeEntryConversations[0]?.expired || 0),
-        unit: { conversations: 'unique conversations', messages: 'individual messages' },
+        unit: {
+          conversations: 'unique conversations', messages: 'individual messages',
+          messagesNote: 'cumulative funnel: attempted >= sent >= delivered >= read; failed is separate and terminal'
+        },
         messages: messageCounts(freeEntryMessages)
       },
       // Explicitly NOT the sum of the two active-conversation counts above —

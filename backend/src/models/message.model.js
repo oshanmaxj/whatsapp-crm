@@ -154,6 +154,19 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    // 72-hour Free Entry Point referral evidence (present only on an
+    // inbound message that genuinely arrived via a Click-to-WhatsApp ad or
+    // a Facebook/Instagram Page "Message" CTA — see messagingWindow.service.js).
+    referralSourceType: { type: DataTypes.STRING(50), allowNull: true, field: 'referral_source_type' },
+    referralSourceId: { type: DataTypes.STRING(255), allowNull: true, field: 'referral_source_id' },
+    referralSourceUrl: { type: DataTypes.STRING(1024), allowNull: true, field: 'referral_source_url' },
+    referralHeadline: { type: DataTypes.TEXT, allowNull: true, field: 'referral_headline' },
+    ctwaClid: { type: DataTypes.STRING(255), allowNull: true, field: 'ctwa_clid' },
+    // Meta status-webhook pricing/billing metadata (see whatsappCompliance.service.js's
+    // billing classification). NULL means unknown/unverified, never "free".
+    pricingCategory: { type: DataTypes.STRING(50), allowNull: true, field: 'pricing_category' },
+    pricingModel: { type: DataTypes.STRING(20), allowNull: true, field: 'pricing_model' },
+    pricingBillable: { type: DataTypes.BOOLEAN, allowNull: true, field: 'pricing_billable' },
     deletedAt: {
       type: DataTypes.DATE,
       allowNull: true
@@ -179,7 +192,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['reply_to_whatsapp_message_id'] },
       { fields: ['conversation_id', 'created_at'] },
       { fields: ['conversation_id', 'is_read'] },
-      { fields: ['created_at'] }
+      { fields: ['created_at'] },
+      { fields: ['conversation_id', 'referral_source_type', 'created_at'], name: 'messages_conversation_referral_idx' }
     ]
   });
 

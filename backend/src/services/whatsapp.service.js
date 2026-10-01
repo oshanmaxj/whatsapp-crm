@@ -136,6 +136,39 @@ function statusError(status) {
   };
 }
 
+// 72-hour Free Entry Point evidence: Meta attaches a `referral` object only
+// to the one inbound message that genuinely arrived via a Click-to-WhatsApp
+// ad or a Facebook/Instagram Page "Message" CTA — see
+// messagingWindow.service.js's calculateFreeEntryWindow. Returns {} (no
+// fields set, never inferred/defaulted) for every ordinary message.
+function extractReferralFields(message) {
+  const referral = message?.referral;
+  if (!referral) return {};
+  return {
+    referralSourceType: referral.source_type || null,
+    referralSourceId: referral.source_id || null,
+    referralSourceUrl: referral.source_url || null,
+    referralHeadline: referral.headline || null,
+    ctwaClid: referral.ctwa_clid || null
+  };
+}
+
+// Meta status-webhook pricing/billing metadata (current per-message pricing
+// uses pricing_model: "PMP"; accounts with historical data still on
+// conversation-based pricing report "CBP" — both stored verbatim, never
+// assumed). Returns {} when the status webhook carries no pricing object at
+// all, so a caller spreading this never clobbers a previously-recorded
+// value with null.
+function extractPricingFields(status) {
+  const pricing = status?.pricing;
+  if (!pricing) return {};
+  return {
+    pricingCategory: pricing.category || null,
+    pricingModel: pricing.pricing_model || null,
+    pricingBillable: typeof pricing.billable === 'boolean' ? pricing.billable : null
+  };
+}
+
 function messagePreviewText(message) {
   if (!message) return 'Message';
   if (message.text) return message.text;
@@ -912,6 +945,8 @@ class WhatsappService {
     const contactProfile = value?.contacts?.[0] || message?.contacts?.[0] || {};
     const whatsappId = contactProfile?.wa_id || null;
 
+    const referralFields = extractReferralFields(message);
+
     if (mediaId) {
       logger.info('whatsapp_inbound_media_received', {
         whatsappMessageId: message.id,
@@ -954,6 +989,7 @@ class WhatsappService {
             toNumber: to,
             status: 'delivered',
             statusUpdatedAt: receivedAt,
+            ...referralFields,
             rawPayload: parsed.interactiveType ? {
               ...message,
               interactiveReply: {
@@ -1105,10 +1141,16 @@ class WhatsappService {
       await socketService.emitToConversationAudience(conversationId, events.CONVERSATION_UPDATED, {
         ...canonicalPayload, messageId: messageRecord.id, lastMessage: socketPayload, lastMessageAt: canonicalPayload.timestamp
       });
-      const messagingWindow = await require('./messagingWindow.service').getMessagingWindow(conversationId, whatsappAccountId);
+      const windowsService = require('./messagingWindow.service');
+      const { serviceWindow: messagingWindow, freeEntryWindow } = await windowsService.getBothWindows(conversationId, whatsappAccountId);
       await socketService.emitToConversationAudience(conversationId, events.MESSAGING_WINDOW_UPDATED, {
-        conversationId, whatsappAccountId, messagingWindow, timestamp: new Date().toISOString()
+        conversationId, whatsappAccountId, messagingWindow, freeEntryWindow, timestamp: new Date().toISOString()
       });
+      // Dashboard-level signal (not tied to one open conversation): the
+      // window dashboard just refetches its own aggregate stats on this —
+      // cheap, event-driven, and avoids computing the full aggregate inline
+      // on every single inbound message.
+      socketService.emitToRoom(`whatsapp_windows_${whatsappAccountId}`, 'whatsapp.windows.changed', { whatsappAccountId, reason: 'inbound_message' });
     }
 
     if (attachment && ['image', 'document'].includes(messageRecord.type)) {
@@ -1194,6 +1236,7 @@ class WhatsappService {
       : null;
     const updatedAt = statusTimestamp(status?.timestamp);
     const errors = statusError(status);
+    const pricingFields = extractPricingFields(status);
 
     logger.info('WHATSAPP_STATUS_RECEIVED', {
       whatsappMessageId,
@@ -1235,6 +1278,10 @@ class WhatsappService {
         errorCode: nextStatus === 'failed' ? errors.errorCode : null,
         errorSubcode: nextStatus === 'failed' ? errors.errorSubcode : null,
         errorMessage: nextStatus === 'failed' ? errors.errorMessage : null,
+        // Only written when THIS webhook actually carries a pricing object —
+        // an update with none leaves a previously-recorded value intact
+        // rather than clobbering it with null.
+        ...pricingFields,
         rawPayload: {
           ...(existing.rawPayload || {}),
           statusUpdate: status
@@ -1277,6 +1324,11 @@ class WhatsappService {
         );
       }
       await socketService.emitToConversationAudience(existing.conversationId, 'message_status_updated', eventPayload);
+      if (existing.whatsappAccountId) {
+        socketService.emitToRoom(`whatsapp_windows_${existing.whatsappAccountId}`, 'whatsapp.windows.changed', {
+          whatsappAccountId: existing.whatsappAccountId, reason: 'status_update'
+        });
+      }
     } else {
       logger.warn('whatsapp_status_message_not_found', {
         whatsappMessageId,
@@ -1586,3 +1638,5 @@ module.exports.validateOutbound = validateOutbound;
 module.exports.normalizeConfig = normalizeConfig;
 module.exports.safeApiError = safeApiError;
 module.exports.parseInboundContent = parseInboundContent;
+module.exports.extractReferralFields = extractReferralFields;
+module.exports.extractPricingFields = extractPricingFields;

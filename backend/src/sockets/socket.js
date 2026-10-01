@@ -4,6 +4,7 @@ const socketService = require('../services/socket.service');
 const chatService = require('../services/chat.service');
 const conversationAccessService = require('../services/conversationAccess.service');
 const facebookPageAccessService = require('../services/facebookPageAccess.service');
+const whatsappAccountAccessService = require('../services/whatsappAccountAccess.service');
 const { Conversation } = require('../models');
 const logger = require('../config/logger');
 const { corsOptions } = require('../config/cors');
@@ -109,6 +110,21 @@ function initSocket(server) {
         socket.join(`conversation_${conversationId}`);
       } catch (error) {
         logger.warn('socket_facebook_join_failed', error);
+      }
+    });
+
+    // WhatsApp 24h/72h window dashboard: scoped per-account (not per-
+    // conversation), mirroring facebook:join's own access-check-then-join
+    // pattern — a user only ever joins the room for an account
+    // whatsappAccountAccessService already authorizes them for, so a
+    // window-update event can never reach a restricted agent's socket.
+    socket.on('windows:join', async ({ whatsappAccountId }) => {
+      try {
+        if (!whatsappAccountId) return;
+        await whatsappAccountAccessService.assertAccess(whatsappAccountId, userId);
+        socket.join(`whatsapp_windows_${whatsappAccountId}`);
+      } catch (error) {
+        logger.warn('socket_windows_join_failed', error);
       }
     });
 

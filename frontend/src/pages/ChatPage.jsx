@@ -515,8 +515,9 @@ function ChatPage() {
     const handleSocketError = ({ message } = {}) => setError(message || 'Unable to send WhatsApp message.');
     const handleMessagingWindow = (payload = {}) => {
       if (!payload.conversationId || !payload.messagingWindow) return;
-      setConversations(current=>safeArray(current).map(item=>String(item.id)===String(payload.conversationId)?{...item,messagingWindow:payload.messagingWindow,lastInboundAt:payload.messagingWindow.openedAt}:item));
-      if(String(selectedRef.current)===String(payload.conversationId))setConversation(current=>current?{...current,messagingWindow:payload.messagingWindow,lastInboundAt:payload.messagingWindow.openedAt}:current);
+      const patch = { messagingWindow: payload.messagingWindow, lastInboundAt: payload.messagingWindow.openedAt, ...(payload.freeEntryWindow ? { freeEntryWindow: payload.freeEntryWindow } : {}) };
+      setConversations(current=>safeArray(current).map(item=>String(item.id)===String(payload.conversationId)?{...item,...patch}:item));
+      if(String(selectedRef.current)===String(payload.conversationId))setConversation(current=>current?{...current,...patch}:current);
     };
     const applyLeadUpdate = (payload = {}) => {
       if (payload.leadId == null && payload.conversationId == null) return;

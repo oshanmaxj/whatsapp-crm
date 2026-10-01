@@ -6,6 +6,7 @@ const router = express.Router();
 router.use(authMiddleware.authenticate);
 
 router.get('/whatsapp-status', complianceController.whatsappStatus.bind(complianceController));
+router.get('/whatsapp-windows', complianceController.whatsappWindows.bind(complianceController));
 router.post('/message-check', complianceController.messageCheck.bind(complianceController));
 
 module.exports = router;

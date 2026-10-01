@@ -74,6 +74,30 @@ test('listConversations() fetches the latest message via a bounded per-conversat
   assert.equal(result.items.find((item) => item.id === 2).lastMessage.text, 'Hi from 2 (newest)');
 });
 
+test('listConversations() list path never resolves the 72h Free Entry Point window per row (that is single-conversation-only; a bulk per-row lookup would be an N+1)', async () => {
+  const rows = [pageRow(1, 't1'), pageRow(2, 't2')];
+  let findAllCallCount = 0;
+  Conversation.findAll = async () => {
+    findAllCallCount += 1;
+    return findAllCallCount === 1 ? rows : [hydratedRow(1), hydratedRow(2)];
+  };
+  Conversation.count = async () => 2;
+  Student.findAll = async () => [];
+  conversationAccessService.whereForUser = async () => ({});
+  sequelize.query = async () => [];
+
+  const result = await inboxService.listConversations({}, { id: 1, isSystemAdmin: true });
+  // Each item must be a plain, already-resolved object (not a Promise) and
+  // must not carry a per-row freeEntryWindow — proving the list path uses
+  // the synchronous serializeConversationBase(), never the async
+  // single-conversation serializeConversation().
+  for (const item of result.items) {
+    assert.equal(typeof item.then, 'undefined', 'a list item must never be an unresolved Promise');
+    assert.equal('freeEntryWindow' in item, false);
+    assert.ok(item.messagingWindow, 'the cheap 24h window calculation is still expected on every list row');
+  }
+});
+
 test('listConversations() list path never computes interactionRate (that scan is reserved for the single-conversation view)', async () => {
   Conversation.findAll = async (opts, idx) => (Conversation.findAll.calls = (Conversation.findAll.calls || 0) + 1) && (
     Conversation.findAll.calls === 1 ? [pageRow(1, 't1')] : [hydratedRow(1)]

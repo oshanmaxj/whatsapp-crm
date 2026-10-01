@@ -10,3 +10,4 @@ export const syncWhatsAppTemplates = (whatsappAccountId) => api.post('/whatsapp-
 export const uploadWhatsAppTemplateSample = (payload) => api.post('/whatsapp-templates/sample-media', payload);
 export const getWhatsAppComplianceStatus = () => api.get('/compliance/whatsapp-status');
 export const checkWhatsAppMessage = (payload) => api.post('/compliance/message-check', payload);
+export const getWhatsAppWindowStats = (whatsappAccountId) => api.get('/compliance/whatsapp-windows', { params: whatsappAccountId ? { whatsappAccountId } : {} });

@@ -122,7 +122,12 @@ async function resolveReplyContext(conversationId, replyToMessageId) {
   };
 }
 
-function serializeConversation(conversation) {
+// Stays synchronous deliberately — used by the BULK conversation list
+// (listConversations, via a plain .map() over possibly hundreds of rows),
+// so it must never perform a per-row DB lookup. The 72-hour Free Entry
+// Point window is NOT computed here; see serializeConversation below for
+// the single-conversation variant that adds it.
+function serializeConversationBase(conversation) {
   const json = conversation.toJSON ? conversation.toJSON() : conversation;
   const { messages, ...conversationData } = json;
   const messagesSent = Number(json.messagesSent || 0);
@@ -141,6 +146,20 @@ function serializeConversation(conversation) {
     interactionRate: calculateInteractionRate(messagesSent, repliesReceived),
     messagingWindow
   };
+}
+
+// Single-conversation variant (getConversation only — never the bulk
+// list) that additionally resolves the 72-hour Free Entry Point window.
+// Async only for that one extra lookup; staying a one-conversation query
+// rather than a per-row N+1 across a paginated inbox is exactly why
+// serializeConversationBase above exists as a separate, sync function.
+async function serializeConversation(conversation) {
+  const base = serializeConversationBase(conversation);
+  const messagingWindowService = require('./messagingWindow.service');
+  const freeEntryWindow = base.whatsappAccountId
+    ? await messagingWindowService.getFreeEntryWindow(base.id, base.whatsappAccountId).catch(() => messagingWindowService.calculateFreeEntryWindow({}))
+    : messagingWindowService.calculateFreeEntryWindow({});
+  return { ...base, freeEntryWindow };
 }
 
 class InboxService {
@@ -402,7 +421,7 @@ class InboxService {
       include: includes
     }) : [];
     const hydratedById = new Map(hydrated.map((row) => [String(row.id), row]));
-    const serialized = pageIds.map((id) => hydratedById.get(String(id))).filter(Boolean).map(serializeConversation);
+    const serialized = pageIds.map((id) => hydratedById.get(String(id))).filter(Boolean).map(serializeConversationBase);
     const conversationIds = serialized.map((conversation) => conversation.id).filter(Boolean);
     const latestByConversation = new Map();
 
@@ -505,7 +524,7 @@ class InboxService {
       error.status = 404;
       throw error;
     }
-    const [withInteractionRate] = await this.attachInteractionRates([serializeConversation(conversation)]);
+    const [withInteractionRate] = await this.attachInteractionRates([await serializeConversation(conversation)]);
     const [withStudent] = await this.attachStudentSummaries([withInteractionRate]);
     return withStudent;
   }

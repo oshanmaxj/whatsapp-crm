@@ -368,6 +368,28 @@ export function CustomerInfoBar({ conversation }) {
   const windowDetail = insideWindow
     ? `${remainingHours}h ${remainingMinutes % 60}m left`
     : 'Template required';
+
+  // 72H Free Entry Point — a separate window from the 24H service window
+  // above (see messagingWindow.service.js). Deliberately does NOT imply an
+  // active 72H window permits every outbound message type: it only shows
+  // the verified window status, never a sending-permission shortcut.
+  const freeEntryWindow = conversation?.freeEntryWindow || null;
+  const freeEntryExpiresAt = freeEntryWindow?.expiresAt;
+  const freeEntryRemainingMs = freeEntryExpiresAt ? new Date(freeEntryExpiresAt).getTime() - now : 0;
+  const freeEntryActive = freeEntryWindow?.status === 'active' && freeEntryRemainingMs > 0;
+  const freeEntryRemainingMinutes = freeEntryActive ? Math.ceil(freeEntryRemainingMs / 60000) : 0;
+  const freeEntryRemainingHours = Math.floor(freeEntryRemainingMinutes / 60);
+  const freeEntryLabelByStatus = {
+    active: 'Active', expired: 'Expired', not_qualified: 'Not qualified',
+    pending_response: 'Awaiting reply', unknown: 'Unverified'
+  };
+  const freeEntryStatusText = freeEntryLabelByStatus[freeEntryWindow?.status] || 'Unverified';
+  const freeEntryDetail = freeEntryActive
+    ? `${freeEntryRemainingHours}h ${freeEntryRemainingMinutes % 60}m remaining`
+    : freeEntryWindow?.status === 'pending_response' ? 'Needs a reply within 24h of entry'
+      : freeEntryWindow?.status === 'not_qualified' ? 'Business did not reply within 24h'
+        : freeEntryWindow?.status === 'expired' ? 'Window has closed'
+          : 'No verified ad/Page-CTA referral';
   const interactionRate = conversation?.interactionRate || {};
   const interactionPercentage = Number(interactionRate.percentage || 0);
   const interactionPrecise = Number(interactionRate.precisePercentage ?? interactionPercentage);
@@ -392,7 +414,8 @@ export function CustomerInfoBar({ conversation }) {
   const items = [
     ['Customer since', formatDateTime(contact.createdAt, 'Not set')],
     ['Last seen', formatDateTime(conversation?.lastMessageAt, 'Not seen')],
-    ['Messaging window', windowStatus, windowDetail, insideWindow],
+    ['24H Service Window', windowStatus, windowDetail, insideWindow],
+    ['72H Free Entry Window', freeEntryStatusText, freeEntryDetail, freeEntryActive],
     ['Country', contact.country || 'Not set'],
     ['Interaction rate', `${interactionPercentage}%`, interactionTone, interactionColor, interactionTooltip]
   ];
@@ -402,7 +425,7 @@ export function CustomerInfoBar({ conversation }) {
         {items.map(([label, value, detail, active, tooltip]) => (
           <Box key={label}>
             <Typography sx={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.7, color: 'text.disabled', fontWeight: 800 }}>{label}</Typography>
-            {label === 'Messaging window' ? (
+            {['24H Service Window', '72H Free Entry Window'].includes(label) ? (
               <>
                 <Stack direction="row" spacing={0.6} alignItems="center">
                   <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: active ? 'success.main' : 'warning.main' }} />

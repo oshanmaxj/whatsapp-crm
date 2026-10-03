@@ -25,6 +25,7 @@ import {
   setConversationLabels,
   uploadMedia
 } from '../services/chat.service';
+import { sendFacebookMessage } from '../services/facebookMessenger.service';
 import { getActiveCall } from '../services/callCenter.service';
 import { getRoles } from '../services/userManagement.service';
 import { updateContact } from '../services/contact.service';
@@ -647,7 +648,13 @@ function ChatPage() {
   const handleSendMessage = useCallback(async () => {
     const text = newMessage.trim();
     if (!text || !selected || sending) return;
-    if (!selectedTemplate && !isMessagingWindowOpen(selectedConversation)) {
+    const isFacebookConversation = selectedConversation?.channel === 'facebook_messenger';
+    // WhatsApp's "template required outside the 24h window" rule has no
+    // Facebook Messenger equivalent (no template fallback) — for Facebook,
+    // the attempt is always made, and Meta's own Messenger policy window is
+    // what actually rejects an out-of-window send (see the catch block,
+    // which surfaces that real backend/Meta error unchanged).
+    if (!isFacebookConversation && !selectedTemplate && !isMessagingWindowOpen(selectedConversation)) {
       setNotice('Template required to message this customer.');
       return;
     }
@@ -656,11 +663,14 @@ function ChatPage() {
       id: optimisticId,
       conversationId: selected,
       direction: 'outbound',
-      type: selectedTemplate ? 'template' : 'text',
+      type: !isFacebookConversation && selectedTemplate ? 'template' : 'text',
       text,
-      templateName: selectedTemplate?.name || null,
-      replyToMessageId: replyToMessage?.id || null,
-      replyPreview: replyToMessage ? {
+      templateName: !isFacebookConversation ? (selectedTemplate?.name || null) : null,
+      // WhatsApp reply context is WhatsApp-specific; the Facebook Messenger
+      // send endpoint has no equivalent field, so Facebook replies just send
+      // the text on its own.
+      replyToMessageId: !isFacebookConversation ? (replyToMessage?.id || null) : null,
+      replyPreview: (!isFacebookConversation && replyToMessage) ? {
         id: replyToMessage.id,
         whatsappMessageId: replyToMessage.whatsappMessageId,
         sender: replyToMessage.direction === 'outbound' ? 'You' : 'Customer',
@@ -678,14 +688,16 @@ function ChatPage() {
     setError('');
 
     try {
-      const response = selectedTemplate
-        ? await sendConversationTemplate(selected, {
-            templateName: selectedTemplate.name,
-            languageCode: selectedTemplate.language || 'en_US',
-            components: [],
-            replyToMessageId: replyToMessage?.id || null
-          })
-        : await sendConversationMessage(selected, { text, replyToMessageId: replyToMessage?.id || null });
+      const response = isFacebookConversation
+        ? await sendFacebookMessage(selected, text, optimisticId)
+        : selectedTemplate
+          ? await sendConversationTemplate(selected, {
+              templateName: selectedTemplate.name,
+              languageCode: selectedTemplate.language || 'en_US',
+              components: [],
+              replyToMessageId: replyToMessage?.id || null
+            })
+          : await sendConversationMessage(selected, { text, replyToMessageId: replyToMessage?.id || null });
       const sentMessage = response.data?.data;
       if (!sentMessage || typeof sentMessage !== 'object') throw new Error('The server returned an invalid message response.');
       if (sentMessage.id != null) seenSocketMessageIdsRef.current.add(String(sentMessage.id));
@@ -708,7 +720,8 @@ function ChatPage() {
       setReplyToMessage(null);
       loadConversations({ silent: true });
     } catch (requestError) {
-      const message = requestError.response?.data?.message || requestError.message || 'Unable to send WhatsApp message.';
+      const message = requestError.response?.data?.message || requestError.message
+        || (isFacebookConversation ? 'Unable to send Facebook message.' : 'Unable to send WhatsApp message.');
       const failedRecord = requestError.response?.data?.data;
       const metaError = requestError.response?.data?.metaError?.error || requestError.response?.data?.metaError || {};
       setMessages((current) => safeArray(current).map((item) => (

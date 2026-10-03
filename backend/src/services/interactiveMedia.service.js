@@ -121,6 +121,26 @@ async function validatePublicMediaUrl(value, mediaType) {
   return url;
 }
 
+// Allow-list, not a deny-list: automatic re-upload from getMediaUrl() must
+// only fire for a structured Meta error this repository already has
+// evidence for as specifically meaning "this media reference is
+// invalid/unavailable" — code 100 with error_subcode 2494010, the exact
+// pairing flowMessageHistory.test.js and whatsappInteractiveMedia.test.js
+// already use for a rejected/invalid media parameter. Everything else
+// returns false and propagates unchanged: no error.response at all
+// (network timeout, ECONNRESET, DNS/connectivity failure, or a local
+// configuration error from getRuntimeConfig() that never reached Meta),
+// 401/403, Meta auth code 190, rate-limit codes 4/17/80004, HTTP 429,
+// HTTP >=500, any other 4xx, and — importantly — code 100 with ANY OTHER
+// subcode, including subcode 33, which this exact codebase already uses
+// elsewhere (whatsapp.service.js, whatsappAccount.service.js) to mean
+// "phone number not accessible with this token" — an account/permission
+// problem, not a media problem, and must not be treated as one here.
+function isRefreshableMediaLookupError(error) {
+  const meta = error?.response?.data?.error || {};
+  return Number(meta.code) === 100 && Number(meta.error_subcode) === 2494010;
+}
+
 function resolvePrivatePath(localMediaRef) {
   const relative = path.normalize(String(localMediaRef || '')).replace(/^(\.\.(\\|\/|$))+/, '');
   const resolved = path.resolve(PRIVATE_ROOT, relative);
@@ -136,38 +156,66 @@ class InteractiveMediaService {
     this.logger = dependencies.logger || logger;
   }
 
+  // Content-addressed: the storage path is the SHA-256 of the validated
+  // bytes, so re-uploading identical content always resolves to the same
+  // physical file instead of writing another copy (previously every call
+  // wrote a fresh crypto.randomUUID() file regardless of content). Existing
+  // per-scope/UUID files from before this change are untouched and keep
+  // resolving normally — this only changes where NEW uploads land.
   async storeAndUpload({ scope = 'flow', scopeId, buffer: suppliedBuffer, dataBase64, fileName, mimeType, mediaType, whatsappAccountId }) {
     if (!whatsappAccountId) throw mediaError('Select a WhatsApp account before uploading interactive media.', 'WHATSAPP_ACCOUNT_REQUIRED');
     const buffer = Buffer.isBuffer(suppliedBuffer) ? suppliedBuffer : decodeBase64(dataBase64);
     const valid = validateMedia({ mediaType, mimeType, size: buffer.length, fileName });
     validateFileContent(buffer, valid);
-    const relative = path.join(safeFilename(scope, 'flow'), safeFilename(scopeId, 'unknown'), `${crypto.randomUUID()}-${valid.fileName}`);
+    const digest = crypto.createHash('sha256').update(buffer).digest('hex');
+    const relative = path.join('objects', digest.slice(0, 2), digest);
     const filePath = resolvePrivatePath(relative);
-    try {
-      await fsp.mkdir(path.dirname(filePath), { recursive: true });
-      await fsp.writeFile(filePath, buffer, { flag: 'wx' });
-    } catch (_) {
-      throw mediaError('Unable to store the media file. Try again or contact an administrator.', 'MEDIA_STORAGE_FAILED', 500);
+
+    const alreadyStored = async () => {
+      const stat = await fsp.stat(filePath).catch(() => null);
+      return Boolean(stat?.isFile() && stat.size === buffer.length);
+    };
+    if (!(await alreadyStored())) {
+      // Write-then-rename rather than writing filePath directly: a second,
+      // concurrent upload of the SAME bytes gets its own temp file (unique
+      // crypto.randomUUID() name), so neither writer can observe the
+      // other's partially-written content at the final path. If our
+      // rename loses a race (name already present by the time we get
+      // there — behavior differs by platform, so this isn't assumed to be
+      // a specific error code), that's fine as long as the content that
+      // ended up there is actually ours — verified by size below, never
+      // just trusted.
+      const tempPath = path.join(path.dirname(filePath), `.tmp-${crypto.randomUUID()}`);
+      try {
+        await fsp.mkdir(path.dirname(filePath), { recursive: true });
+        await fsp.writeFile(tempPath, buffer, { flag: 'wx' });
+        await fsp.rename(tempPath, filePath);
+      } catch (_) {
+        await fsp.unlink(tempPath).catch(() => null);
+        if (!(await alreadyStored())) {
+          throw mediaError('Unable to store the media file. Try again or contact an administrator.', 'MEDIA_STORAGE_FAILED', 500);
+        }
+      }
     }
-    try {
-      const uploaded = await this.whatsappService.uploadMedia({
-        filePath,
-        mimeType: valid.mimeType,
-        mediaType: valid.mediaType,
-        fileSize: valid.size,
-        whatsappAccountId
-      });
-      if (!uploaded?.id) throw mediaError('Media upload failed because Meta did not return a media ID.', 'META_MEDIA_ID_MISSING', 502);
-      return {
-        mediaId: String(uploaded.id),
-        whatsappAccountId: String(whatsappAccountId),
-        localMediaRef: relative.split(path.sep).join('/'),
-        ...valid
-      };
-    } catch (error) {
-      await fsp.unlink(filePath).catch(() => null);
-      throw error;
-    }
+    const uploaded = await this.whatsappService.uploadMedia({
+      filePath,
+      mimeType: valid.mimeType,
+      mediaType: valid.mediaType,
+      fileSize: valid.size,
+      whatsappAccountId
+    });
+    if (!uploaded?.id) throw mediaError('Media upload failed because Meta did not return a media ID.', 'META_MEDIA_ID_MISSING', 502);
+    // Never unlink filePath on failure here: with content-addressed storage
+    // it may already be the SAME object another binding (a different flow,
+    // account, or node) legitimately references — unlike the old per-upload
+    // UUID path, an unreferenced-but-correctly-stored object is harmless and
+    // may simply be reused by a future upload of the same bytes.
+    return {
+      mediaId: String(uploaded.id),
+      whatsappAccountId: String(whatsappAccountId),
+      localMediaRef: relative.split(path.sep).join('/'),
+      ...valid
+    };
   }
 
   async uploadStored(binding, whatsappAccountId) {
@@ -188,7 +236,28 @@ class InteractiveMediaService {
       whatsappAccountId: binding.whatsappAccountId || binding.mediaAccountId || null,
       fileName: safeFilename(binding.fileName || binding.filename, binding.mediaType || 'media')
     };
-    if (normalized.mediaId && (!normalized.localMediaRef || !normalized.whatsappAccountId || String(normalized.whatsappAccountId) === String(whatsappAccountId))) {
+    const sameAccount = Boolean(normalized.whatsappAccountId) && String(normalized.whatsappAccountId) === String(whatsappAccountId);
+    // Same account AND a local copy to fall back on: don't blindly trust a
+    // stored Meta media ID that may have expired (mirrors the verify-then-
+    // refresh check resolveHeader() already does for interactive headers —
+    // see the comment there). Any other combination below is unchanged from
+    // before, including the no-local-copy case, which keeps its existing
+    // explicit error/trust behavior exactly as-is.
+    if (normalized.mediaId && sameAccount && normalized.localMediaRef) {
+      try {
+        const mediaInfo = await this.whatsappService.getMediaUrl(normalized.mediaId, await this.whatsappService.getRuntimeConfig(whatsappAccountId));
+        const valid = validateMedia({
+          ...normalized,
+          mimeType: mediaInfo?.mime_type || normalized.mimeType,
+          size: Number(mediaInfo?.file_size || normalized.size)
+        });
+        return { ...normalized, ...valid };
+      } catch (error) {
+        if (!isRefreshableMediaLookupError(error)) throw error;
+        return this.uploadStored(normalized, whatsappAccountId);
+      }
+    }
+    if (normalized.mediaId && (!normalized.localMediaRef || !normalized.whatsappAccountId || sameAccount)) {
       return normalized;
     }
     if (normalized.localMediaRef) return this.uploadStored(normalized, whatsappAccountId);
@@ -258,3 +327,4 @@ module.exports.publicHttpsUrl = publicHttpsUrl;
 module.exports.validatePublicMediaUrl = validatePublicMediaUrl;
 module.exports.validateFileContent = validateFileContent;
 module.exports.resolvePrivatePath = resolvePrivatePath;
+module.exports.isRefreshableMediaLookupError = isRefreshableMediaLookupError;

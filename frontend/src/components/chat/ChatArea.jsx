@@ -653,6 +653,11 @@ export function MessageComposer({
   const streamRef = useRef(null);
   const cancelRecordingRef = useRef(false);
   const canSendVoice = hasPermission('voice.send');
+  // WhatsApp templates and the 24h-template-required gate are WhatsApp-only
+  // concepts — Facebook Messenger has no template fallback, and Meta's own
+  // Messenger policy window is enforced server-side when the send is
+  // attempted (see ChatPage.handleSendMessage), not pre-emptively here.
+  const isFacebookConversation = conversation?.channel === 'facebook_messenger';
   useEffect(() => {
     const eligible = composerFocused && selected && windowOpen && !selectedTemplate && !sending && Boolean(value.trim()) && conversation?.id;
     if (!eligible) return undefined;
@@ -712,7 +717,7 @@ export function MessageComposer({
   const handleKeyDown = (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      if (value.trim() && selected && !sending && (windowOpen || selectedTemplate)) onSend();
+      if (value.trim() && selected && !sending && (isFacebookConversation || windowOpen || selectedTemplate)) onSend();
     }
   };
 
@@ -750,7 +755,7 @@ export function MessageComposer({
           />
         )}
       </Stack>
-      {!windowOpen && selected && (
+      {!isFacebookConversation && !windowOpen && selected && (
         <Typography sx={{ mb: 0.75, px: 0.5, fontSize: 12, color: 'warning.dark', fontWeight: 700 }}>
           Template required to message this customer.
         </Typography>
@@ -778,33 +783,37 @@ export function MessageComposer({
       <Stack direction="row" alignItems="flex-end" gap={0.4} sx={{ minWidth: 0, flexWrap: { xs: 'wrap', sm: 'nowrap' }, '& .composer-control': { width: 44, height: 44, flex: '0 0 44px' } }}>
         <Tooltip title="Attach media"><span><IconButton className="composer-control" aria-label="Attach media" disabled={!selected} onClick={onAttach}><AttachFileIcon /></IconButton></span></Tooltip>
         <Button size="small" variant="outlined" disabled={!selected || sending || !conversation?.whatsappAccountId} onClick={() => setFlowsOpen(true)} sx={{ mb: 0.35, minWidth: 86, borderRadius: 2.5, textTransform: 'none' }}>Flows</Button>
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={!selected}
-          onClick={(event) => setTemplateAnchor(event.currentTarget)}
-          sx={{ mb: 0.35, minWidth: 86, borderRadius: 2.5, textTransform: 'none' }}
-        >
-          Templates
-        </Button>
-        <Menu anchorEl={templateAnchor} open={Boolean(templateAnchor)} onClose={() => setTemplateAnchor(null)}>
-          {safeArray(whatsappTemplates).length === 0 && <MenuItem disabled>No approved templates</MenuItem>}
-          {safeArray(whatsappTemplates).map((template) => (
-            <MenuItem
-              key={template.id}
-              selected={selectedTemplate?.id === template.id}
-              onClick={() => {
-                onSelectTemplate(template);
-                setTemplateAnchor(null);
-              }}
+        {!isFacebookConversation && (
+          <>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!selected}
+              onClick={(event) => setTemplateAnchor(event.currentTarget)}
+              sx={{ mb: 0.35, minWidth: 86, borderRadius: 2.5, textTransform: 'none' }}
             >
-              <ListItemText
-                primary={template.name}
-                secondary={`${template.language || 'en_US'} • ${template.category || 'UTILITY'}`}
-              />
-            </MenuItem>
-          ))}
-        </Menu>
+              Templates
+            </Button>
+            <Menu anchorEl={templateAnchor} open={Boolean(templateAnchor)} onClose={() => setTemplateAnchor(null)}>
+              {safeArray(whatsappTemplates).length === 0 && <MenuItem disabled>No approved templates</MenuItem>}
+              {safeArray(whatsappTemplates).map((template) => (
+                <MenuItem
+                  key={template.id}
+                  selected={selectedTemplate?.id === template.id}
+                  onClick={() => {
+                    onSelectTemplate(template);
+                    setTemplateAnchor(null);
+                  }}
+                >
+                  <ListItemText
+                    primary={template.name}
+                    secondary={`${template.language || 'en_US'} • ${template.category || 'UTILITY'}`}
+                  />
+                </MenuItem>
+              ))}
+            </Menu>
+          </>
+        )}
         <Tooltip title="Emoji"><IconButton className="composer-control" onClick={(event) => setEmojiAnchor(event.currentTarget)}><EmojiEmotionsOutlinedIcon /></IconButton></Tooltip>
         <Menu anchorEl={emojiAnchor} open={Boolean(emojiAnchor)} onClose={() => setEmojiAnchor(null)}>
           <Stack direction="row" sx={{ px: 1 }}>
@@ -821,7 +830,7 @@ export function MessageComposer({
           onFocus={() => setComposerFocused(true)}
           onBlur={() => setComposerFocused(false)}
           onKeyDown={handleKeyDown}
-          placeholder={!selected ? 'Select a conversation first' : (!windowOpen && !selectedTemplate ? 'Select an approved template' : 'Type a message')}
+          placeholder={!selected ? 'Select a conversation first' : (!isFacebookConversation && !windowOpen && !selectedTemplate ? 'Select an approved template' : 'Type a message')}
           sx={{ minWidth: { xs: 'calc(100% - 8px)', sm: 120 }, flex: '1 1 180px', order: { xs: 10, sm: 'initial' }, '& .MuiOutlinedInput-root': { borderRadius: 3, py: 0.5, bgcolor: 'action.hover' } }}
         />
         <Tooltip title="Save as quick reply"><span><IconButton disabled={!value.trim()} onClick={onSaveTemplate}><StarBorderRoundedIcon /></IconButton></span></Tooltip>
@@ -830,7 +839,7 @@ export function MessageComposer({
           <span>
             <IconButton
               color="primary"
-              disabled={!selected || !value.trim() || sending || (!windowOpen && !selectedTemplate)}
+              disabled={!selected || !value.trim() || sending || (!isFacebookConversation && !windowOpen && !selectedTemplate)}
               onClick={onSend}
               sx={{ bgcolor: 'primary.main', color: '#fff', '&:hover': { bgcolor: 'primary.dark' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground' } }}
             >

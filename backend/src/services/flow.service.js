@@ -1482,7 +1482,37 @@ class FlowService {
           whatsappAccountId: context.whatsappAccountId
         });
       } else if (binding.mediaId || binding.localMediaRef) {
+        const previousMediaId = binding.mediaId;
         binding = await interactiveMediaService.resolveStored(binding, context.whatsappAccountId);
+        // Persist an automatic refresh (expired Meta media ID re-uploaded
+        // from the local copy) back onto this node, same as the interactive
+        // header path above — otherwise every future run would re-upload
+        // the same local file again instead of reusing the new media ID.
+        if (binding.mediaId && binding.mediaId !== previousMediaId) {
+          Object.assign(config, {
+            whatsappMediaId: binding.mediaId,
+            mediaAccountId: binding.whatsappAccountId,
+            mediaLocalRef: binding.localMediaRef || null,
+            mimeType: binding.mimeType || config.mimeType,
+            mediaSize: binding.size,
+            fileName: binding.fileName || config.fileName
+          });
+          // Unlike the interactive-header persistence above, a failure here
+          // is logged rather than silently discarded: the message itself
+          // still sends correctly with the refreshed binding (this
+          // execution's own outcome is accurate either way), but a
+          // persistently failing cache write would otherwise never be
+          // visible to anyone — only identifiers and the error, never the
+          // media bytes, URLs, or config contents.
+          await node.update({ configJson: config }).catch((error) => {
+            logger.warn('flow_media_binding_persist_failed', {
+              flowId: context.flowId || null,
+              nodeKey: node.nodeKey,
+              errorCode: error.code || error.name || null,
+              errorMessage: error.message
+            });
+          });
+        }
       } else {
         sentMediaUrl = requireHttpsUrl(configuredUrl, `${storedType} URL`);
       }
